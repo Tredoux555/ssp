@@ -1,13 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
 import { CheckCircle, XCircle, Loader2 } from 'lucide-react'
 
-export default function VerifyPage() {
+function VerifyContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
@@ -131,6 +131,25 @@ export default function VerifyPage() {
         </div>
       </Card>
     </div>
+  )
+}
+
+export default function VerifyPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gradient-to-br from-sa-green via-sa-blue to-sa-gold flex items-center justify-center p-4">
+          <Card className="max-w-md">
+            <div className="text-center">
+              <Loader2 className="w-12 h-12 text-sa-green animate-spin mx-auto mb-4" />
+              <p className="text-gray-700 font-medium">Loading...</p>
+            </div>
+          </Card>
+        </div>
+      }
+    >
+      <VerifyContent />
+    </Suspense>
   )
 }
 
