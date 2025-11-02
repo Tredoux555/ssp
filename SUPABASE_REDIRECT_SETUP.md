@@ -65,3 +65,4 @@ After deploying to Vercel, you MUST configure redirect URLs in Supabase for emai
 - Wait a few minutes for changes to propagate
 - Try signing up with a new email after configuring redirect URLs
 
+

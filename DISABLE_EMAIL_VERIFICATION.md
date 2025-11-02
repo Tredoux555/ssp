@@ -59,3 +59,4 @@ If you want to enable email verification later:
 - For a free emergency app, this trade-off may be acceptable
 - You can always enable it later if needed
 
+
