@@ -37,7 +37,10 @@ export default function RegisterPage() {
 
     try {
       await signUp(email, password, fullName, phone)
-      router.push('/dashboard')
+      // Show success message about email verification
+      // User will be redirected after clicking email link
+      alert('Account created! Please check your email and click the verification link to activate your account.')
+      router.push('/auth/login')
     } catch (err: any) {
       setError(err.message || 'Failed to create account')
     } finally {

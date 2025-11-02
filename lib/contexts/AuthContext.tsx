@@ -116,9 +116,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signUp = useCallback(async (email: string, password: string, fullName?: string, phone?: string) => {
     if (!supabase) throw new Error('Supabase client not initialized')
     
+    // Get the current origin (works in both dev and production)
+    const redirectTo = typeof window !== 'undefined' 
+      ? `${window.location.origin}/auth/verify`
+      : process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000/auth/verify'
+    
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        emailRedirectTo: redirectTo,
+        data: {
+          full_name: fullName,
+          phone,
+        },
+      },
     })
 
     if (error) throw error
@@ -136,6 +148,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (profileError) {
         console.error('Error creating profile:', profileError)
+      }
+
+      // Don't set profile if user needs email verification
+      // User will be verified and redirected after clicking email link
+      if (!data.user.email_confirmed_at) {
+        return // Wait for email verification
       }
 
       const userProfile = await fetchProfile(data.user.id)
