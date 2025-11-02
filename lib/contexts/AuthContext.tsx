@@ -116,7 +116,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signUp = useCallback(async (email: string, password: string, fullName?: string, phone?: string) => {
     if (!supabase) throw new Error('Supabase client not initialized')
     
-    // Get the current origin (works in both dev and production)
+    // Email verification is disabled - users can login immediately after signup
+    // Keep redirect URL for future use if verification is re-enabled
     const redirectTo = typeof window !== 'undefined' 
       ? `${window.location.origin}/auth/verify`
       : process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000/auth/verify'
@@ -125,18 +126,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email,
       password,
       options: {
-        emailRedirectTo: redirectTo,
+        emailRedirectTo: redirectTo, // Kept for future use
         data: {
           full_name: fullName,
           phone,
         },
+        // Email confirmation is disabled in Supabase settings
+        // Users can login immediately after signup
       },
     })
 
     if (error) throw error
 
     if (data.user) {
-      // Create user profile
+      // Create user profile immediately
       const { error: profileError } = await supabase
         .from('user_profiles')
         .insert({
@@ -150,12 +153,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('Error creating profile:', profileError)
       }
 
-      // Don't set profile if user needs email verification
-      // User will be verified and redirected after clicking email link
-      if (!data.user.email_confirmed_at) {
-        return // Wait for email verification
-      }
-
+      // Immediately log user in (email verification disabled)
+      // Note: If email verification is re-enabled in Supabase, this should check email_confirmed_at
       const userProfile = await fetchProfile(data.user.id)
       setProfile(userProfile)
     }
