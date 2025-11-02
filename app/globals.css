@@ -1,26 +1,130 @@
 @import "tailwindcss";
 
+/* South African Flag Color Scheme */
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  
+  /* South African Flag Colors */
+  --sa-green: #007A4D;
+  --sa-gold: #FFB612;
+  --sa-red: #DE3831;
+  --sa-blue: #002395;
+  --sa-black: #000000;
+  --sa-white: #FFFFFF;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: 'Inter', system-ui, sans-serif;
+  
+  /* SA Flag Colors */
+  --color-sa-green: var(--sa-green);
+  --color-sa-gold: var(--sa-gold);
+  --color-sa-red: var(--sa-red);
+  --color-sa-blue: var(--sa-blue);
+  --color-sa-black: var(--sa-black);
+  --color-sa-white: var(--sa-white);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+/* Emergency Alert Animations */
+@keyframes emergency-flash {
+  0%, 100% {
+    background-color: #DE3831;
+    opacity: 1;
+  }
+  50% {
+    background-color: #FF6B6B;
+    opacity: 0.9;
+  }
+}
+
+@keyframes pulse-emergency {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(222, 56, 49, 0.7);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 20px rgba(222, 56, 49, 0);
+  }
+}
+
+.emergency-flash {
+  animation: emergency-flash 0.5s ease-in-out infinite;
+}
+
+.emergency-pulse {
+  animation: pulse-emergency 2s ease-in-out infinite;
+}
+
+/* Mobile performance optimizations */
+@media (max-width: 768px) {
+  * {
+    animation-duration: 0.2s !important;
+    transition-duration: 0.2s !important;
+  }
+  
+  /* Keep emergency animations */
+  .emergency-flash {
+    animation: emergency-flash 0.5s ease-in-out infinite !important;
+  }
+  
+  .emergency-pulse {
+    animation: pulse-emergency 2s ease-in-out infinite !important;
+  }
+}
+
+/* Optimize scrolling */
+html {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  
+  .emergency-flash,
+  .emergency-pulse {
+    animation: none !important;
+  }
+}
+
+/* Custom scrollbar with SA colors */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F3F4F6;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #007A4D;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #005A3D;
+}
+
+/* Mobile-first responsive utilities */
+@media (max-width: 640px) {
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
 }
