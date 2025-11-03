@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { createClient } from '@/lib/supabase'
 import { subscribeToLocationHistory, subscribeToAlertResponses } from '@/lib/realtime/subscriptions'
+import { showEmergencyAlert, hideEmergencyAlert, playAlertSound, vibrateDevice } from '@/lib/notifications'
 import { EmergencyAlert, LocationHistory } from '@/types/database'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
@@ -70,8 +71,17 @@ export default function AlertResponsePage() {
     return () => {
       unsubscribeLocation()
       supabase.removeChannel(channel)
+      // Clean up alert display when leaving page
+      hideEmergencyAlert()
     }
   }, [alert, user])
+
+  // Clean up alert on unmount
+  useEffect(() => {
+    return () => {
+      hideEmergencyAlert()
+    }
+  }, [])
 
   const loadAlert = async () => {
     if (!user) return
@@ -97,6 +107,16 @@ export default function AlertResponsePage() {
       }
 
       setAlert(alertData)
+
+      // Show full-screen emergency alert with sound and vibration
+      showEmergencyAlert(alertId, {
+        address: alertData.address,
+        alert_type: alertData.alert_type,
+      })
+      
+      // Play sound and vibrate
+      playAlertSound()
+      vibrateDevice()
 
       // Check if user has acknowledged
       const { data: response } = await supabase
@@ -209,24 +229,24 @@ export default function AlertResponsePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sa-green via-sa-blue to-sa-gold p-4">
+    <div className="min-h-screen bg-sa-red emergency-flash p-4">
       <div className="max-w-4xl mx-auto">
-        {/* Emergency Alert Banner */}
-        <Card className="mb-6 border-4 border-sa-red emergency-pulse bg-red-50">
+        {/* Emergency Alert Banner - Full screen red alert */}
+        <Card className="mb-6 border-4 border-white emergency-pulse bg-sa-red text-white">
           <div className="flex items-center gap-4 mb-4">
             <div className="w-16 h-16 bg-sa-red rounded-full flex items-center justify-center emergency-pulse">
               <AlertTriangle className="w-8 h-8 text-white" />
             </div>
             <div className="flex-1">
-              <h1 className="text-3xl font-bold text-sa-red mb-2">EMERGENCY ALERT</h1>
-              <p className="text-gray-700">
-                Someone in your contacts is in immediate danger
+              <h1 className="text-3xl font-bold text-white mb-2">🚨 EMERGENCY ALERT 🚨</h1>
+              <p className="text-white text-lg">
+                Someone in your contacts is in immediate danger!
               </p>
             </div>
           </div>
-          <div className="bg-white rounded-lg p-4">
-            <p className="font-semibold text-gray-900 mb-2">Alert Type:</p>
-            <p className="text-lg text-gray-700 capitalize">
+          <div className="bg-white/20 rounded-lg p-4 border border-white/30">
+            <p className="font-semibold text-white mb-2">Alert Type:</p>
+            <p className="text-lg text-white font-bold capitalize">
               {alert.alert_type.replace('_', ' ')}
             </p>
           </div>

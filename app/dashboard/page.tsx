@@ -6,6 +6,8 @@ import { useAuth } from '@/lib/contexts/AuthContext'
 import { getActiveEmergency, createEmergencyAlert, checkRateLimit } from '@/lib/emergency'
 import { getCurrentLocation, reverseGeocode } from '@/lib/location'
 import { getEmergencyContacts } from '@/lib/emergency'
+import { subscribeToContactAlerts } from '@/lib/realtime/subscriptions'
+import { showEmergencyAlert, hideEmergencyAlert } from '@/lib/notifications'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
 import { AlertTriangle, Users, Phone, MapPin, LogOut } from 'lucide-react'
@@ -19,8 +21,20 @@ export default function DashboardPage() {
   const [contactCount, setContactCount] = useState(0)
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      router.push('/auth/login')
+    // Wait for auth loading to complete before checking user
+    // This prevents premature redirects before auth state is ready
+    if (authLoading) {
+      return // Still loading, wait
+    }
+    
+    // Only redirect if auth loading is complete and no user
+    if (!user) {
+      // Small delay to ensure auth state is fully settled
+      const redirectTimeout = setTimeout(() => {
+        router.push('/auth/login')
+      }, 300)
+      
+      return () => clearTimeout(redirectTimeout)
     }
   }, [user, authLoading, router])
 
@@ -28,8 +42,28 @@ export default function DashboardPage() {
     if (user) {
       loadActiveEmergency()
       loadContactCount()
+      
+      // Subscribe to emergency alerts for this contact user
+      // This fires when someone in their contact list triggers an alert
+      const unsubscribe = subscribeToContactAlerts(user.id, (alert) => {
+        console.log('Emergency alert received for contact:', alert)
+        
+        // Show full-screen alert notification
+        showEmergencyAlert(alert.id, {
+          address: alert.address,
+          alert_type: alert.alert_type,
+        })
+        
+        // Navigate to alert page
+        router.push(`/alert/${alert.id}`)
+      })
+      
+      return () => {
+        unsubscribe()
+        hideEmergencyAlert()
+      }
     }
-  }, [user])
+  }, [user, router])
 
   const loadActiveEmergency = async () => {
     if (!user) return
@@ -84,7 +118,7 @@ export default function DashboardPage() {
     setEmergencyLoading(true)
 
     try {
-      // Get current location (optional - continue without if fails)
+      // Get current location on client-side (optional - continue without if fails)
       let location
       try {
         const coords = await getCurrentLocation()
@@ -99,10 +133,27 @@ export default function DashboardPage() {
         // Continue without location - alert can still be created
       }
 
-      // Create emergency alert
+      // Create emergency alert via API route (location sent in body)
       let alert
       try {
-        alert = await createEmergencyAlert(user.id, 'other', location)
+        const response = await fetch('/api/emergency/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            alert_type: 'other',
+            location: location || undefined,
+          }),
+        })
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+          throw new Error(errorData.error || `Failed to create emergency alert (${response.status})`)
+        }
+
+        const data = await response.json()
+        alert = data.alert
       } catch (alertError: any) {
         throw new Error(`Failed to create emergency alert: ${alertError.message || 'Unknown error'}`)
       }

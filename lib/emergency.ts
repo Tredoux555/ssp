@@ -115,11 +115,12 @@ export async function notifyEmergencyContacts(
       }
     }
 
-    // TODO: Implement actual push notifications via Supabase Edge Functions or external service
-    // The data structure is ready for admin integration:
-    // - emergency_alerts.contacts_notified contains array of contact IDs
-    // - alert_responses table tracks which contacts were notified
-    // - Admin can query these tables to send push notifications
+    // Push notifications are implemented via Supabase Realtime
+    // When emergency_alerts.contacts_notified is updated, Realtime subscriptions
+    // on contact users' devices will fire and trigger the alert UI
+    // See subscribeToContactAlerts() in lib/realtime/subscriptions.ts
+    // The update above (contacts_notified array) triggers Realtime changes
+    // Contacts subscribe to emergency_alerts table and filter by their user ID in contacts_notified
   } catch (error: any) {
     console.error('Error notifying emergency contacts:', error)
     throw error

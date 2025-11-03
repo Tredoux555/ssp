@@ -216,12 +216,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Failed to sign in. Please try again.')
       }
 
-      console.log('Sign-in successful - onAuthStateChange will set user state')
-      // Don't set user state here - let onAuthStateChange handle it
-      // This prevents race conditions and ensures single source of truth
+      console.log('Sign-in successful - refreshing session and waiting for state update')
       
-      // Sign-in completes - auth listener will update state
-      console.log('Sign-in complete')
+      // Explicitly refresh session to ensure it's immediately available
+      // This fixes cases where session isn't immediately available after sign-in
+      try {
+        const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.getSession()
+        if (!refreshError && refreshedSession) {
+          console.log('Session refreshed successfully')
+          // Session is now confirmed - onAuthStateChange will fire and update state
+        } else {
+          console.warn('Session refresh returned error, but sign-in succeeded:', refreshError)
+          // Continue anyway - onAuthStateChange will handle it
+        }
+      } catch (refreshErr) {
+        console.warn('Error refreshing session (non-critical):', refreshErr)
+        // Continue anyway - onAuthStateChange will handle it
+      }
+      
+      // Small delay to ensure onAuthStateChange fires and updates state
+      // This prevents navigation before auth state is ready
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      console.log('Sign-in complete - state should be updated')
     } catch (err: any) {
       console.error('Sign-in failed:', err)
       // Don't manipulate state here - only throw errors

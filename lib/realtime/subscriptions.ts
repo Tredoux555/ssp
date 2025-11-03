@@ -164,6 +164,34 @@ export function subscribeToAlertResponses(
 }
 
 /**
+ * Subscribe to emergency alerts for a contact user
+ * This fires when the user is notified about an emergency alert
+ * Used to receive push notifications when someone in your contact list triggers an alert
+ */
+export function subscribeToContactAlerts(
+  contactUserId: string,
+  callback: (alert: any) => void
+): () => void {
+  const manager = getSubscriptionManager()
+  return manager.subscribe({
+    channel: `contact-alerts-${contactUserId}`,
+    table: 'emergency_alerts',
+    event: '*',
+    callback: (payload) => {
+      const alert = payload.new || payload.old
+      // Only fire callback if this contact user is in the contacts_notified array
+      if (alert && alert.contacts_notified && Array.isArray(alert.contacts_notified)) {
+        const isNotified = alert.contacts_notified.some((id: string) => id === contactUserId)
+        // Also check if this is a new alert being created or updated to active status
+        if (isNotified && alert.status === 'active') {
+          callback(alert)
+        }
+      }
+    },
+  })
+}
+
+/**
  * Cleanup all subscriptions
  */
 export function cleanupAllSubscriptions(): void {

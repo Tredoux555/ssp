@@ -23,11 +23,48 @@ export default function LoginPage() {
 
     try {
       console.log('Calling signIn...')
-      await signIn(email, password)
-      console.log('signIn completed, navigating immediately...')
       
-      // Navigate immediately - no delay needed
-      // onAuthStateChange will update state in background
+      // Add retry logic for network errors (max 2 retries)
+      let retries = 0
+      const maxRetries = 2
+      let lastError: any = null
+      
+      while (retries <= maxRetries) {
+        try {
+          await signIn(email, password)
+          console.log('signIn completed successfully')
+          lastError = null
+          break // Success - exit retry loop
+        } catch (err: any) {
+          lastError = err
+          const isNetworkError = err?.message?.includes('network') || 
+                                 err?.message?.includes('fetch') ||
+                                 err?.message?.includes('timeout')
+          
+          if (isNetworkError && retries < maxRetries) {
+            retries++
+            console.warn(`Sign-in attempt ${retries} failed with network error, retrying...`)
+            // Wait 1 second before retry
+            await new Promise(resolve => setTimeout(resolve, 1000))
+            continue
+          } else {
+            // Not a network error or max retries reached
+            throw err
+          }
+        }
+      }
+      
+      if (lastError) {
+        throw lastError
+      }
+      
+      console.log('Navigating to dashboard after successful sign-in')
+      
+      // Wait a bit more to ensure onAuthStateChange has updated state
+      // This ensures session is available when dashboard loads
+      await new Promise(resolve => setTimeout(resolve, 300))
+      
+      // Navigate to dashboard
       window.location.href = '/dashboard'
     } catch (err: any) {
       console.error('Sign-in error:', err)

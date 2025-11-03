@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { createEmergencyAlert, checkRateLimit, getEmergencyContacts } from '@/lib/emergency'
-import { getCurrentLocation, reverseGeocode } from '@/lib/location'
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,7 +37,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { alert_type = 'other' } = body
+    const { alert_type = 'other', location } = body
 
     // Validate alert_type
     const validAlertTypes = ['robbery', 'house_breaking', 'car_jacking', 'accident', 'other']
@@ -47,6 +46,25 @@ export async function POST(request: NextRequest) {
         { error: `Invalid alert_type. Must be one of: ${validAlertTypes.join(', ')}` },
         { status: 400 }
       )
+    }
+
+    // Validate location if provided (must come from client)
+    let validatedLocation: { lat: number; lng: number; address?: string } | undefined = undefined
+    if (location) {
+      if (typeof location.lat === 'number' && typeof location.lng === 'number') {
+        // Validate lat/lng ranges
+        if (location.lat >= -90 && location.lat <= 90 && location.lng >= -180 && location.lng <= 180) {
+          validatedLocation = {
+            lat: location.lat,
+            lng: location.lng,
+            address: location.address || undefined,
+          }
+        } else {
+          console.warn('Invalid location coordinates provided')
+        }
+      } else {
+        console.warn('Invalid location format provided')
+      }
     }
 
     // Check rate limit
@@ -63,28 +81,13 @@ export async function POST(request: NextRequest) {
       // Continue - don't block on rate limit check error
     }
 
-    // Get current location (optional - continue without if fails)
-    let location
-    try {
-      const coords = await getCurrentLocation()
-      const address = await reverseGeocode(coords.lat, coords.lng)
-      location = {
-        lat: coords.lat,
-        lng: coords.lng,
-        address: address || undefined,
-      }
-    } catch (error) {
-      console.warn('Failed to get location, continuing without location:', error)
-      // Continue without location - not critical
-    }
-
     // Create emergency alert
     let alert
     try {
       alert = await createEmergencyAlert(
         userId,
         alert_type as any,
-        location
+        validatedLocation
       )
     } catch (alertError: any) {
       console.error('Failed to create emergency alert:', alertError)
