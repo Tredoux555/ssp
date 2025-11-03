@@ -280,18 +280,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Failed to sign in. Please try again.')
       }
 
-      // Fetch and set profile
-      try {
-        const userProfile = await fetchProfile(data.user.id)
-        setProfile(userProfile)
-      } catch (fetchError) {
-        console.warn('Failed to fetch profile after sign in:', fetchError)
-        // Don't fail sign in if profile fetch fails - it will be loaded by auth state listener
-        setProfile(null)
-      }
-
-      // Ensure user state is updated
+      // Set user state immediately - don't wait for profile
       setUser(data.user)
+
+      // Fetch profile in background with timeout - don't block sign-in
+      // This prevents hanging if profile fetch is slow or fails
+      Promise.race([
+        fetchProfile(data.user.id).catch(() => null),
+        new Promise((resolve) => setTimeout(() => resolve(null), 2000))
+      ]).then((profile) => {
+        setProfile(profile as UserProfile | null)
+      }).catch((fetchError) => {
+        console.warn('Failed to fetch profile after sign in:', fetchError)
+        // Don't fail sign in - profile will be loaded by auth state listener
+        setProfile(null)
+      })
+
+      // Sign-in completes immediately - profile fetch happens in background
     } catch (err: any) {
       console.error('Sign-in failed:', err)
       // Ensure we don't leave the app in a broken state
