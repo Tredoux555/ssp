@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
-import { getActiveEmergency, createEmergencyAlert, checkRateLimit } from '@/lib/emergency'
+import { getActiveEmergency, createEmergencyAlert } from '@/lib/emergency'
 import { getCurrentLocation, reverseGeocode } from '@/lib/location'
 import { getEmergencyContacts } from '@/lib/emergency'
 import { subscribeToContactAlerts } from '@/lib/realtime/subscriptions'
@@ -12,6 +12,36 @@ import Button from '@/components/Button'
 import Card from '@/components/Card'
 import { AlertTriangle, Users, Phone, MapPin, LogOut } from 'lucide-react'
 import { EmergencyAlert } from '@/types/database'
+
+// Helper function to properly serialize errors for logging
+function serializeError(error: any): any {
+  if (!error) return null
+  
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      constructor: error.constructor?.name,
+    }
+  }
+  
+  if (typeof error === 'string') {
+    return { message: error }
+  }
+  
+  // Try to extract any properties
+  try {
+    const keys = Object.keys(error || {})
+    if (keys.length > 0) {
+      return error
+    }
+  } catch {
+    // Object.keys might fail for some error types
+  }
+  
+  return { message: String(error), type: typeof error }
+}
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -99,22 +129,9 @@ export default function DashboardPage() {
   const handleEmergencyButton = async () => {
     if (!user) return
 
-    // Check rate limit
-    const canCreate = await checkRateLimit(user.id)
-    if (!canCreate) {
-      alert('Please wait 30 seconds before creating another emergency alert.')
-      return
-    }
-
-    // Show confirmation
-    const confirmed = window.confirm(
-      'Are you in immediate danger?\n\n' +
-      'This will send an emergency alert to all your contacts with your location.\n\n' +
-      'Click OK to send the alert.'
-    )
-
-    if (!confirmed) return
-
+    // No confirmation - emergency alerts go out instantly
+    // Rate limit is checked server-side (authoritative)
+    // Old active alerts are auto-cancelled server-side before rate limit check
     setEmergencyLoading(true)
 
     try {
@@ -134,27 +151,77 @@ export default function DashboardPage() {
       }
 
       // Create emergency alert via API route (location sent in body)
-      let alert
+      let emergencyAlert
       try {
-        const response = await fetch('/api/emergency/create', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            alert_type: 'other',
-            location: location || undefined,
-          }),
-        })
+        let response: Response
+        
+        // Wrap fetch in try-catch to handle network errors
+        try {
+          response = await fetch('/api/emergency/create', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              alert_type: 'other',
+              location: location || undefined,
+            }),
+          })
+        } catch (fetchError: any) {
+          // Network error (TypeError: fetch failed, CORS, etc.)
+          const networkError = fetchError instanceof TypeError
+            ? new Error(`Network error: ${fetchError.message || 'Failed to connect to server'}`)
+            : fetchError instanceof Error
+            ? fetchError
+            : new Error(`Network error: ${String(fetchError)}`)
+          
+          console.error('Emergency alert network error:', serializeError(networkError))
+          throw networkError
+        }
+
+        // Handle rate limit (429) explicitly - don't treat as error, handle gracefully
+        if (response.status === 429) {
+          // Parse rate limit message
+          let rateLimitMessage = 'Rate limit exceeded. Please wait 30 seconds.'
+          try {
+            const text = await response.text()
+            if (text) {
+              const errorData = JSON.parse(text)
+              rateLimitMessage = errorData.error || rateLimitMessage
+            }
+          } catch {
+            // Response parsing failed - use default message
+          }
+          
+          // Show alert and return early - don't log as error
+          setEmergencyLoading(false)
+          window.alert(rateLimitMessage)
+          return
+        }
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-          throw new Error(errorData.error || `Failed to create emergency alert (${response.status})`)
+          // Parse error response for non-429 errors
+          let errorMessage = `Failed to create emergency alert (${response.status})`
+          try {
+            const text = await response.text()
+            if (text) {
+              const errorData = JSON.parse(text)
+              errorMessage = errorData.error || errorMessage
+            }
+          } catch {
+            // Response is not JSON or empty - use status text
+            errorMessage = response.statusText || errorMessage
+          }
+          
+          // Throw error for non-429 failures
+          throw new Error(`Failed to create emergency alert: ${errorMessage}`)
         }
 
         const data = await response.json()
-        alert = data.alert
+        emergencyAlert = data.alert
       } catch (alertError: any) {
+        // Only catch non-429 errors here (429 is handled above)
+        // All errors here should be wrapped with generic prefix
         throw new Error(`Failed to create emergency alert: ${alertError.message || 'Unknown error'}`)
       }
 
@@ -163,7 +230,7 @@ export default function DashboardPage() {
         const contacts = await getEmergencyContacts(user.id)
         if (contacts.length > 0) {
           const { notifyEmergencyContacts } = await import('@/lib/emergency')
-          await notifyEmergencyContacts(alert.id, user.id, contacts).catch((notifyError) => {
+          await notifyEmergencyContacts(emergencyAlert.id, user.id, contacts).catch((notifyError) => {
             console.error('Failed to notify contacts (non-critical):', notifyError)
             // Don't fail the alert creation if notification fails
           })
@@ -174,11 +241,33 @@ export default function DashboardPage() {
       }
 
       // Navigate to emergency screen
-      router.push(`/emergency/active/${alert.id}`)
+      router.push(`/emergency/active/${emergencyAlert.id}`)
     } catch (error: any) {
-      console.error('Emergency button error:', error)
-      const errorMessage = error?.message || 'Failed to create emergency alert. Please try again.'
-      alert(errorMessage)
+      // Properly serialize error for logging
+      const serializedError = serializeError(error)
+      console.error('Emergency button error:', {
+        ...serializedError,
+        userEmail: user?.email,
+        userId: user?.id,
+        rawError: error instanceof Error ? {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        } : error,
+      })
+      
+      // Extract error message - handle different error types
+      let errorMessage = 'Failed to create emergency alert. Please try again.'
+      if (error instanceof Error) {
+        errorMessage = error.message || errorMessage
+      } else if (typeof error === 'string') {
+        errorMessage = error
+      } else if (error?.message) {
+        errorMessage = error.message
+      }
+      
+      // Show error to user
+      window.alert(errorMessage)
     } finally {
       setEmergencyLoading(false)
     }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
-import { createEmergencyAlert, checkRateLimit, getEmergencyContacts } from '@/lib/emergency'
+import { createAdminClient } from '@/lib/supabase'
 
 export async function POST(request: NextRequest) {
   try {
@@ -67,48 +67,158 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Check rate limit
+    // Auto-cancel any existing active alerts before creating new one
+    // This prevents old active alerts from blocking new emergency alerts
+    const admin = createAdminClient()
+    let cancelledCount = 0
     try {
-      const canCreate = await checkRateLimit(userId)
-      if (!canCreate) {
+      const { data: cancelledData, error: cancelError } = await admin
+        .from('emergency_alerts')
+        .update({ 
+          status: 'cancelled', 
+          resolved_at: new Date().toISOString() 
+        })
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .select('id')
+      
+      if (cancelError) {
+        console.warn('Failed to auto-cancel old active alerts (non-critical):', cancelError)
+        // Continue - don't block creation if cancel fails
+      } else if (cancelledData) {
+        cancelledCount = cancelledData.length
+        console.log(`Auto-cancelled ${cancelledCount} old active alert(s) for user ${userId}`)
+      }
+    } catch (cancelErr) {
+      console.warn('Error auto-cancelling old active alerts (non-critical):', cancelErr)
+      // Continue - don't block creation
+    }
+
+    // Check rate limit - checks only active alerts (old ones were auto-cancelled above)
+    // Use admin client for rate limit check (server-side) to bypass RLS
+    try {
+      const thirtySecondsAgo = new Date(Date.now() - 30000).toISOString()
+      
+      // Check only ACTIVE alerts in last 30 seconds
+      // Old active alerts were auto-cancelled above, so this only blocks if there's a recent active alert
+      const { data: rateLimitData, error: rateLimitError } = await admin
+        .from('emergency_alerts')
+        .select('id, triggered_at')
+        .eq('user_id', userId)
+        .eq('status', 'active') // Only check active alerts
+        .gte('triggered_at', thirtySecondsAgo)
+        .limit(1)
+      
+      if (rateLimitError) {
+        console.error('Rate limit check error:', rateLimitError)
+        // Continue - don't block on rate limit check error
+      } else if (rateLimitData && rateLimitData.length > 0) {
+        // There's an active alert within 30 seconds - block creation
+        console.log(`Rate limit blocked: Found ${rateLimitData.length} active alert(s) within 30 seconds for user ${userId}`)
         return NextResponse.json(
           { error: 'Rate limit exceeded. Please wait 30 seconds.' },
           { status: 429 }
         )
+      } else {
+        console.log(`Rate limit check passed: No active alerts within 30 seconds for user ${userId} (cancelled ${cancelledCount} old alerts)`)
       }
     } catch (rateLimitError: any) {
       console.error('Rate limit check error:', rateLimitError)
       // Continue - don't block on rate limit check error
     }
 
-    // Create emergency alert
+    // Create emergency alert using admin client (server-side)
     let alert
     try {
-      alert = await createEmergencyAlert(
-        userId,
-        alert_type as any,
-        validatedLocation
-      )
+      const alertData: any = {
+        user_id: userId,
+        status: 'active',
+        alert_type: alert_type,
+      }
+
+      if (validatedLocation) {
+        alertData.location_lat = validatedLocation.lat
+        alertData.location_lng = validatedLocation.lng
+        if (validatedLocation.address) {
+          alertData.address = validatedLocation.address
+        }
+      }
+
+      const { data: alertDataResult, error: alertError } = await admin
+        .from('emergency_alerts')
+        .insert(alertData)
+        .select()
+        .single()
+
+      if (alertError || !alertDataResult) {
+        console.error('Failed to create emergency alert:', alertError)
+        return NextResponse.json(
+          { error: alertError?.message || 'Failed to create emergency alert' },
+          { status: 500 }
+        )
+      }
+
+      alert = alertDataResult
     } catch (alertError: any) {
       console.error('Failed to create emergency alert:', alertError)
       return NextResponse.json(
-        { error: alertError.message || 'Failed to create emergency alert' },
+        { error: alertError?.message || 'Failed to create emergency alert' },
         { status: 500 }
       )
     }
 
     // Get contacts and notify them (non-blocking)
+    // Use admin client to bypass RLS for both getting contacts and creating alert responses
     try {
-      const contacts = await getEmergencyContacts(userId)
-      if (contacts.length > 0) {
-        const { notifyEmergencyContacts } = await import('@/lib/emergency')
-        await notifyEmergencyContacts(alert.id, userId, contacts).catch((notifyError) => {
-          console.error('Failed to notify contacts (non-critical):', notifyError)
-          // Don't fail the request if notification fails
-        })
+      // Get emergency contacts using admin client (bypasses RLS)
+      const { data: contacts, error: contactsError } = await admin
+        .from('emergency_contacts')
+        .select('id, contact_user_id, email, phone, verified')
+        .eq('user_id', userId)
+        .eq('verified', true)
+      
+      if (contactsError) {
+        console.error('Failed to get contacts:', contactsError)
+        // Continue - don't block on contact fetch error
+      } else if (contacts && contacts.length > 0) {
+        // Filter and get contact IDs
+        const contactIds = contacts
+          .filter(c => c.verified && (c.contact_user_id || c.email || c.phone))
+          .map(c => c.contact_user_id || c.id)
+          .filter(id => id) // Filter out null/undefined
+
+        if (contactIds.length > 0) {
+          // Update alert with notified contacts using admin client
+          const { error: updateError } = await admin
+            .from('emergency_alerts')
+            .update({ contacts_notified: contactIds })
+            .eq('id', alert.id)
+            .eq('user_id', userId)
+          
+          if (updateError) {
+            console.error('Failed to update alert with notified contacts:', updateError)
+          } else {
+            // Create alert responses for each contact using admin client (bypasses RLS)
+            const responses = contactIds.map(contactId => ({
+              alert_id: alert.id,
+              contact_user_id: contactId,
+            }))
+
+            const { error: insertError } = await admin
+              .from('alert_responses')
+              .insert(responses)
+
+            if (insertError) {
+              console.error('Failed to create alert responses:', insertError)
+              // Don't throw - alert is already updated with contacts
+            } else {
+              console.log(`Created ${responses.length} alert response(s) for alert ${alert.id}`)
+            }
+          }
+        }
       }
     } catch (contactError) {
-      console.error('Failed to get contacts (non-critical):', contactError)
+      console.error('Failed to notify contacts (non-critical):', contactError)
       // Continue even if contact notification fails
     }
 

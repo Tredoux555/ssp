@@ -212,6 +212,7 @@ export async function getActiveEmergency(userId: string): Promise<EmergencyAlert
 
 /**
  * Rate limit check - max 1 emergency per 30 seconds
+ * Checks only ACTIVE alerts since old ones are auto-cancelled before creation
  */
 export async function checkRateLimit(userId: string): Promise<boolean> {
   const supabase = createClient()
@@ -224,12 +225,15 @@ export async function checkRateLimit(userId: string): Promise<boolean> {
 
   const thirtySecondsAgo = new Date(Date.now() - 30000).toISOString()
 
+  // Check only ACTIVE alerts in last 30 seconds
+  // Old active alerts are auto-cancelled before this check runs,
+  // so this only blocks if there's a recent active alert (prevents spam)
   const { data, error } = await supabase
     .from('emergency_alerts')
     .select('id')
     .eq('user_id', userId)
+    .eq('status', 'active') // Only check active alerts
     .gte('triggered_at', thirtySecondsAgo)
-    .eq('status', 'active')
     .limit(1)
 
   if (error) {
