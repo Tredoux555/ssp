@@ -60,13 +60,19 @@ export async function POST(
     // If helper function not present, fall back to manual upsert
     if (upsertError) {
       // Try update existing by (user_id, lower(email))
-      const { data: existing } = await admin
-        .from('emergency_contacts')
-        .select('id')
-        .eq('user_id', invite.inviter_user_id)
-        .ilike('email', targetEmail)
-        .single()
-        .catch(() => ({ data: null })) as any
+      let existing: { id?: string } | null = null
+      try {
+        const { data } = await admin
+          .from('emergency_contacts')
+          .select('id')
+          .eq('user_id', invite.inviter_user_id)
+          .ilike('email', targetEmail)
+          .single()
+        existing = data
+      } catch {
+        // No existing contact found - will insert new one
+        existing = null
+      }
 
       if (existing?.id) {
         const { error: updateError } = await admin
