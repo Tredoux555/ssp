@@ -7,7 +7,7 @@ export async function POST(request: NextRequest) {
   try {
     let supabase
     try {
-      supabase = createServerClient()
+      supabase = await createServerClient()
     } catch (error) {
       return NextResponse.json(
         { error: 'Server configuration error' },

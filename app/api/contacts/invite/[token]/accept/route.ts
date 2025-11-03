@@ -9,7 +9,7 @@ export async function POST(
   try {
     let supabase
     try {
-      supabase = createServerClient()
+      supabase = await createServerClient()
     } catch (error) {
       return NextResponse.json({ error: 'Server configuration error' }, { status: 500 })
     }
