@@ -11,6 +11,11 @@ export async function createEmergencyAlert(
 ): Promise<EmergencyAlert> {
   const supabase = createClient()
 
+  if (!supabase) {
+    console.error('Supabase client not available for creating emergency alert')
+    throw new Error('Failed to create emergency alert: Server configuration error')
+  }
+
   const alertData: any = {
     user_id: userId,
     status: 'active',
@@ -43,6 +48,11 @@ export async function createEmergencyAlert(
  */
 export async function getEmergencyContacts(userId: string) {
   const supabase = createClient()
+
+  if (!supabase) {
+    console.error('Supabase client not available for fetching emergency contacts')
+    throw new Error('Failed to fetch emergency contacts: Server configuration error')
+  }
 
   const { data, error } = await supabase
     .from('emergency_contacts')
@@ -133,6 +143,11 @@ export async function notifyEmergencyContacts(
 export async function cancelEmergencyAlert(alertId: string, userId: string): Promise<void> {
   const supabase = createClient()
 
+  if (!supabase) {
+    console.error('Supabase client not available for cancelling emergency alert')
+    throw new Error('Failed to cancel emergency alert: Server configuration error')
+  }
+
   const { error } = await supabase
     .from('emergency_alerts')
     .update({ status: 'cancelled', resolved_at: new Date().toISOString() })
@@ -149,6 +164,11 @@ export async function cancelEmergencyAlert(alertId: string, userId: string): Pro
  */
 export async function resolveEmergencyAlert(alertId: string, userId: string): Promise<void> {
   const supabase = createClient()
+
+  if (!supabase) {
+    console.error('Supabase client not available for resolving emergency alert')
+    throw new Error('Failed to resolve emergency alert: Server configuration error')
+  }
 
   const { error } = await supabase
     .from('emergency_alerts')
@@ -167,6 +187,13 @@ export async function resolveEmergencyAlert(alertId: string, userId: string): Pr
 export async function getActiveEmergency(userId: string): Promise<EmergencyAlert | null> {
   const supabase = createClient()
 
+  if (!supabase) {
+    console.error('Supabase client not available for fetching active emergency')
+    throw new Error('Failed to fetch active emergency: Server configuration error')
+  }
+
+  // Use .maybeSingle() instead of .single() to handle cases where no active emergency exists
+  // .maybeSingle() returns null when no rows found instead of throwing 406 error
   const { data, error } = await supabase
     .from('emergency_alerts')
     .select('*')
@@ -174,7 +201,7 @@ export async function getActiveEmergency(userId: string): Promise<EmergencyAlert
     .eq('status', 'active')
     .order('triggered_at', { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
 
   if (error && error.code !== 'PGRST116') {
     throw new Error(`Failed to fetch active emergency: ${error.message}`)
@@ -188,6 +215,13 @@ export async function getActiveEmergency(userId: string): Promise<EmergencyAlert
  */
 export async function checkRateLimit(userId: string): Promise<boolean> {
   const supabase = createClient()
+
+  if (!supabase) {
+    console.error('Supabase client not available for rate limit check')
+    // Return false (fail-safe) - don't allow emergency if client is unavailable
+    return false
+  }
+
   const thirtySecondsAgo = new Date(Date.now() - 30000).toISOString()
 
   const { data, error } = await supabase

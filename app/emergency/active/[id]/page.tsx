@@ -7,7 +7,15 @@ import { getActiveEmergency } from '@/lib/emergency'
 import { startLocationTracking, getCurrentLocation, reverseGeocode } from '@/lib/location'
 import { EmergencyAlert } from '@/types/database'
 import Button from '@/components/Button'
-import { AlertTriangle, X, MapPin } from 'lucide-react'
+import Card from '@/components/Card'
+import { AlertTriangle, X, MapPin, Navigation } from 'lucide-react'
+import dynamic from 'next/dynamic'
+
+// Dynamically import Google Maps to avoid SSR issues
+const GoogleMapComponent = dynamic(
+  () => import('@/components/EmergencyMap'),
+  { ssr: false }
+)
 
 export default function EmergencyActivePage() {
   const params = useParams()
@@ -231,57 +239,98 @@ export default function EmergencyActivePage() {
   }
 
   return (
-    <div className="min-h-screen bg-sa-red emergency-flash flex flex-col items-center justify-center p-4 text-white">
-      <div className="max-w-md w-full text-center">
-        {/* Alert Icon */}
-        <div className="mb-6 emergency-pulse">
-          <AlertTriangle className="w-24 h-24 mx-auto text-white" />
-        </div>
+    <div className="min-h-screen bg-sa-red emergency-flash p-4 text-white">
+      <div className="max-w-4xl mx-auto">
+        {/* Alert Banner */}
+        <Card className="mb-6 border-4 border-white emergency-pulse bg-sa-red text-white">
+          <div className="text-center">
+            {/* Alert Icon */}
+            <div className="mb-4 emergency-pulse">
+              <AlertTriangle className="w-16 h-16 mx-auto text-white" />
+            </div>
 
-        {/* Alert Message */}
-        <h1 className="text-4xl font-bold mb-4">EMERGENCY ALERT</h1>
-        <p className="text-xl mb-2">Your alert has been sent</p>
-        <p className="text-lg mb-6 opacity-90">
-          Your contacts are being notified with your location
-        </p>
+            {/* Alert Message */}
+            <h1 className="text-3xl font-bold mb-2">EMERGENCY ALERT</h1>
+            <p className="text-xl mb-1">Your alert has been sent</p>
+            <p className="text-lg opacity-90 mb-4">
+              Your contacts are being notified with your location
+            </p>
+
+            {/* Alert Type */}
+            <div className="bg-white/20 rounded-lg p-3 inline-block">
+              <p className="text-sm opacity-75">Alert Type</p>
+              <p className="text-lg font-semibold capitalize">{alert.alert_type.replace('_', ' ')}</p>
+            </div>
+          </div>
+        </Card>
 
         {/* Location Info */}
         {location && (
-          <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4 mb-6">
-            <div className="flex items-center justify-center gap-2 mb-2">
-              <MapPin className="w-5 h-5" />
-              <span className="font-medium">Your Location</span>
+          <Card className="mb-6 bg-white/10 backdrop-blur-sm border-white/20">
+            <div className="flex items-center gap-2 mb-2">
+              <MapPin className="w-5 h-5 text-white" />
+              <span className="font-medium text-white">Your Location</span>
             </div>
             {address && (
-              <p className="text-sm opacity-90">{address}</p>
+              <p className="text-sm text-white opacity-90 mb-2">{address}</p>
             )}
-            <p className="text-xs opacity-75 mt-1">
+            <p className="text-xs text-white opacity-75">
               {location.lat.toFixed(6)}, {location.lng.toFixed(6)}
             </p>
-          </div>
+          </Card>
         )}
 
-        {/* Alert Type */}
-        <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 mb-6">
-          <p className="text-sm opacity-75">Alert Type</p>
-          <p className="text-lg font-semibold capitalize">{alert.alert_type.replace('_', ' ')}</p>
-        </div>
+        {/* Location Map */}
+        {location && alert && (
+          <Card className="mb-6 bg-white border-white/20">
+            <div className="flex items-center gap-2 mb-4">
+              <MapPin className="w-5 h-5 text-sa-red" />
+              <h2 className="text-xl font-bold text-gray-900">Your Location on Map</h2>
+            </div>
+            <div className="w-full h-96 rounded-lg overflow-hidden bg-gray-200">
+              <GoogleMapComponent
+                latitude={location.lat}
+                longitude={location.lng}
+                alertId={alert.id}
+                user_id={alert.user_id}
+              />
+            </div>
+            <Button
+              variant="emergency"
+              size="lg"
+              onClick={() => {
+                if (!location) return
+                const url = `https://www.google.com/maps/dir/?api=1&destination=${location.lat},${location.lng}`
+                window.open(url, '_blank')
+              }}
+              className="w-full mt-4 flex items-center justify-center gap-2"
+            >
+              <Navigation className="w-5 h-5" />
+              Open in Google Maps
+            </Button>
+          </Card>
+        )}
 
-        {/* Cancel Button */}
-        <Button
-          variant="secondary"
-          size="lg"
-          onClick={handleCancel}
-          className="w-full mb-4"
-        >
-          <X className="w-5 h-5 mr-2 inline" />
-          Cancel Alert
-        </Button>
+        {/* Actions */}
+        <Card className="mb-6 bg-white/10 backdrop-blur-sm border-white/20">
+          <div className="space-y-4">
+            {/* Cancel Button */}
+            <Button
+              variant="secondary"
+              size="lg"
+              onClick={handleCancel}
+              className="w-full flex items-center justify-center gap-2"
+            >
+              <X className="w-5 h-5" />
+              Cancel Alert
+            </Button>
 
-        {/* Help Text */}
-        <p className="text-xs opacity-75">
-          Keep this screen open so your location updates in real-time
-        </p>
+            {/* Help Text */}
+            <p className="text-xs text-white opacity-75 text-center">
+              Keep this screen open so your location updates in real-time
+            </p>
+          </div>
+        </Card>
       </div>
     </div>
   )

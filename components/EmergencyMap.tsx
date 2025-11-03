@@ -71,7 +71,12 @@ export default function EmergencyMapComponent({
   if (!apiKey) {
     return (
       <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-        <p className="text-gray-600">Google Maps API key not configured</p>
+        <div className="text-center p-4">
+          <p className="text-gray-600 font-medium mb-2">Google Maps API key not configured</p>
+          <p className="text-gray-500 text-sm">
+            Location: {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
+          </p>
+        </div>
       </div>
     )
   }
@@ -91,14 +96,11 @@ export default function EmergencyMapComponent({
           fullscreenControl: true,
         }}
       >
-        {/* Current location marker */}
+        {/* Current location marker - use default red marker instead of custom icon */}
         <Marker
           position={currentLocation}
-          icon={{
-            url: '/emergency-marker.png',
-            scaledSize: new google.maps.Size(40, 40),
-          }}
           title="Emergency Location"
+          // Use default Google Maps red marker - no custom icon needed
         />
 
         {/* Location history trail */}

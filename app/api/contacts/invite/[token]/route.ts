@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
+import { createAdminClient } from '@/lib/supabase'
 
 export async function GET(
   _request: NextRequest,
@@ -18,7 +19,12 @@ export async function GET(
       return NextResponse.json({ error: 'Missing token' }, { status: 400 })
     }
 
-    const { data: invite, error } = await supabase
+    // Use admin client to bypass RLS for fetching invite
+    // This allows anyone with the token to view invite details (needed for accept page)
+    // This follows the same pattern as app/api/contacts/invite/[token]/accept/route.ts
+    const admin = createAdminClient()
+
+    const { data: invite, error } = await admin
       .from('contact_invites')
       .select('inviter_user_id, target_email, expires_at, accepted_at')
       .eq('token', token)

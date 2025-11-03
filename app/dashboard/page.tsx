@@ -255,7 +255,10 @@ export default function DashboardPage() {
 
         {/* Quick Stats */}
         <div className="grid grid-cols-2 gap-4 mb-6">
-          <Card>
+          <Card 
+            className="cursor-pointer hover:shadow-lg transition-shadow" 
+            onClick={() => router.push('/contacts')}
+          >
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 bg-sa-green rounded-lg flex items-center justify-center">
                 <Users className="w-6 h-6 text-white" />
