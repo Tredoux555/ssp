@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
+import { createAdminClient } from '@/lib/supabase'
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,8 +31,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Valid email is required' }, { status: 400 })
     }
 
-    // Create invite
-    const { data: invite, error: insertError } = await supabase
+    // Use admin client to bypass RLS for both invite creation and contact creation
+    // Authentication is already verified above, so it's safe to use admin client
+    // This follows the same pattern as app/api/emergency/cancel/route.ts
+    const admin = createAdminClient()
+
+    // Create invite using admin client (bypasses RLS)
+    const { data: invite, error: insertError } = await admin
       .from('contact_invites')
       .insert({
         inviter_user_id: session.user.id,
@@ -41,6 +47,7 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (insertError || !invite) {
+      console.error('Error creating invite:', insertError)
       return NextResponse.json({ error: insertError?.message || 'Failed to create invite' }, { status: 500 })
     }
 
@@ -51,7 +58,7 @@ export async function POST(request: NextRequest) {
     // Optionally pre-create a placeholder contact row (email only) to avoid duplicates
     // Try insert, ignore duplicates
     try {
-      await supabase
+      await admin
         .from('emergency_contacts')
         .insert({
           user_id: session.user.id,
@@ -64,9 +71,9 @@ export async function POST(request: NextRequest) {
         })
         .select()
         .single()
-    } catch {
+    } catch (contactError) {
       // Ignore duplicate errors - contact might already exist
-      null
+      console.warn('Failed to pre-create contact (non-critical):', contactError)
     }
 
     return NextResponse.json({ inviteUrl }, { status: 200 })
