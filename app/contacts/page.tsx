@@ -18,6 +18,11 @@ export default function ContactsPage() {
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingContact, setEditingContact] = useState<EmergencyContact | null>(null)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRelationship, setInviteRelationship] = useState('')
+  const [invitePriority, setInvitePriority] = useState('0')
+  const [inviteSubmitting, setInviteSubmitting] = useState(false)
+  const [inviteLink, setInviteLink] = useState<string | null>(null)
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -262,6 +267,79 @@ export default function ContactsPage() {
           </Button>
           <h1 className="text-3xl font-bold text-white">Emergency Contacts</h1>
         </div>
+
+        {/* Invite by Email */}
+        <Card className="mb-6">
+          <h2 className="text-xl font-bold mb-3">Invite a Contact by Email</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Input
+              label="Email *"
+              type="email"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="friend@example.com"
+            />
+            <Input
+              label="Relationship"
+              value={inviteRelationship}
+              onChange={(e) => setInviteRelationship(e.target.value)}
+              placeholder="Family, Friend, etc."
+            />
+            <Input
+              label="Priority (0-10)"
+              type="number"
+              min="0"
+              max="10"
+              value={invitePriority}
+              onChange={(e) => setInvitePriority(e.target.value)}
+            />
+          </div>
+          <div className="mt-3 flex gap-2">
+            <Button
+              variant="primary"
+              onClick={async () => {
+                if (!user) return
+                setInviteSubmitting(true)
+                setInviteLink(null)
+                try {
+                  const res = await fetch('/api/contacts/invite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      email: inviteEmail,
+                      relationship: inviteRelationship,
+                      priority: parseInt(invitePriority) || 0,
+                    }),
+                  })
+                  const data = await res.json()
+                  if (!res.ok) throw new Error(data.error || 'Failed to create invite')
+                  setInviteLink(data.inviteUrl)
+                } catch (e: any) {
+                  alert(e.message || 'Failed to create invite')
+                } finally {
+                  setInviteSubmitting(false)
+                }
+              }}
+              disabled={inviteSubmitting}
+            >
+              {inviteSubmitting ? 'Creating...' : 'Create Invite'}
+            </Button>
+            {inviteLink && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  navigator.clipboard.writeText(inviteLink).catch(() => {})
+                  alert('Invite link copied to clipboard')
+                }}
+              >
+                Copy Link
+              </Button>
+            )}
+          </div>
+          {inviteLink && (
+            <p className="text-sm text-gray-600 mt-2 break-all">{inviteLink}</p>
+          )}
+        </Card>
 
         {/* Add Contact Button */}
         {!showAddForm && (

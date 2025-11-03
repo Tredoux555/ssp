@@ -133,6 +133,27 @@ CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX idx_audit_logs_timestamp ON audit_logs(timestamp DESC);
 CREATE INDEX idx_audit_logs_action_type ON audit_logs(action_type);
 
+-- Contact invites for email-based linking
+CREATE TABLE IF NOT EXISTS contact_invites (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  inviter_user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  target_email TEXT NOT NULL,
+  token UUID NOT NULL DEFAULT uuid_generate_v4(),
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (NOW() + INTERVAL '7 days'),
+  accepted_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  UNIQUE(token)
+);
+
+-- Indexes for contact_invites
+CREATE INDEX IF NOT EXISTS contact_invites_inviter_email_idx
+  ON contact_invites (inviter_user_id, lower(target_email));
+
+-- Optional de-duplication by email for contacts
+CREATE UNIQUE INDEX IF NOT EXISTS emergency_contacts_user_email_unique
+  ON emergency_contacts (user_id, lower(email))
+  WHERE email IS NOT NULL;
+
 -- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -184,6 +205,7 @@ ALTER TABLE social_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE group_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admin_notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contact_invites ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for user_profiles
 -- Users can only see their own profile
@@ -276,6 +298,17 @@ CREATE POLICY "Contacts can view location during emergency" ON location_history
       )
     )
   );
+
+-- RLS Policies for contact_invites
+-- Inviter can view/manage their own invites
+CREATE POLICY "Inviter can select own invites" ON contact_invites
+  FOR SELECT USING (auth.uid() = inviter_user_id);
+
+CREATE POLICY "Inviter can insert own invites" ON contact_invites
+  FOR INSERT WITH CHECK (auth.uid() = inviter_user_id);
+
+CREATE POLICY "Inviter can update own invites" ON contact_invites
+  FOR UPDATE USING (auth.uid() = inviter_user_id);
 
 -- RLS Policies for social_groups
 -- Anyone can view groups (public information)
