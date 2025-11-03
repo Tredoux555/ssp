@@ -23,10 +23,23 @@ export default function LoginPage() {
 
     try {
       await signIn(email, password)
-      router.push('/dashboard')
+      // Wait a moment for auth state to update, then navigate
+      // Use both router.push (for desktop) and window.location (fallback)
+      try {
+        router.push('/dashboard')
+        // Fallback for desktop if router doesn't work
+        setTimeout(() => {
+          if (window.location.pathname !== '/dashboard') {
+            window.location.href = '/dashboard'
+          }
+        }, 500)
+      } catch (navError) {
+        // If router fails, use direct navigation
+        window.location.href = '/dashboard'
+      }
     } catch (err: any) {
+      console.error('Sign-in error:', err)
       setError(err.message || 'Failed to sign in')
-    } finally {
       setLoading(false)
     }
   }
