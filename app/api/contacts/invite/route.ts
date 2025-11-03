@@ -50,20 +50,24 @@ export async function POST(request: NextRequest) {
 
     // Optionally pre-create a placeholder contact row (email only) to avoid duplicates
     // Try insert, ignore duplicates
-    await supabase
-      .from('emergency_contacts')
-      .insert({
-        user_id: session.user.id,
-        name: email.split('@')[0],
-        email,
-        relationship: relationship || null,
-        priority: typeof priority === 'number' ? priority : 0,
-        can_see_location: true,
-        verified: false,
-      })
-      .select()
-      .single()
-      .catch(() => null)
+    try {
+      await supabase
+        .from('emergency_contacts')
+        .insert({
+          user_id: session.user.id,
+          name: email.split('@')[0],
+          email,
+          relationship: relationship || null,
+          priority: typeof priority === 'number' ? priority : 0,
+          can_see_location: true,
+          verified: false,
+        })
+        .select()
+        .single()
+    } catch {
+      // Ignore duplicate errors - contact might already exist
+      null
+    }
 
     return NextResponse.json({ inviteUrl }, { status: 200 })
   } catch (error: any) {
