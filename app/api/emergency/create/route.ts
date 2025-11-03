@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase'
+import { createServerClient } from '@/lib/supabase'
 import { createEmergencyAlert, checkRateLimit, getEmergencyContacts } from '@/lib/emergency'
 import { getCurrentLocation, reverseGeocode } from '@/lib/location'
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createClient()
-    
-    if (!supabase) {
+    let supabase
+    try {
+      supabase = createServerClient()
+    } catch (error) {
       return NextResponse.json(
         { error: 'Server configuration error' },
         { status: 500 }

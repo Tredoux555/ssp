@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase'
+import { createServerClient } from '@/lib/supabase'
 
 export async function GET(
   _request: NextRequest,
   context: { params: Promise<{ token: string }> }
 ): Promise<NextResponse> {
   try {
-    const supabase = createClient()
-    if (!supabase) {
+    let supabase
+    try {
+      supabase = createServerClient()
+    } catch (error) {
       return NextResponse.json({ error: 'Server configuration error' }, { status: 500 })
     }
 
