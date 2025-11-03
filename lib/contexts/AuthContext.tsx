@@ -261,6 +261,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) {
       throw new Error('Supabase client not initialized')
     }
+
+    // Check if environment variables are set (prevent using mock client)
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    
+    if (!supabaseUrl || !supabaseAnonKey || supabaseUrl.includes('placeholder') || supabaseAnonKey.includes('placeholder')) {
+      console.error('Supabase environment variables missing or invalid')
+      throw new Error('Server configuration error. Please check your Supabase settings.')
+    }
     
     // Add timeout to prevent hanging on signInWithPassword
     const signInPromise = supabase.auth.signInWithPassword({
@@ -271,11 +280,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => {
         reject(new Error('Sign-in request timed out. Please check your internet connection and try again.'))
-      }, 10000) // 10 second timeout
+      }, 8000) // 8 second timeout (reduced from 10)
     })
 
     try {
-      console.log('Starting sign-in...')
+      console.log('Starting sign-in...', { email: email.trim(), hasUrl: !!supabaseUrl, hasKey: !!supabaseAnonKey })
       const { data, error } = await Promise.race([signInPromise, timeoutPromise])
       console.log('Sign-in response received')
 
@@ -284,6 +293,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Provide user-friendly error messages
         if (error.message.includes('Invalid login credentials') || error.message.includes('Email not confirmed')) {
           throw new Error('Invalid email or password. Please check your credentials and try again.')
+        }
+        if (error.message.includes('fetch')) {
+          throw new Error('Network error. Please check your internet connection and try again.')
         }
         throw new Error(error.message || 'Failed to sign in')
       }

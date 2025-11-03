@@ -13,12 +13,8 @@ export const createClient = () => {
   if (!supabaseUrl || !supabaseAnonKey) {
     console.error('Missing Supabase environment variables')
     console.error('Please check your .env.local file for NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY')
-    // Return a mock client to prevent crashes during development
-    // Only on client-side - this check ensures we're not on server
-    return createBrowserClient(
-      supabaseUrl || 'https://placeholder.supabase.co',
-      supabaseAnonKey || 'placeholder-key'
-    )
+    // Return undefined instead of mock client - this will cause proper error handling
+    return undefined as any
   }
 
   try {
