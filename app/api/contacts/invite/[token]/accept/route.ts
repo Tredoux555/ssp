@@ -3,7 +3,7 @@ import { createClient, createAdminClient } from '@/lib/supabase'
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { token: string } }
+  context: { params: Promise<{ token: string }> }
 ) {
   try {
     const supabase = createClient()
@@ -16,7 +16,7 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const token = params.token
+    const { token } = await context.params
     if (!token) {
       return NextResponse.json({ error: 'Missing token' }, { status: 400 })
     }

@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase'
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { token: string } }
+  context: { params: Promise<{ token: string }> }
 ) {
   try {
     const supabase = createClient()
@@ -11,7 +11,7 @@ export async function GET(
       return NextResponse.json({ error: 'Server configuration error' }, { status: 500 })
     }
 
-    const token = params.token
+    const { token } = await context.params
     if (!token) {
       return NextResponse.json({ error: 'Missing token' }, { status: 400 })
     }
