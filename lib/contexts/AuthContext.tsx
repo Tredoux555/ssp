@@ -262,13 +262,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Supabase client not initialized')
     }
     
+    // Add timeout to prevent hanging on signInWithPassword
+    const signInPromise = supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    })
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('Sign-in request timed out. Please check your internet connection and try again.'))
+      }, 10000) // 10 second timeout
+    })
+
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      })
+      console.log('Starting sign-in...')
+      const { data, error } = await Promise.race([signInPromise, timeoutPromise])
+      console.log('Sign-in response received')
 
       if (error) {
+        console.error('Sign-in error:', error)
         // Provide user-friendly error messages
         if (error.message.includes('Invalid login credentials') || error.message.includes('Email not confirmed')) {
           throw new Error('Invalid email or password. Please check your credentials and try again.')
@@ -276,19 +288,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error(error.message || 'Failed to sign in')
       }
 
-      if (!data.user) {
+      if (!data?.user) {
+        console.error('Sign-in failed: No user data')
         throw new Error('Failed to sign in. Please try again.')
       }
 
+      console.log('Sign-in successful, setting user state')
       // Set user state immediately - don't wait for profile
       setUser(data.user)
       setProfile(null) // Will be set by auth listener
 
-      // Don't fetch profile here - let the auth state change listener handle it
-      // This ensures sign-in completes immediately without waiting
-      // The onAuthStateChange listener will fetch profile in the background
-
       // Sign-in completes immediately
+      console.log('Sign-in complete')
     } catch (err: any) {
       console.error('Sign-in failed:', err)
       // Ensure we don't leave the app in a broken state
@@ -298,7 +309,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const error = err instanceof Error ? err : new Error(err?.message || 'Failed to sign in')
       throw error
     }
-  }, [supabase, fetchProfile])
+  }, [supabase])
 
   const signUp = useCallback(async (email: string, password: string, fullName?: string, phone?: string) => {
     if (!supabase) {
