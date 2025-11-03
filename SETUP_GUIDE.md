@@ -1,8 +1,8 @@
-# SSP Setup Guide
+# PSP Setup Guide
 
 ## Step-by-Step Setup Instructions
 
-This guide will help you set up the SSP (Self Security Project) from scratch.
+This guide will help you set up the PSP (Personal Security Program) from scratch.
 
 ---
 
@@ -113,7 +113,7 @@ This guide will help you set up the SSP (Self Security Project) from scratch.
    ```bash
    git init
    git add .
-   git commit -m "Initial commit: SSP Emergency Alert System"
+   git commit -m "Initial commit: PSP Emergency Alert System"
    ```
 
 2. **Create GitHub Repository**

@@ -33,15 +33,28 @@ export default function RegisterPage() {
       return
     }
 
+    // Basic email trim and validation
+    const cleanedEmail = email.trim()
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(cleanedEmail)) {
+      setError('Please enter a valid email address')
+      return
+    }
+
     setLoading(true)
+    setError('')
 
     try {
-      await signUp(email, password, fullName, phone)
+      await signUp(cleanedEmail, password, fullName, phone)
       // Email verification is disabled - user is automatically logged in
       // Redirect to dashboard immediately
       router.push('/dashboard')
     } catch (err: any) {
-      setError(err.message || 'Failed to create account')
+      console.error('Registration error:', err)
+      // Extract error message - handle both Error objects and plain strings
+      const errorMessage = err?.message || err?.toString() || 'Failed to create account'
+      setError(errorMessage)
+      // Don't rethrow - we've already handled it in the UI
     } finally {
       setLoading(false)
     }
@@ -51,8 +64,8 @@ export default function RegisterPage() {
     <div className="min-h-screen bg-gradient-to-br from-sa-green via-sa-blue to-sa-gold flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <div className="text-center mb-6">
-          <h1 className="text-3xl font-bold text-sa-green mb-2">SSP</h1>
-          <p className="text-gray-600">Self Security Project</p>
+          <h1 className="text-3xl font-bold text-sa-green mb-2">PSP</h1>
+          <p className="text-gray-600">Personal Security Program</p>
           <p className="text-sm text-gray-500 mt-2">Create your account</p>
         </div>
 

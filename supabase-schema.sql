@@ -1,4 +1,4 @@
--- SSP (Self Security Project) Database Schema
+-- PSP (Personal Security Program) Database Schema
 -- Completely separate from jeffy projects
 -- This file contains the SQL commands to set up the Supabase database
 
@@ -189,6 +189,10 @@ ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 -- Users can only see their own profile
 CREATE POLICY "Users can view own profile" ON user_profiles
   FOR SELECT USING (auth.uid() = id);
+
+-- Users can insert their own profile (needed for signup)
+CREATE POLICY "Users can insert own profile" ON user_profiles
+  FOR INSERT WITH CHECK (auth.uid() = id);
 
 CREATE POLICY "Users can update own profile" ON user_profiles
   FOR UPDATE USING (auth.uid() = id);

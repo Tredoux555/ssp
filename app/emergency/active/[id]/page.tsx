@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
-import { getActiveEmergency, cancelEmergencyAlert } from '@/lib/emergency'
+import { getActiveEmergency } from '@/lib/emergency'
 import { startLocationTracking, getCurrentLocation, reverseGeocode } from '@/lib/location'
 import { EmergencyAlert } from '@/types/database'
 import Button from '@/components/Button'
@@ -51,34 +51,95 @@ export default function EmergencyActivePage() {
       })
       .catch(console.error)
 
-    // Play alert sound
-    const audio = new Audio('/emergency-alert.mp3')
-    audio.loop = true
-    audio.volume = 1.0
-    audio.play().catch(console.error)
-
-    // Custom vibration pattern: long-short-short-short
-    if ('vibrate' in navigator) {
-      const vibratePattern = [200, 100, 100, 100]
-      const interval = setInterval(() => {
-        navigator.vibrate(vibratePattern)
-      }, 500)
+    // Play alert sound (requires user interaction in modern browsers)
+    let audio: HTMLAudioElement | null = null
+    let audioLoaded = false
+    
+    try {
+      audio = new Audio('/emergency-alert.mp3')
+      audio.loop = true
+      audio.volume = 1.0
       
-      return () => {
-        clearInterval(interval)
-        audio.pause()
-        stopTracking()
+      // Handle audio loading errors (file not found, network issues, etc.)
+      audio.addEventListener('error', (e) => {
+        // Audio file may not exist - that's ok, we'll just skip audio
+        // Only log if it's not a simple 404/network error
+        const error = audio?.error
+        if (error && error.code !== error.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+          console.warn('Audio loading error:', error)
+        }
+        audio = null
+      })
+      
+      audio.addEventListener('canplaythrough', () => {
+        audioLoaded = true
+      })
+      
+      // Try to play - will fail if no user interaction yet (modern browser requirement)
+      audio.play().catch((error) => {
+        // NotSupportedError is expected when autoplay is blocked
+        if (error.name !== 'NotSupportedError' && error.name !== 'NotAllowedError') {
+          console.warn('Audio playback error:', error)
+        }
+      })
+    } catch (error) {
+      console.warn('Could not create audio element:', error)
+      audio = null
+    }
+    
+    // Set up to play on first user interaction if it failed initially
+    const playOnInteraction = () => {
+      if (audio && audioLoaded && audio.paused) {
+        audio.play().catch((error) => {
+          // Only log non-autoplay-policy errors
+          if (error.name !== 'NotSupportedError' && error.name !== 'NotAllowedError') {
+            console.warn('Audio playback error on interaction:', error)
+          }
+        })
       }
     }
+    // Using { once: true } automatically removes listeners after first event
+    if (audio) {
+      document.addEventListener('click', playOnInteraction, { once: true })
+      document.addEventListener('touchstart', playOnInteraction, { once: true })
+    }
 
+    // Custom vibration pattern: long-short-short-short
+    let vibrationInterval: NodeJS.Timeout | null = null
+    if ('vibrate' in navigator) {
+      const vibratePattern = [200, 100, 100, 100]
+      vibrationInterval = setInterval(() => {
+        navigator.vibrate(vibratePattern)
+      }, 500)
+    }
+    
     return () => {
-      audio.pause()
+      // Cleanup audio
+      if (audio) {
+        audio.pause()
+        audio.src = '' // Release audio resource
+        audio = null
+      }
+      
+      // Cleanup event listeners
+      document.removeEventListener('click', playOnInteraction)
+      document.removeEventListener('touchstart', playOnInteraction)
+      
+      // Cleanup vibration
+      if (vibrationInterval) {
+        clearInterval(vibrationInterval)
+      }
+      
+      // Stop location tracking
       stopTracking()
     }
   }, [alert, user, address])
 
   const loadAlert = async () => {
-    if (!user) return
+    if (!user) {
+      setLoading(false)
+      return
+    }
 
     try {
       const activeAlert = await getActiveEmergency(user.id)
@@ -94,10 +155,14 @@ export default function EmergencyActivePage() {
           }
         }
       } else {
+        // Alert doesn't exist or doesn't belong to user
+        console.warn('Alert not found or access denied')
         router.push('/dashboard')
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load alert:', error)
+      // Redirect to dashboard on error
+      router.push('/dashboard')
     } finally {
       setLoading(false)
     }
@@ -113,10 +178,28 @@ export default function EmergencyActivePage() {
     if (!confirmed) return
 
     try {
-      await cancelEmergencyAlert(alert.id, user.id)
+      // Use API route instead of direct client call to avoid RLS issues
+      const response = await fetch('/api/emergency/cancel', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ alert_id: alert.id }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({ error: 'Unknown error' }))
+        throw new Error(data.error || `Failed to cancel alert (${response.status})`)
+      }
+
+      const data = await response.json().catch(() => ({}))
+      
+      // Successfully cancelled - redirect to dashboard
       router.push('/dashboard')
     } catch (error: any) {
-      window.alert(`Failed to cancel alert: ${error.message}`)
+      console.error('Cancel alert error:', error)
+      const errorMessage = error?.message || 'Failed to cancel alert. Please try again.'
+      window.alert(errorMessage)
     }
   }
 

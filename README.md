@@ -1,4 +1,4 @@
-# SSP - Self Security Project
+# PSP - Personal Security Program
 
 **Emergency alert notification system for South Africa**
 

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/contexts/AuthContext";
+import { ErrorHandler } from "@/components/ErrorHandler";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -9,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "SSP - Self Security Project",
+  title: "PSP - Personal Security Program",
   description: "Emergency alert notification system for South Africa",
 };
 
@@ -21,6 +22,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.variable} font-sans antialiased`}>
+        <ErrorHandler />
         <AuthProvider>
           {children}
         </AuthProvider>

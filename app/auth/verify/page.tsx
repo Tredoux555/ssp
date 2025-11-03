@@ -28,37 +28,66 @@ function VerifyContent() {
 
       const supabase = createClient()
 
+      if (!supabase) {
+        setError('Failed to initialize authentication. Please try again.')
+        setLoading(false)
+        return
+      }
+
       try {
         if (code) {
           // Verify with code (Supabase sends this in the email link)
-          const { error: verifyError } = await supabase.auth.verifyOtp({
+          const { data, error: verifyError } = await supabase.auth.verifyOtp({
             token_hash: code,
             type: type as any,
           })
 
           if (verifyError) {
-            setError(verifyError.message)
-          } else {
+            // Provide user-friendly error messages
+            if (verifyError.message.includes('expired') || verifyError.message.includes('invalid')) {
+              setError('Verification link has expired or is invalid. Please request a new verification email.')
+            } else {
+              setError(verifyError.message || 'Verification failed. Please try again.')
+            }
+          } else if (data?.user) {
             setVerified(true)
             // Refresh session to get updated user
-            await supabase.auth.getSession()
+            try {
+              await supabase.auth.getSession()
+            } catch (sessionError) {
+              console.warn('Failed to refresh session after verification:', sessionError)
+              // Don't fail verification if session refresh fails
+            }
+          } else {
+            setError('Verification completed but user data is missing. Please try signing in.')
           }
         } else if (token) {
           // Verify with token (alternative method)
-          const { error: verifyError } = await supabase.auth.verifyOtp({
+          const { data, error: verifyError } = await supabase.auth.verifyOtp({
             token_hash: token,
             type: type as any,
           })
 
           if (verifyError) {
-            setError(verifyError.message)
-          } else {
+            if (verifyError.message.includes('expired') || verifyError.message.includes('invalid')) {
+              setError('Verification link has expired or is invalid. Please request a new verification email.')
+            } else {
+              setError(verifyError.message || 'Verification failed. Please try again.')
+            }
+          } else if (data?.user) {
             setVerified(true)
-            await supabase.auth.getSession()
+            try {
+              await supabase.auth.getSession()
+            } catch (sessionError) {
+              console.warn('Failed to refresh session after verification:', sessionError)
+            }
+          } else {
+            setError('Verification completed but user data is missing. Please try signing in.')
           }
         }
       } catch (err: any) {
-        setError(err.message || 'Verification failed')
+        console.error('Verification error:', err)
+        setError(err.message || 'Verification failed. Please try again.')
       } finally {
         setLoading(false)
       }

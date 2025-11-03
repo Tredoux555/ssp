@@ -35,8 +35,8 @@ export default function LoginPage() {
     <div className="min-h-screen bg-gradient-to-br from-sa-green via-sa-blue to-sa-gold flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <div className="text-center mb-6">
-          <h1 className="text-3xl font-bold text-sa-green mb-2">SSP</h1>
-          <p className="text-gray-600">Self Security Project</p>
+          <h1 className="text-3xl font-bold text-sa-green mb-2">PSP</h1>
+          <p className="text-gray-600">Personal Security Program</p>
           <p className="text-sm text-gray-500 mt-2">Sign in to your account</p>
         </div>
 

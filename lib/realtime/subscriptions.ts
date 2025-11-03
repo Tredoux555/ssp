@@ -1,5 +1,5 @@
 /**
- * Real-Time Subscription Manager for SSP
+ * Real-Time Subscription Manager for PSP
  * Centralized management for Supabase Realtime subscriptions
  */
 
@@ -26,41 +26,64 @@ class SubscriptionManager {
   subscribe(config: SubscriptionConfig): () => void {
     const key = `${config.channel}-${config.table}-${config.filter || ''}`
 
+    // Check if subscription already exists
     if (this.subscriptions.has(key)) {
-      const existing = this.subscriptions.get(key)!
       return () => this.unsubscribe(key)
     }
 
-    const channel = this.supabase
-      .channel(config.channel)
-      .on(
-        'postgres_changes' as any,
-        {
-          event: config.event || 'UPDATE',
-          schema: 'public',
-          table: config.table,
-          ...(config.filter && { filter: config.filter }),
-        },
-        config.callback
-      )
-      .subscribe()
+    // Check if supabase client is available
+    if (!this.supabase) {
+      console.warn('Supabase client not available for subscription')
+      return () => {} // Return no-op unsubscribe function
+    }
 
-    this.subscriptions.set(key, { channel, config })
+    try {
+      const channel = this.supabase
+        .channel(config.channel)
+        .on(
+          'postgres_changes' as any,
+          {
+            event: config.event || 'UPDATE',
+            schema: 'public',
+            table: config.table,
+            ...(config.filter && { filter: config.filter }),
+          },
+          config.callback
+        )
+        .subscribe()
 
-    return () => this.unsubscribe(key)
+      this.subscriptions.set(key, { channel, config })
+
+      return () => this.unsubscribe(key)
+    } catch (error) {
+      console.error('Failed to create subscription:', error)
+      return () => {} // Return no-op unsubscribe function
+    }
   }
 
   unsubscribe(key: string): void {
     const subscription = this.subscriptions.get(key)
-    if (subscription) {
-      this.supabase.removeChannel(subscription.channel)
+    if (subscription && this.supabase) {
+      try {
+        this.supabase.removeChannel(subscription.channel)
+      } catch (error) {
+        console.error('Error removing channel:', error)
+      }
       this.subscriptions.delete(key)
     }
   }
 
   unsubscribeAll(): void {
+    if (!this.supabase) {
+      this.subscriptions.clear()
+      return
+    }
     this.subscriptions.forEach((subscription) => {
-      this.supabase.removeChannel(subscription.channel)
+      try {
+        this.supabase.removeChannel(subscription.channel)
+      } catch (error) {
+        console.error('Error removing channel:', error)
+      }
     })
     this.subscriptions.clear()
   }

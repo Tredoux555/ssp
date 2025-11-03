@@ -54,29 +54,53 @@ export default function ContactsPage() {
   const handleAddContact = async () => {
     if (!user) return
 
-    if (!formData.name || (!formData.phone && !formData.email)) {
-      alert('Please provide at least a name and phone or email')
+    // Validation
+    if (!formData.name || formData.name.trim().length === 0) {
+      alert('Please provide a name')
+      return
+    }
+
+    if (!formData.phone && !formData.email) {
+      alert('Please provide at least a phone number or email address')
+      return
+    }
+
+    // Validate email format if provided
+    if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
+      alert('Please provide a valid email address')
       return
     }
 
     const supabase = createClient()
+
+    if (!supabase) {
+      alert('Failed to connect to server. Please refresh the page and try again.')
+      return
+    }
 
     try {
       const { error } = await supabase
         .from('emergency_contacts')
         .insert({
           user_id: user.id,
-          name: formData.name,
-          phone: formData.phone || null,
-          email: formData.email || null,
-          relationship: formData.relationship || null,
+          name: formData.name.trim(),
+          phone: formData.phone?.trim() || null,
+          email: formData.email?.trim() || null,
+          relationship: formData.relationship?.trim() || null,
           priority: parseInt(formData.priority) || 0,
           can_see_location: true,
           verified: false,
         })
 
-      if (error) throw error
+      if (error) {
+        // Provide user-friendly error messages
+        if (error.code === '23505' || error.message.includes('duplicate')) {
+          throw new Error('A contact with this phone or email already exists')
+        }
+        throw new Error(error.message || 'Failed to add contact')
+      }
 
+      // Reset form and reload contacts
       setFormData({
         name: '',
         phone: '',
@@ -85,9 +109,10 @@ export default function ContactsPage() {
         priority: '0',
       })
       setShowAddForm(false)
-      loadContacts()
+      await loadContacts()
     } catch (error: any) {
-      alert(`Failed to add contact: ${error.message}`)
+      console.error('Add contact error:', error)
+      alert(`Failed to add contact: ${error.message || 'Unknown error'}`)
     }
   }
 
@@ -106,22 +131,49 @@ export default function ContactsPage() {
   const handleUpdateContact = async () => {
     if (!user || !editingContact) return
 
+    // Validation
+    if (!formData.name || formData.name.trim().length === 0) {
+      alert('Please provide a name')
+      return
+    }
+
+    if (!formData.phone && !formData.email) {
+      alert('Please provide at least a phone number or email address')
+      return
+    }
+
+    // Validate email format if provided
+    if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
+      alert('Please provide a valid email address')
+      return
+    }
+
     const supabase = createClient()
+
+    if (!supabase) {
+      alert('Failed to connect to server. Please refresh the page and try again.')
+      return
+    }
 
     try {
       const { error } = await supabase
         .from('emergency_contacts')
         .update({
-          name: formData.name,
-          phone: formData.phone || null,
-          email: formData.email || null,
-          relationship: formData.relationship || null,
+          name: formData.name.trim(),
+          phone: formData.phone?.trim() || null,
+          email: formData.email?.trim() || null,
+          relationship: formData.relationship?.trim() || null,
           priority: parseInt(formData.priority) || 0,
         })
         .eq('id', editingContact.id)
         .eq('user_id', user.id)
 
-      if (error) throw error
+      if (error) {
+        if (error.code === '42501' || error.message.includes('row-level security')) {
+          throw new Error('You do not have permission to update this contact')
+        }
+        throw new Error(error.message || 'Failed to update contact')
+      }
 
       setEditingContact(null)
       setFormData({
@@ -132,9 +184,10 @@ export default function ContactsPage() {
         priority: '0',
       })
       setShowAddForm(false)
-      loadContacts()
+      await loadContacts()
     } catch (error: any) {
-      alert(`Failed to update contact: ${error.message}`)
+      console.error('Update contact error:', error)
+      alert(`Failed to update contact: ${error.message || 'Unknown error'}`)
     }
   }
 
@@ -147,6 +200,11 @@ export default function ContactsPage() {
 
     const supabase = createClient()
 
+    if (!supabase) {
+      alert('Failed to connect to server. Please refresh the page and try again.')
+      return
+    }
+
     try {
       const { error } = await supabase
         .from('emergency_contacts')
@@ -154,11 +212,17 @@ export default function ContactsPage() {
         .eq('id', contactId)
         .eq('user_id', user.id)
 
-      if (error) throw error
+      if (error) {
+        if (error.code === '42501' || error.message.includes('row-level security')) {
+          throw new Error('You do not have permission to delete this contact')
+        }
+        throw new Error(error.message || 'Failed to remove contact')
+      }
 
-      loadContacts()
+      await loadContacts()
     } catch (error: any) {
-      alert(`Failed to delete contact: ${error.message}`)
+      console.error('Delete contact error:', error)
+      alert(`Failed to remove contact: ${error.message || 'Unknown error'}`)
     }
   }
 

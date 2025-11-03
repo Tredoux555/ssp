@@ -2,6 +2,11 @@ import { createBrowserClient } from '@supabase/ssr'
 
 // Client-side Supabase client
 export const createClient = () => {
+  // Never run on server-side - return undefined instead of throwing
+  if (typeof window === 'undefined') {
+    return undefined as any
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
@@ -9,16 +14,23 @@ export const createClient = () => {
     console.error('Missing Supabase environment variables')
     console.error('Please check your .env.local file for NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY')
     // Return a mock client to prevent crashes during development
-    if (typeof window !== 'undefined') {
-      return createBrowserClient(
-        supabaseUrl || 'https://placeholder.supabase.co',
-        supabaseAnonKey || 'placeholder-key'
-      )
-    }
-    throw new Error('Supabase configuration is missing. Please check your environment variables.')
+    // Only on client-side - this check ensures we're not on server
+    return createBrowserClient(
+      supabaseUrl || 'https://placeholder.supabase.co',
+      supabaseAnonKey || 'placeholder-key'
+    )
   }
 
-  return createBrowserClient(supabaseUrl, supabaseAnonKey)
+  try {
+    return createBrowserClient(supabaseUrl, supabaseAnonKey)
+  } catch (error) {
+    console.error('Failed to create Supabase client:', error)
+    // Return mock client as fallback instead of throwing
+    return createBrowserClient(
+      'https://placeholder.supabase.co',
+      'placeholder-key'
+    )
+  }
 }
 
 // Admin client for server-side operations

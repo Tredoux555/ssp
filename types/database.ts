@@ -1,4 +1,4 @@
-// Database types for SSP (Self Security Project)
+// Database types for PSP (Personal Security Program)
 
 export interface UserProfile {
   id: string

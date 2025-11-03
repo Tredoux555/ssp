@@ -41,8 +41,11 @@ export default function DashboardPage() {
       if (emergency) {
         router.push(`/emergency/active/${emergency.id}`)
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load active emergency:', error)
+      // Don't show error to user - just log it
+      // Emergency might not exist, which is fine
+      setActiveEmergency(null)
     }
   }
 
@@ -51,9 +54,11 @@ export default function DashboardPage() {
 
     try {
       const contacts = await getEmergencyContacts(user.id)
-      setContactCount(contacts.length)
-    } catch (error) {
+      setContactCount(contacts.length || 0)
+    } catch (error: any) {
       console.error('Failed to load contacts:', error)
+      // Set to 0 on error so UI doesn't break
+      setContactCount(0)
     }
   }
 
@@ -79,35 +84,50 @@ export default function DashboardPage() {
     setEmergencyLoading(true)
 
     try {
-      // Get current location
+      // Get current location (optional - continue without if fails)
       let location
       try {
         const coords = await getCurrentLocation()
-        const address = await reverseGeocode(coords.lat, coords.lng)
+        const address = await reverseGeocode(coords.lat, coords.lng).catch(() => null)
         location = {
           lat: coords.lat,
           lng: coords.lng,
           address: address || undefined,
         }
       } catch (error) {
-        console.error('Failed to get location:', error)
-        // Continue without location
+        console.warn('Failed to get location, continuing without location:', error)
+        // Continue without location - alert can still be created
       }
 
       // Create emergency alert
-      const alert = await createEmergencyAlert(user.id, 'other', location)
+      let alert
+      try {
+        alert = await createEmergencyAlert(user.id, 'other', location)
+      } catch (alertError: any) {
+        throw new Error(`Failed to create emergency alert: ${alertError.message || 'Unknown error'}`)
+      }
 
-      // Get contacts and notify them
-      const contacts = await getEmergencyContacts(user.id)
-      if (contacts.length > 0) {
-        const { notifyEmergencyContacts } = await import('@/lib/emergency')
-        await notifyEmergencyContacts(alert.id, user.id, contacts)
+      // Get contacts and notify them (non-blocking)
+      try {
+        const contacts = await getEmergencyContacts(user.id)
+        if (contacts.length > 0) {
+          const { notifyEmergencyContacts } = await import('@/lib/emergency')
+          await notifyEmergencyContacts(alert.id, user.id, contacts).catch((notifyError) => {
+            console.error('Failed to notify contacts (non-critical):', notifyError)
+            // Don't fail the alert creation if notification fails
+          })
+        }
+      } catch (contactError) {
+        console.error('Failed to get contacts (non-critical):', contactError)
+        // Continue even if contact notification fails
       }
 
       // Navigate to emergency screen
       router.push(`/emergency/active/${alert.id}`)
     } catch (error: any) {
-      alert(`Failed to create emergency alert: ${error.message}`)
+      console.error('Emergency button error:', error)
+      const errorMessage = error?.message || 'Failed to create emergency alert. Please try again.'
+      alert(errorMessage)
     } finally {
       setEmergencyLoading(false)
     }
@@ -122,7 +142,7 @@ export default function DashboardPage() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-sa-green via-sa-blue to-sa-gold flex items-center justify-center">
         <div className="text-center">
-          <h1 className="text-4xl font-bold text-white mb-4">SSP</h1>
+          <h1 className="text-4xl font-bold text-white mb-4">PSP</h1>
           <p className="text-white/90">Loading...</p>
         </div>
       </div>
@@ -139,7 +159,7 @@ export default function DashboardPage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold text-white mb-1">SSP</h1>
+            <h1 className="text-3xl font-bold text-white mb-1">PSP</h1>
             <p className="text-white/90">Welcome, {profile?.full_name || user.email}</p>
           </div>
           <Button

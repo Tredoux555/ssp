@@ -67,29 +67,63 @@ export async function notifyEmergencyContacts(
 ): Promise<void> {
   const supabase = createClient()
 
-  const contactIds = contacts
-    .filter(c => c.verified && (c.contact_user_id || c.email || c.phone))
-    .map(c => c.contact_user_id || c.id)
-
-  // Update alert with notified contacts
-  await supabase
-    .from('emergency_alerts')
-    .update({ contacts_notified: contactIds })
-    .eq('id', alertId)
-
-  // Create alert responses for each contact
-  const responses = contactIds.map(contactId => ({
-    alert_id: alertId,
-    contact_user_id: contactId,
-  }))
-
-  if (responses.length > 0) {
-    await supabase
-      .from('alert_responses')
-      .insert(responses)
+  if (!supabase) {
+    console.error('Supabase client not available for notifications')
+    throw new Error('Failed to send notifications: Server configuration error')
   }
 
-  // TODO: Implement actual push notifications via Supabase Edge Functions or external service
+  try {
+    // Filter and get contact IDs
+    const contactIds = contacts
+      .filter(c => c.verified && (c.contact_user_id || c.email || c.phone))
+      .map(c => c.contact_user_id || c.id)
+
+    if (contactIds.length === 0) {
+      console.warn('No verified contacts to notify')
+      return
+    }
+
+    // Update alert with notified contacts
+    const { error: updateError } = await supabase
+      .from('emergency_alerts')
+      .update({ contacts_notified: contactIds })
+      .eq('id', alertId)
+      .eq('user_id', userId) // Ensure user owns this alert
+
+    if (updateError) {
+      console.error('Failed to update alert with notified contacts:', updateError)
+      throw new Error(`Failed to update alert: ${updateError.message}`)
+    }
+
+    // Create alert responses for each contact
+    const responses = contactIds
+      .filter(id => id) // Filter out null/undefined
+      .map(contactId => ({
+        alert_id: alertId,
+        contact_user_id: contactId,
+      }))
+
+    if (responses.length > 0) {
+      const { error: insertError } = await supabase
+        .from('alert_responses')
+        .insert(responses)
+
+      if (insertError) {
+        console.error('Failed to create alert responses:', insertError)
+        // Don't throw - alert is already updated with contacts
+        // The responses can be created later if needed
+      }
+    }
+
+    // TODO: Implement actual push notifications via Supabase Edge Functions or external service
+    // The data structure is ready for admin integration:
+    // - emergency_alerts.contacts_notified contains array of contact IDs
+    // - alert_responses table tracks which contacts were notified
+    // - Admin can query these tables to send push notifications
+  } catch (error: any) {
+    console.error('Error notifying emergency contacts:', error)
+    throw error
+  }
 }
 
 /**

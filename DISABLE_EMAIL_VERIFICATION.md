@@ -2,7 +2,7 @@
 
 ## Current Status: Email Verification DISABLED
 
-Email verification is currently **disabled** in the SSP application. Users can sign up and immediately access the dashboard without needing to verify their email address.
+Email verification is currently **disabled** in the PSP application. Users can sign up and immediately access the dashboard without needing to verify their email address.
 
 ## Code Status
 

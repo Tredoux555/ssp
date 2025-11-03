@@ -27,7 +27,23 @@ export async function getCurrentLocation(): Promise<LocationCoordinates> {
         })
       },
       (error) => {
-        reject(new Error(`Geolocation error: ${error.message}`))
+        let errorMessage = 'Unable to get your location'
+        
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = 'Location permission denied. Please enable location access in your browser settings.'
+            break
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = 'Location information is unavailable. Please check your device settings.'
+            break
+          case error.TIMEOUT:
+            errorMessage = 'Location request timed out. Please try again.'
+            break
+          default:
+            errorMessage = `Geolocation error: ${error.message || 'Unknown error'}`
+        }
+        
+        reject(new Error(errorMessage))
       },
       {
         enableHighAccuracy: true,

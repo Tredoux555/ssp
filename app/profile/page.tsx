@@ -36,24 +36,46 @@ export default function ProfilePage() {
   const handleUpdate = async () => {
     if (!user) return
 
+    // Validation
+    if (formData.phone && formData.phone.trim().length > 0) {
+      // Basic phone validation - just check it's not too short
+      const phoneTrimmed = formData.phone.trim()
+      if (phoneTrimmed.length < 7) {
+        alert('Phone number is too short. Please provide a valid phone number.')
+        return
+      }
+    }
+
     setLoading(true)
     const supabase = createClient()
+
+    if (!supabase) {
+      alert('Failed to connect to server. Please refresh the page and try again.')
+      setLoading(false)
+      return
+    }
 
     try {
       const { error } = await supabase
         .from('user_profiles')
         .update({
-          full_name: formData.full_name || null,
-          phone: formData.phone || null,
+          full_name: formData.full_name?.trim() || null,
+          phone: formData.phone?.trim() || null,
         })
         .eq('id', user.id)
 
-      if (error) throw error
+      if (error) {
+        if (error.code === '42501' || error.message.includes('row-level security')) {
+          throw new Error('You do not have permission to update your profile')
+        }
+        throw new Error(error.message || 'Failed to update profile')
+      }
 
       await refreshProfile()
       alert('Profile updated successfully')
     } catch (error: any) {
-      alert(`Failed to update profile: ${error.message}`)
+      console.error('Update profile error:', error)
+      alert(`Failed to update profile: ${error.message || 'Unknown error'}`)
     } finally {
       setLoading(false)
     }

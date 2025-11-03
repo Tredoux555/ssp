@@ -7,7 +7,7 @@ After deploying to Vercel, you MUST configure redirect URLs in Supabase for emai
 ### Step-by-Step Instructions:
 
 1. **Go to Supabase Dashboard**
-   - Navigate to your SSP project
+   - Navigate to your PSP project
    - Go to **Authentication** → **URL Configuration**
 
 2. **Set Site URL**
