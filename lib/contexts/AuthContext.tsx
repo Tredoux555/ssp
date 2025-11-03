@@ -90,17 +90,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     let mounted = true
     let timeoutId: NodeJS.Timeout | null = null
+    let failsafeTimeout: NodeJS.Timeout | null = null
 
-    // More aggressive timeout for mobile (3 seconds instead of 5)
-    // This matches the page timeout to ensure consistent behavior
+    // Very aggressive timeout for mobile (2 seconds) - multiple fallbacks
     timeoutId = setTimeout(() => {
       if (mounted) {
-        console.warn('Session fetch timed out, proceeding without user')
+        console.warn('Session fetch timed out (2s), proceeding without user')
         setLoading(false)
         // Don't set user/profile to null on timeout - let the auth listener handle it
         // This prevents race conditions where timeout fires but session succeeds
       }
-    }, 3000) // Reduced to 3 seconds for faster mobile experience
+    }, 2000) // Very aggressive 2 seconds for mobile
+
+    // Additional fallback timeout at 5 seconds (absolute failsafe)
+    failsafeTimeout = setTimeout(() => {
+      if (mounted) {
+        console.warn('Session fetch absolute failsafe timeout (5s)')
+        setLoading(false)
+        setUser(null)
+        setProfile(null)
+      }
+    }, 5000)
 
     supabase.auth.getSession()
       .then((response: { data: { session: any } | null; error: any }) => {
@@ -111,6 +121,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (timeoutId) {
           clearTimeout(timeoutId)
           timeoutId = null
+        }
+        if (failsafeTimeout) {
+          clearTimeout(failsafeTimeout)
         }
         
         if (sessionError) {
@@ -151,6 +164,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (timeoutId) {
           clearTimeout(timeoutId)
           timeoutId = null
+        }
+        if (failsafeTimeout) {
+          clearTimeout(failsafeTimeout)
         }
         if (mounted) {
           setUser(null)
@@ -233,6 +249,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       mounted = false
       if (timeoutId) {
         clearTimeout(timeoutId)
+      }
+      if (failsafeTimeout) {
+        clearTimeout(failsafeTimeout)
       }
       subscription.unsubscribe()
     }

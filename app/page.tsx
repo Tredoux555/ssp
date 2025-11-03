@@ -10,52 +10,66 @@ export default function HomePage() {
   const [timeoutReached, setTimeoutReached] = useState(false)
   const [redirectAttempted, setRedirectAttempted] = useState(false)
 
-  // Force navigation function that works on mobile
+  // Force navigation function that works on mobile - always use window.location
   const forceNavigate = (path: string) => {
-    try {
-      // Try router.push first (preferred for Next.js navigation)
-      router.push(path)
-      
-      // Fallback to window.location for mobile devices (more reliable)
-      setTimeout(() => {
-        if (window.location.pathname !== path) {
-          console.warn('Router.push failed, using window.location fallback')
-          window.location.href = path
-        }
-      }, 500)
-    } catch (error) {
-      console.error('Navigation error:', error)
-      // Final fallback - direct window.location
-      window.location.href = path
-    }
+    // Always use window.location.href on mobile for reliability
+    window.location.href = path
   }
 
   useEffect(() => {
-    // More aggressive timeout for mobile (3 seconds instead of 6)
-    const timeoutId = setTimeout(() => {
-      if (loading && !redirectAttempted) {
-        console.warn('Loading timeout - forcing redirect to login')
+    // Multiple timeouts as backup for mobile reliability
+    let timeoutId1: NodeJS.Timeout | null = null
+    let timeoutId2: NodeJS.Timeout | null = null
+    let timeoutId3: NodeJS.Timeout | null = null
+
+    // Primary timeout - 2 seconds
+    timeoutId1 = setTimeout(() => {
+      if (loading) {
+        console.warn('Loading timeout (2s) - forcing redirect to login')
         setTimeoutReached(true)
         setRedirectAttempted(true)
-        forceNavigate('/auth/login')
+        // Direct window.location - most reliable on mobile
+        window.location.href = '/auth/login'
       }
-    }, 3000) // Reduced to 3 seconds for faster mobile experience
+    }, 2000)
 
-    if (!loading && !redirectAttempted) {
-      clearTimeout(timeoutId)
-      setRedirectAttempted(true)
+    // Backup timeout - 3 seconds (if first didn't work)
+    timeoutId2 = setTimeout(() => {
+      if (loading) {
+        console.warn('Loading timeout (3s) - force redirect')
+        window.location.href = '/auth/login'
+      }
+    }, 3000)
+
+    // Final fallback - 5 seconds (absolute failsafe)
+    timeoutId3 = setTimeout(() => {
+      console.warn('Loading timeout (5s) - absolute fallback')
+      window.location.href = '/auth/login'
+    }, 5000)
+
+    // If loading completes, clear timeouts and navigate
+    if (!loading) {
+      if (timeoutId1) clearTimeout(timeoutId1)
+      if (timeoutId2) clearTimeout(timeoutId2)
+      if (timeoutId3) clearTimeout(timeoutId3)
       
-      // Small delay to ensure state is stable
-      setTimeout(() => {
+      // Navigate immediately when loading finishes
+      if (!redirectAttempted) {
+        setRedirectAttempted(true)
+        // Use direct window.location for mobile reliability
         if (user) {
-          forceNavigate('/dashboard')
+          window.location.href = '/dashboard'
         } else {
-          forceNavigate('/auth/login')
+          window.location.href = '/auth/login'
         }
-      }, 100)
+      }
     }
 
-    return () => clearTimeout(timeoutId)
+    return () => {
+      if (timeoutId1) clearTimeout(timeoutId1)
+      if (timeoutId2) clearTimeout(timeoutId2)
+      if (timeoutId3) clearTimeout(timeoutId3)
+    }
   }, [user, loading, router, redirectAttempted])
 
   // Manual retry button if timeout is reached
@@ -82,16 +96,16 @@ export default function HomePage() {
               Taking longer than expected...
             </p>
             <button
-              onClick={handleRetry}
-              className="px-4 py-2 bg-white text-sa-green rounded-lg font-medium hover:bg-gray-100 transition-colors"
+              onClick={() => window.location.href = '/auth/login'}
+              className="block w-full px-4 py-2 bg-sa-green text-white rounded-lg font-medium hover:bg-green-600 transition-colors"
             >
-              Retry
+              Go to Login Now
             </button>
             <button
-              onClick={() => forceNavigate('/auth/login')}
-              className="block w-full px-4 py-2 bg-sa-green text-white rounded-lg font-medium hover:bg-green-600 transition-colors mt-2"
+              onClick={handleRetry}
+              className="block w-full px-4 py-2 bg-white text-sa-green rounded-lg font-medium hover:bg-gray-100 transition-colors"
             >
-              Go to Login
+              Retry
             </button>
           </div>
         )}
