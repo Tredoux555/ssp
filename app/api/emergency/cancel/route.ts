@@ -46,12 +46,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify the alert belongs to the user and is active
-    const { data: alert, error: fetchError } = await supabase
+    // Use admin client to bypass RLS for both verification and update
+    // Authentication is already verified above, so it's safe to use admin client
+    // This follows the same pattern as app/api/contacts/invite/[token]/accept/route.ts
+    const admin = createAdminClient()
+
+    // Verify the alert belongs to the user and is active (using admin client to bypass RLS)
+    const { data: alert, error: fetchError } = await admin
       .from('emergency_alerts')
       .select('id, status, user_id')
       .eq('id', alert_id)
-      .eq('user_id', userId)
+      .eq('user_id', userId) // Explicit ownership check
       .single()
 
     if (fetchError || !alert) {
@@ -67,10 +72,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-
-    // After verification, use admin client to bypass RLS for the update
-    // This follows the same pattern as app/api/contacts/invite/[token]/accept/route.ts
-    const admin = createAdminClient()
 
     // Cancel the alert using admin client (bypasses RLS)
     const { error: updateError, data: updatedData } = await admin
