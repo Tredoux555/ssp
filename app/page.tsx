@@ -23,77 +23,42 @@ export default function HomePage() {
       return
     }
 
-    // Multiple timeouts as backup for mobile reliability
-    let timeoutId1: NodeJS.Timeout | null = null
-    let timeoutId2: NodeJS.Timeout | null = null
-    let timeoutId3: NodeJS.Timeout | null = null
+    // Single timeout as absolute failsafe (5 seconds)
+    let timeoutId: NodeJS.Timeout | null = null
 
-    // Primary timeout - 3 seconds (less aggressive for desktop)
-    timeoutId1 = setTimeout(() => {
+    // Absolute failsafe timeout - only fires if auth state never resolves
+    timeoutId = setTimeout(() => {
       if (loading && !redirectAttempted) {
-        console.warn('Loading timeout (3s) - forcing redirect to login')
+        console.warn('Loading timeout (5s) - forcing redirect to login')
         setTimeoutReached(true)
         setRedirectAttempted(true)
-        // Direct window.location - most reliable on mobile
-        window.location.href = '/auth/login'
-      }
-    }, 3000)
-
-    // Backup timeout - 5 seconds (if first didn't work)
-    timeoutId2 = setTimeout(() => {
-      if (loading && !redirectAttempted) {
-        console.warn('Loading timeout (5s) - force redirect')
         window.location.href = '/auth/login'
       }
     }, 5000)
 
-    // Final fallback - 8 seconds (absolute failsafe)
-    timeoutId3 = setTimeout(() => {
-      if (!redirectAttempted) {
-        console.warn('Loading timeout (8s) - absolute fallback')
-        window.location.href = '/auth/login'
-      }
-    }, 8000)
-
-    // If loading completes, clear timeouts and navigate
+    // If loading completes, clear timeout and navigate immediately
     if (!loading && !redirectAttempted) {
-      if (timeoutId1) clearTimeout(timeoutId1)
-      if (timeoutId2) clearTimeout(timeoutId2)
-      if (timeoutId3) clearTimeout(timeoutId3)
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
       
-      // Small delay to ensure state is stable, especially after sign-in
-      const navigateTimeout = setTimeout(() => {
-        if (!redirectAttempted) {
-          setRedirectAttempted(true)
-          // Use router.push for desktop (better UX), window.location as fallback
-          if (user) {
-            router.push('/dashboard')
-            // Fallback after delay
-            setTimeout(() => {
-              if (window.location.pathname !== '/dashboard') {
-                window.location.href = '/dashboard'
-              }
-            }, 500)
-          } else {
-            router.push('/auth/login')
-          }
-        }
-      }, 200)
-
-      return () => {
-        clearTimeout(navigateTimeout)
-        if (timeoutId1) clearTimeout(timeoutId1)
-        if (timeoutId2) clearTimeout(timeoutId2)
-        if (timeoutId3) clearTimeout(timeoutId3)
+      // Navigate immediately - no delay needed
+      // AuthContext has already set user state via onAuthStateChange
+      setRedirectAttempted(true)
+      
+      if (user) {
+        window.location.href = '/dashboard'
+      } else {
+        window.location.href = '/auth/login'
       }
     }
 
     return () => {
-      if (timeoutId1) clearTimeout(timeoutId1)
-      if (timeoutId2) clearTimeout(timeoutId2)
-      if (timeoutId3) clearTimeout(timeoutId3)
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
     }
-  }, [user, loading, router, redirectAttempted])
+  }, [user, loading, redirectAttempted])
 
   // Manual retry button if timeout is reached
   const handleRetry = () => {
@@ -136,3 +101,4 @@ export default function HomePage() {
     </div>
   )
 }
+

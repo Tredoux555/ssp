@@ -21,11 +21,8 @@ export const createClient = () => {
     return createBrowserClient(supabaseUrl, supabaseAnonKey)
   } catch (error) {
     console.error('Failed to create Supabase client:', error)
-    // Return mock client as fallback instead of throwing
-    return createBrowserClient(
-      'https://placeholder.supabase.co',
-      'placeholder-key'
-    )
+    // Return undefined instead of mock client - prevents hanging on non-existent server
+    return undefined as any
   }
 }
 

@@ -24,16 +24,11 @@ export default function LoginPage() {
     try {
       console.log('Calling signIn...')
       await signIn(email, password)
-      console.log('signIn completed, navigating...')
+      console.log('signIn completed, navigating immediately...')
       
-      // Reset loading state immediately after successful sign-in
-      setLoading(false)
-      
-      // Force navigation with a small delay to ensure state is updated
-      setTimeout(() => {
-        console.log('Navigating to dashboard')
-        window.location.href = '/dashboard'
-      }, 100)
+      // Navigate immediately - no delay needed
+      // onAuthStateChange will update state in background
+      window.location.href = '/dashboard'
     } catch (err: any) {
       console.error('Sign-in error:', err)
       setError(err.message || 'Failed to sign in')

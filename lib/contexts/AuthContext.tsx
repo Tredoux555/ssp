@@ -36,45 +36,64 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const fetchProfile = useCallback(async (userId: string) => {
+  const fetchProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
     if (!supabase) return null
     
-    try {
-      // Check if we have a valid session first
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-      if (sessionError || !session || session.user.id !== userId) {
-        // No valid session - can't fetch profile due to RLS
-        return null
-      }
-      
-      // Use .maybeSingle() instead of .single() to handle cases where profile doesn't exist
-      // .maybeSingle() returns null when no rows found instead of throwing 406 error
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle()
-
-      // Handle 406 errors explicitly (shouldn't happen with .maybeSingle() but good to be safe)
-      if (error) {
-        // 406 or PGRST116 means profile doesn't exist - not an error
-        if (error.code === 'PGRST116' || error.status === 406 || error.message.includes('406')) {
-          console.warn('Profile does not exist yet for user:', userId)
+    // Wrap in timeout to prevent hanging - truly non-blocking
+    const fetchPromise = (async () => {
+      try {
+        // Check if we have a valid session first
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+        if (sessionError || !session || session.user.id !== userId) {
+          // No valid session - can't fetch profile due to RLS
           return null
         }
-        // Other errors - log but don't throw
-        console.warn('Error fetching profile:', error)
-        return null
-      }
+        
+        // Use .maybeSingle() instead of .single() to handle cases where profile doesn't exist
+        // .maybeSingle() returns null when no rows found instead of throwing 406 error
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle()
 
-      return data as UserProfile | null
-    } catch (error: any) {
-      // Handle 406 errors in catch block as well
-      if (error?.status === 406 || error?.message?.includes('406')) {
-        console.warn('Profile fetch returned 406 - profile does not exist yet')
+        // Handle 406 errors explicitly (shouldn't happen with .maybeSingle() but good to be safe)
+        if (error) {
+          // 406 or PGRST116 means profile doesn't exist - not an error
+          if (error.code === 'PGRST116' || error.status === 406 || error.message.includes('406')) {
+            console.warn('Profile does not exist yet for user:', userId)
+            return null
+          }
+          // Other errors - log but don't throw
+          console.warn('Error fetching profile:', error)
+          return null
+        }
+
+        return data as UserProfile | null
+      } catch (error: any) {
+        // Handle 406 errors in catch block as well
+        if (error?.status === 406 || error?.message?.includes('406')) {
+          console.warn('Profile fetch returned 406 - profile does not exist yet')
+          return null
+        }
+        console.error('Error fetching profile:', error)
         return null
       }
-      console.error('Error fetching profile:', error)
+    })()
+
+    // Add 10s timeout - never throw, always return null on timeout
+    const timeoutPromise = new Promise<UserProfile | null>((resolve) => {
+      setTimeout(() => {
+        console.warn('Profile fetch timed out after 10s - returning null')
+        resolve(null)
+      }, 10000)
+    })
+
+    try {
+      return await Promise.race([fetchPromise, timeoutPromise])
+    } catch (error: any) {
+      // Never throw errors from fetchProfile - always return null
+      console.error('Unexpected error in fetchProfile:', error)
       return null
     }
   }, [supabase])
@@ -89,153 +108,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     let mounted = true
-    let timeoutId: NodeJS.Timeout | null = null
-    let failsafeTimeout: NodeJS.Timeout | null = null
+    let initialTimeoutId: NodeJS.Timeout | null = null
+    let hasReceivedAuthEvent = false
 
-    // Very aggressive timeout for mobile (2 seconds) - multiple fallbacks
-    timeoutId = setTimeout(() => {
-      if (mounted) {
-        console.warn('Session fetch timed out (2s), proceeding without user')
+    // Single timeout for initial auth state (10 seconds absolute failsafe)
+    // This ensures we don't hang forever if auth state change never fires
+    initialTimeoutId = setTimeout(() => {
+      if (mounted && !hasReceivedAuthEvent) {
+        console.warn('Initial auth state timeout (10s) - setting loading to false')
         setLoading(false)
-        // Don't set user/profile to null on timeout - let the auth listener handle it
-        // This prevents race conditions where timeout fires but session succeeds
+        // Don't set user/profile - let onAuthStateChange handle it when it fires
       }
-    }, 2000) // Very aggressive 2 seconds for mobile
+    }, 10000)
 
-    // Additional fallback timeout at 5 seconds (absolute failsafe)
-    failsafeTimeout = setTimeout(() => {
-      if (mounted) {
-        console.warn('Session fetch absolute failsafe timeout (5s)')
-        setLoading(false)
-        setUser(null)
-        setProfile(null)
-      }
-    }, 5000)
-
-    supabase.auth.getSession()
-      .then((response: { data: { session: any } | null; error: any }) => {
-        const session = response.data?.session
-        const sessionError = response.error
-        if (!mounted) return
-        
-        if (timeoutId) {
-          clearTimeout(timeoutId)
-          timeoutId = null
-        }
-        if (failsafeTimeout) {
-          clearTimeout(failsafeTimeout)
-        }
-        
-        if (sessionError) {
-          console.error('Error getting session:', sessionError)
-          setUser(null)
-          setProfile(null)
-          setLoading(false)
-          return
-        }
-        
-        setUser(session?.user ?? null)
-        // IMPORTANT: Don't wait for profile fetch - set loading to false immediately
-        // Profile fetch should be non-blocking and happen in the background
-        setLoading(false)
-        
-        if (session?.user && session) {
-          // Fetch profile in background - don't block loading state
-          // This is critical for mobile where network might be slow
-          fetchProfile(session.user.id)
-            .then((profile) => {
-              if (mounted) setProfile(profile)
-            })
-            .catch((profileError) => {
-              // Handle 406 gracefully - it means profile doesn't exist yet
-              if (profileError?.status === 406 || profileError?.message?.includes('406')) {
-                console.warn('Profile does not exist yet - will be created on first sign-in')
-              } else {
-                console.error('Error fetching profile:', profileError)
-              }
-              if (mounted) setProfile(null)
-            })
-        } else {
-          setProfile(null)
-        }
-      })
-      .catch((error: unknown) => {
-        console.error('Exception getting session:', error)
-        if (timeoutId) {
-          clearTimeout(timeoutId)
-          timeoutId = null
-        }
-        if (failsafeTimeout) {
-          clearTimeout(failsafeTimeout)
-        }
-        if (mounted) {
-          setUser(null)
-          setProfile(null)
-          setLoading(false)
-        }
-      })
-
+    // Single source of truth: onAuthStateChange listener
+    // This fires immediately with current session and on any auth changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event: string, session: { user: User | null } | null) => {
       if (!mounted) return
       
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-        timeoutId = null
+      // Clear initial timeout once we receive first auth event
+      if (!hasReceivedAuthEvent && initialTimeoutId) {
+        clearTimeout(initialTimeoutId)
+        initialTimeoutId = null
+        hasReceivedAuthEvent = true
       }
       
       try {
+        // Single source of truth for user state
         setUser(session?.user ?? null)
+        
         if (session?.user && session) {
-          // Only fetch profile if we have a valid session
-          try {
-            const userProfile = await fetchProfile(session.user.id)
-            if (mounted) setProfile(userProfile)
-            
-            // If profile doesn't exist and this is a SIGNED_IN event, try to create it
-            if (!userProfile && event === 'SIGNED_IN') {
-              try {
-                const userEmail = session.user.email
-                if (userEmail) {
-                  const { error: createError } = await supabase
-                    .from('user_profiles')
-                    .insert({
-                      id: session.user.id,
-                      email: userEmail,
-                      full_name: null,
-                      phone: null,
-                    })
-
-                  if (!createError) {
-                    // Profile created - fetch it
-                    const newProfile = await fetchProfile(session.user.id)
-                    if (mounted && newProfile) {
-                      setProfile(newProfile)
-                    }
-                  } else {
-                    console.warn('Failed to create profile in auth listener:', createError)
-                    if (mounted) setProfile(null)
-                  }
-                }
-              } catch (createErr) {
-                console.error('Error creating profile in auth listener:', createErr)
-                if (mounted) setProfile(null)
-              }
-            }
-          } catch (profileError: any) {
-            // Handle 406 gracefully - it means profile doesn't exist yet
-            if (profileError?.status === 406 || profileError?.message?.includes('406')) {
-              console.warn('Profile does not exist yet in auth state change')
+          // Fetch profile in background - truly non-blocking (has timeout wrapper)
+          // Never throws errors, always returns null on failure
+          fetchProfile(session.user.id)
+            .then((userProfile) => {
+              if (mounted) setProfile(userProfile)
+            })
+            // fetchProfile never throws, but add catch for safety
+            .catch(() => {
               if (mounted) setProfile(null)
-            } else {
-              console.error('Error fetching profile in auth state change:', profileError)
-              if (mounted) setProfile(null)
-            }
-          }
+            })
         } else {
           setProfile(null)
         }
+        
+        // Single source of truth for loading state - set here only
         setLoading(false)
       } catch (error) {
         console.error('Error in auth state change handler:', error)
@@ -247,11 +166,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       mounted = false
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-      }
-      if (failsafeTimeout) {
-        clearTimeout(failsafeTimeout)
+      if (initialTimeoutId) {
+        clearTimeout(initialTimeoutId)
       }
       subscription.unsubscribe()
     }
@@ -262,7 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Supabase client not initialized')
     }
 
-    // Check if environment variables are set (prevent using mock client)
+    // Check if environment variables are set (prevent using invalid client)
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
     
@@ -271,21 +187,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Server configuration error. Please check your Supabase settings.')
     }
     
-    // Add timeout to prevent hanging on signInWithPassword
-    const signInPromise = supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    })
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
-        reject(new Error('Sign-in request timed out. Please check your internet connection and try again.'))
-      }, 8000) // 8 second timeout (reduced from 10)
-    })
-
     try {
       console.log('Starting sign-in...', { email: email.trim(), hasUrl: !!supabaseUrl, hasKey: !!supabaseAnonKey })
-      const { data, error } = await Promise.race([signInPromise, timeoutPromise])
+      
+      // Let Supabase handle its own timeout (typically 30s) - don't add artificial timeout
+      // This prevents premature timeouts on slow networks
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      })
+      
       console.log('Sign-in response received')
 
       if (error) {
@@ -294,7 +205,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (error.message.includes('Invalid login credentials') || error.message.includes('Email not confirmed')) {
           throw new Error('Invalid email or password. Please check your credentials and try again.')
         }
-        if (error.message.includes('fetch')) {
+        if (error.message.includes('fetch') || error.message.includes('network')) {
           throw new Error('Network error. Please check your internet connection and try again.')
         }
         throw new Error(error.message || 'Failed to sign in')
@@ -305,19 +216,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Failed to sign in. Please try again.')
       }
 
-      console.log('Sign-in successful, setting user state')
-      // Set user state immediately - don't wait for profile
-      setUser(data.user)
-      setProfile(null) // Will be set by auth listener
-
-      // Sign-in completes immediately
+      console.log('Sign-in successful - onAuthStateChange will set user state')
+      // Don't set user state here - let onAuthStateChange handle it
+      // This prevents race conditions and ensures single source of truth
+      
+      // Sign-in completes - auth listener will update state
       console.log('Sign-in complete')
     } catch (err: any) {
       console.error('Sign-in failed:', err)
-      // Ensure we don't leave the app in a broken state
-      setUser(null)
-      setProfile(null)
-      // Rethrow with proper error message
+      // Don't manipulate state here - only throw errors
+      // onAuthStateChange will handle state updates
       const error = err instanceof Error ? err : new Error(err?.message || 'Failed to sign in')
       throw error
     }
@@ -330,8 +238,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw error
     }
     
-    // Simplest possible signup - just create the account and set user state
-    // Don't wait for session or profile - let auth listener handle everything
     try {
       // Email verification is disabled - users can login immediately after signup
       const signUpOptions: any = {
@@ -368,21 +274,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('User account was not created. Please try again.')
       }
 
-      // Set user state immediately - this allows UI to update right away
-      // Auth listener will handle session and profile creation
-      setUser(data.user)
-      setProfile(null) // Will be set by auth listener
+      // Create profile immediately after successful signup
+      // This ensures profile exists when onAuthStateChange fires
+      try {
+        const userEmail = data.user.email
+        if (userEmail) {
+          const { error: createError } = await supabase
+            .from('user_profiles')
+            .insert({
+              id: data.user.id,
+              email: userEmail,
+              full_name: fullName || null,
+              phone: phone || null,
+            })
 
-      // Success - return immediately
-      // Profile and session will be handled by onAuthStateChange listener
+          if (createError) {
+            console.warn('Failed to create profile during signup:', createError)
+            // Don't throw - profile creation is non-critical, can be created later
+          } else {
+            console.log('Profile created during signup')
+          }
+        }
+      } catch (profileErr) {
+        console.warn('Error creating profile during signup:', profileErr)
+        // Don't throw - profile can be created by onAuthStateChange listener
+      }
+
+      // Don't set user state here - let onAuthStateChange handle it
+      // This ensures single source of truth and prevents race conditions
+      console.log('Sign-up successful - onAuthStateChange will set user state')
     } catch (err: any) {
       console.error('Sign-up failed:', err)
-      // Ensure we don't leave the app in a broken state
-      setUser(null)
-      setProfile(null)
-      // Create a proper error object if it's not already one
+      // Don't manipulate state here - only throw errors
+      // onAuthStateChange will handle state updates
       const error = err instanceof Error ? err : new Error(err?.message || err?.toString() || 'Failed to create account')
-      // Rethrow so UI can display the message
       throw error
     }
   }, [supabase])
