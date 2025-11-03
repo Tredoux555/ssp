@@ -24,13 +24,10 @@ export default function LoginPage() {
     try {
       await signIn(email, password)
       
-      // Small delay to ensure auth state propagates
-      await new Promise(resolve => setTimeout(resolve, 200))
-      
-      // Reset loading state before navigation
+      // Reset loading state immediately after successful sign-in
       setLoading(false)
       
-      // Navigate to dashboard - use direct navigation for reliability
+      // Navigate immediately - don't wait for anything
       window.location.href = '/dashboard'
     } catch (err: any) {
       console.error('Sign-in error:', err)
