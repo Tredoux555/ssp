@@ -4,7 +4,7 @@ import { createClient, createAdminClient } from '@/lib/supabase'
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ token: string }> }
-) {
+): Promise<NextResponse> {
   try {
     const supabase = createClient()
     if (!supabase) {

@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase'
 export async function GET(
   _request: NextRequest,
   context: { params: Promise<{ token: string }> }
-) {
+): Promise<NextResponse> {
   try {
     const supabase = createClient()
     if (!supabase) {
