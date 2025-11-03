@@ -91,13 +91,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let mounted = true
     let timeoutId: NodeJS.Timeout | null = null
 
-    // Set a timeout to stop loading after 5 seconds if session fetch hangs
+    // More aggressive timeout for mobile (3 seconds instead of 5)
+    // This matches the page timeout to ensure consistent behavior
     timeoutId = setTimeout(() => {
       if (mounted) {
         console.warn('Session fetch timed out, proceeding without user')
         setLoading(false)
+        // Don't set user/profile to null on timeout - let the auth listener handle it
+        // This prevents race conditions where timeout fires but session succeeds
       }
-    }, 5000)
+    }, 3000) // Reduced to 3 seconds for faster mobile experience
 
     supabase.auth.getSession()
       .then((response: { data: { session: any } | null; error: any }) => {
@@ -119,9 +122,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         
         setUser(session?.user ?? null)
+        // IMPORTANT: Don't wait for profile fetch - set loading to false immediately
+        // Profile fetch should be non-blocking and happen in the background
+        setLoading(false)
+        
         if (session?.user && session) {
-          // Only fetch profile if we have a valid session with token
-          // fetchProfile already validates session internally, but double-check here
+          // Fetch profile in background - don't block loading state
+          // This is critical for mobile where network might be slow
           fetchProfile(session.user.id)
             .then((profile) => {
               if (mounted) setProfile(profile)
@@ -138,7 +145,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           setProfile(null)
         }
-        setLoading(false)
       })
       .catch((error: unknown) => {
         console.error('Exception getting session:', error)
