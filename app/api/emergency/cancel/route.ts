@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
+import { createAdminClient } from '@/lib/supabase'
 
 export async function POST(request: NextRequest) {
   try {
@@ -67,27 +68,24 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Cancel the alert
-    const { error, data } = await supabase
+    // After verification, use admin client to bypass RLS for the update
+    // This follows the same pattern as app/api/contacts/invite/[token]/accept/route.ts
+    const admin = createAdminClient()
+
+    // Cancel the alert using admin client (bypasses RLS)
+    const { error: updateError, data: updatedData } = await admin
       .from('emergency_alerts')
       .update({ 
         status: 'cancelled', 
         resolved_at: new Date().toISOString() 
       })
       .eq('id', alert_id)
-      .eq('user_id', userId)
+      .eq('user_id', userId) // Extra safety: verify ownership even with admin client
       .eq('status', 'active') // Double-check it's still active
       .select()
 
-    if (error) {
-      console.error('Error cancelling emergency alert:', error)
-      // Check if it's a permission error vs not found
-      if (error.code === '42501' || error.message.includes('row-level security')) {
-        return NextResponse.json(
-          { error: 'Access denied' },
-          { status: 403 }
-        )
-      }
+    if (updateError) {
+      console.error('Error cancelling emergency alert:', updateError)
       return NextResponse.json(
         { error: 'Failed to cancel emergency alert' },
         { status: 500 }
@@ -95,14 +93,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if any rows were updated
-    if (!data || data.length === 0) {
+    if (!updatedData || updatedData.length === 0) {
       return NextResponse.json(
         { error: 'Alert not found or already cancelled' },
         { status: 404 }
       )
     }
 
-    return NextResponse.json({ success: true, alert: data[0] }, { status: 200 })
+    return NextResponse.json({ success: true, alert: updatedData[0] }, { status: 200 })
   } catch (error: any) {
     console.error('Unexpected error cancelling emergency alert:', error)
     return NextResponse.json(
