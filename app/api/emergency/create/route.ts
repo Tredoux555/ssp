@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerClient } from '@/lib/supabase'
+import { createServerClient } from '@/lib/supabase-server'
 import { createEmergencyAlert, checkRateLimit, getEmergencyContacts } from '@/lib/emergency'
 import { getCurrentLocation, reverseGeocode } from '@/lib/location'
 
