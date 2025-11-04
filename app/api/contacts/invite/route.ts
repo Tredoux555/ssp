@@ -55,26 +55,9 @@ export async function POST(request: NextRequest) {
     const origin = request.headers.get('origin') || ''
     const inviteUrl = `${origin}/contacts/invite/${invite.token}`
 
-    // Optionally pre-create a placeholder contact row (email only) to avoid duplicates
-    // Try insert, ignore duplicates
-    try {
-      await admin
-        .from('emergency_contacts')
-        .insert({
-          user_id: session.user.id,
-          name: email.split('@')[0],
-          email,
-          relationship: relationship || null,
-          priority: typeof priority === 'number' ? priority : 0,
-          can_see_location: true,
-          verified: false,
-        })
-        .select()
-        .single()
-    } catch (contactError) {
-      // Ignore duplicate errors - contact might already exist
-      console.warn('Failed to pre-create contact (non-critical):', contactError)
-    }
+    // Note: We no longer pre-create placeholder contacts to avoid duplicates
+    // The database trigger will create verified contacts when the invite is accepted
+    // This prevents duplicate contacts (one pending, one verified)
 
     return NextResponse.json({ inviteUrl }, { status: 200 })
   } catch (error: any) {

@@ -95,26 +95,9 @@ export async function createContactInvite(
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const inviteUrl = `${origin}/contacts/invite/${invite.token}`
 
-  // Optionally pre-create a placeholder contact row (email only)
-  // RLS policy "Users can create own contacts" allows this
-  try {
-    await supabase
-      .from('emergency_contacts')
-      .insert({
-        user_id: session.user.id,
-        name: normalizedEmail.split('@')[0],
-        email: normalizedEmail,
-        relationship: relationship || null,
-        priority: typeof priority === 'number' ? priority : 0,
-        can_see_location: true,
-        verified: false,
-      })
-      .select()
-      .single()
-  } catch (contactError) {
-    // Ignore duplicate errors - contact might already exist
-    console.warn('Failed to pre-create contact (non-critical):', contactError)
-  }
+  // Note: We no longer pre-create placeholder contacts to avoid duplicates
+  // The database trigger will create verified contacts when the invite is accepted
+  // This prevents duplicate contacts (one pending, one verified)
 
   return { inviteUrl }
 }
