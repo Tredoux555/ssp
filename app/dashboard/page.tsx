@@ -3,9 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
-import { getActiveEmergency, createEmergencyAlert } from '@/lib/emergency'
+import { getActiveEmergency, getEmergencyContacts } from '@/lib/emergency'
 import { getCurrentLocation, reverseGeocode } from '@/lib/location'
-import { getEmergencyContacts } from '@/lib/emergency'
 import { subscribeToContactAlerts } from '@/lib/realtime/subscriptions'
 import { showEmergencyAlert, hideEmergencyAlert } from '@/lib/notifications'
 import Button from '@/components/Button'
@@ -59,10 +58,16 @@ export default function DashboardPage() {
     
     // Only redirect if auth loading is complete and no user
     if (!user) {
-      // Small delay to ensure auth state is fully settled
+      // Longer delay on mobile to prevent redirect loops
+      // Mobile networks may be slower to update auth state
+      const delay = typeof window !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ? 1000 : 500
       const redirectTimeout = setTimeout(() => {
-        router.push('/auth/login')
-      }, 300)
+        // Double-check user is still not set before redirecting
+        // This prevents redirect loops if user state updates during delay
+        if (!user) {
+          router.push('/auth/login')
+        }
+      }, delay)
       
       return () => clearTimeout(redirectTimeout)
     }
@@ -225,20 +230,8 @@ export default function DashboardPage() {
         throw new Error(`Failed to create emergency alert: ${alertError.message || 'Unknown error'}`)
       }
 
-      // Get contacts and notify them (non-blocking)
-      try {
-        const contacts = await getEmergencyContacts(user.id)
-        if (contacts.length > 0) {
-          const { notifyEmergencyContacts } = await import('@/lib/emergency')
-          await notifyEmergencyContacts(emergencyAlert.id, user.id, contacts).catch((notifyError) => {
-            console.error('Failed to notify contacts (non-critical):', notifyError)
-            // Don't fail the alert creation if notification fails
-          })
-        }
-      } catch (contactError) {
-        console.error('Failed to get contacts (non-critical):', contactError)
-        // Continue even if contact notification fails
-      }
+      // Note: Contact notification is handled server-side in the API route
+      // No need to call notifyEmergencyContacts() here - it's already done
 
       // Navigate to emergency screen
       router.push(`/emergency/active/${emergencyAlert.id}`)

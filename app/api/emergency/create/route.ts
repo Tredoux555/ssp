@@ -215,6 +215,46 @@ export async function POST(request: NextRequest) {
               console.log(`Created ${responses.length} alert response(s) for alert ${alert.id}`)
             }
           }
+
+          // Send push notifications to all contacts (non-blocking)
+          // This runs in parallel with Realtime subscriptions
+          try {
+            const contactUserIds = contacts
+              .filter(c => c.verified && c.contact_user_id)
+              .map(c => c.contact_user_id)
+              .filter(id => id) as string[]
+
+            if (contactUserIds.length > 0) {
+              // Import push send function directly (server-side)
+              const { sendPushNotification } = await import('@/lib/push-server')
+              
+              // Send push notification to each contact in parallel
+              // Don't wait for completion - fire and forget
+              Promise.allSettled(
+                contactUserIds.map(async (contactUserId) => {
+                  try {
+                    await sendPushNotification(contactUserId, {
+                      alertId: alert.id,
+                      title: 'Emergency Alert',
+                      body: `Emergency alert from ${session.user.email || 'a contact'}`,
+                      data: {
+                        alertId: alert.id,
+                        alertType: alert.alert_type,
+                        address: alert.address,
+                      },
+                    })
+                  } catch (pushError) {
+                    console.warn(`Error sending push to user ${contactUserId}:`, pushError)
+                  }
+                })
+              ).catch((err) => {
+                console.warn('Error sending push notifications (non-critical):', err)
+              })
+            }
+          } catch (pushError) {
+            console.warn('Failed to send push notifications (non-critical):', pushError)
+            // Continue - push notifications are non-critical
+          }
         }
       }
     } catch (contactError) {

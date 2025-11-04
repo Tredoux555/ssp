@@ -96,19 +96,65 @@ export default function ContactsPage() {
     setLoadingInvites(true)
     try {
       console.log('Loading incoming invites for user:', user.email)
-      const res = await fetch('/api/contacts/invites/incoming')
-      const data = await res.json()
-      if (res.ok) {
-        console.log('Loaded incoming invites:', data.invites?.length || 0, 'invites')
-        setIncomingInvites(data.invites || [])
-      } else {
-        console.error('Failed to load incoming invites:', data.error)
+      
+      // Wrap fetch in try-catch to handle network errors
+      let res: Response
+      try {
+        res = await fetch('/api/contacts/invites/incoming')
+      } catch (fetchError: any) {
+        // Network error (TypeError: fetch failed, CORS, etc.)
+        const networkError = fetchError instanceof TypeError
+          ? new Error(`Network error: ${fetchError.message || 'Failed to connect to server'}`)
+          : fetchError instanceof Error
+          ? fetchError
+          : new Error(`Network error: ${String(fetchError)}`)
+        
+        console.error('Failed to load incoming invites (network error):', {
+          ...serializeError(networkError),
+          userEmail: user?.email,
+          rawError: fetchError instanceof Error ? {
+            name: fetchError.name,
+            message: fetchError.message,
+            stack: fetchError.stack,
+          } : fetchError,
+        })
+        
+        // Don't show alert for network errors - just log and set empty array
+        // Network errors are often temporary and will resolve on retry
+        setIncomingInvites([])
+        setLoadingInvites(false)
+        return
+      }
+      
+      // Check if response is ok before parsing
+      if (!res.ok) {
+        // Try to parse error response
+        let errorMessage = `Failed to load invites (${res.status})`
+        try {
+          const errorText = await res.text()
+          if (errorText) {
+            const parsed = JSON.parse(errorText)
+            errorMessage = parsed.error || errorMessage
+          }
+        } catch {
+          // Response is not JSON or empty - use status text
+          errorMessage = res.statusText || errorMessage
+        }
+        
+        console.error('Failed to load incoming invites:', errorMessage)
         // Show error to user if there's a clear error message
-        if (data.error && !data.error.includes('schema cache')) {
-          alert(`Failed to load invites: ${data.error}`)
+        if (errorMessage && !errorMessage.includes('schema cache')) {
+          alert(`Failed to load invites: ${errorMessage}`)
         }
         setIncomingInvites([])
+        setLoadingInvites(false)
+        return
       }
+      
+      // Parse successful response
+      const data = await res.json()
+      console.log('Loaded incoming invites:', data.invites?.length || 0, 'invites')
+      setIncomingInvites(data.invites || [])
     } catch (error: any) {
       // Properly serialize error for logging
       const serializedError = serializeError(error)
@@ -121,7 +167,11 @@ export default function ContactsPage() {
           stack: error.stack,
         } : error,
       })
-      alert(`Failed to load invites: ${error?.message || 'Network error'}`)
+      
+      // Only show alert for non-network errors
+      if (!(error instanceof TypeError && error.message.includes('fetch'))) {
+        alert(`Failed to load invites: ${error?.message || 'Unknown error'}`)
+      }
       setIncomingInvites([])
     } finally {
       setLoadingInvites(false)

@@ -47,8 +47,8 @@ export async function getCurrentLocation(): Promise<LocationCoordinates> {
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
+        timeout: 8000, // Reduced from 10000 to fail faster
+        maximumAge: 60000, // Accept cached location if less than 1 minute old
       }
     )
   })
@@ -62,22 +62,34 @@ export async function updateLocation(
   alertId: string | null,
   location: LocationCoordinates
 ): Promise<void> {
-  const { createClient } = await import('./supabase')
-  const supabase = createClient()
+  try {
+    const { createClient } = await import('./supabase')
+    const supabase = createClient()
 
-  const { error } = await supabase
-    .from('location_history')
-    .insert({
-      user_id: userId,
-      alert_id: alertId,
-      latitude: location.lat,
-      longitude: location.lng,
-      accuracy: location.accuracy,
-    })
+    if (!supabase) {
+      console.warn('Supabase client not available for location update - skipping')
+      return // Don't throw - location update is non-critical
+    }
 
-  if (error) {
+    const { error } = await supabase
+      .from('location_history')
+      .insert({
+        user_id: userId,
+        alert_id: alertId,
+        latitude: location.lat,
+        longitude: location.lng,
+        accuracy: location.accuracy,
+      })
+
+    if (error) {
+      console.error('Failed to update location:', error)
+      // Don't throw - location update is non-critical, just log the error
+      // This prevents location update failures from breaking the emergency alert flow
+    }
+  } catch (error: any) {
+    // Network errors or other issues should not break the emergency alert
     console.error('Failed to update location:', error)
-    throw new Error(`Failed to update location: ${error.message}`)
+    // Don't throw - location update is non-critical
   }
 }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { createAdminClient } from '@/lib/supabase'
+import { createBidirectionalContact } from '@/lib/emergency'
 
 export async function POST(
   request: NextRequest,
@@ -97,145 +98,38 @@ export async function POST(
       }, { status: 403 })
     }
 
-    // Admin client already created above for fetching invite
-    // Continue using it for inserting into inviter's contacts
-
-    console.log('Linking contact:', {
-      inviter_user_id: invite.inviter_user_id,
-      contact_user_id: session.user.id,
-      email: targetEmail,
-    })
-
-    // Upsert contact: set contact_user_id, ensure email is set, keep existing name if present
-    // Try update existing email row, else insert new
-    const { error: upsertError } = await admin.rpc('upsert_contact_link', {
-      p_user_id: invite.inviter_user_id,
-      p_contact_user_id: session.user.id,
-      p_email: targetEmail,
-    })
-
-    // If helper function not present, fall back to manual upsert
-    if (upsertError) {
-      console.log('RPC function not available, using manual upsert')
-      
-      // Try update existing by (user_id, lower(email))
-      let existing: { id?: string } | null = null
-      try {
-        const { data } = await admin
-          .from('emergency_contacts')
-          .select('id')
-          .eq('user_id', invite.inviter_user_id)
-          .ilike('email', targetEmail)
-          .single()
-        existing = data
-        console.log('Found existing contact:', existing?.id)
-      } catch {
-        // No existing contact found - will insert new one
-        existing = null
-        console.log('No existing contact found, will insert new')
-      }
-
-      if (existing?.id) {
-        console.log('Updating existing contact:', existing.id)
-        const { error: updateError } = await admin
-          .from('emergency_contacts')
-          .update({ 
-            contact_user_id: session.user.id,
-            verified: true 
-          })
-          .eq('id', existing.id)
-        if (updateError) {
-          console.error('Failed to update contact:', updateError)
-          return NextResponse.json({ error: 'Failed to link contact (update)' }, { status: 500 })
-        }
-        console.log('Contact updated successfully and marked as verified')
-      } else {
-        console.log('Inserting new contact')
-        const { error: insertError } = await admin
-          .from('emergency_contacts')
-          .insert({
-            user_id: invite.inviter_user_id,
-            contact_user_id: session.user.id,
-            email: targetEmail,
-            name: targetEmail.split('@')[0],
-            can_see_location: true,
-            verified: true,
-          })
-        if (insertError) {
-          console.error('Failed to insert contact:', insertError)
-          return NextResponse.json({ error: 'Failed to link contact (insert)' }, { status: 500 })
-        }
-        console.log('Contact inserted successfully')
-      }
-    } else {
-      console.log('Contact linked via RPC function')
-    }
-
-    // ALSO create/update a contact in the ACCEPTER's list pointing to the inviter
-    // This ensures both users see each other in their contact lists
-    console.log('Creating contact in accepter\'s list for inviter:', {
-      accepter_user_id: session.user.id,
-      inviter_user_id: invite.inviter_user_id,
-    })
-    
-    // Get inviter's email from auth.users (we need it for the contact record)
+    // Get inviter's email from auth.users (needed for bidirectional contact creation)
     let inviterEmail: string | undefined = undefined
     try {
       const { data: authUser, error: authError } = await admin.auth.admin.getUserById(invite.inviter_user_id)
       if (!authError && authUser?.user?.email) {
         inviterEmail = authUser.user.email
-        console.log('Got inviter email from auth:', inviterEmail)
       }
     } catch (authErr) {
-      console.warn('Could not get inviter email from auth (non-critical):', authErr)
+      console.warn('Could not get inviter email from auth:', authErr)
+      // Continue - will use email from invite if available
     }
-    
-    // Check if accepter already has a contact for the inviter
-    let accepterContact: { id?: string } | null = null
+
+    if (!inviterEmail) {
+      // Try to get email from invite or use a fallback
+      console.warn('Inviter email not found - using fallback')
+      inviterEmail = `user-${invite.inviter_user_id.substring(0, 8)}@unknown`
+    }
+
+    // Create bidirectional contacts - both users become emergency contacts for each other
     try {
-      const { data } = await admin
-        .from('emergency_contacts')
-        .select('id')
-        .eq('user_id', session.user.id)
-        .eq('contact_user_id', invite.inviter_user_id)
-        .maybeSingle()
-      accepterContact = data || null
-      console.log('Found existing accepter contact:', accepterContact?.id)
-    } catch {
-      accepterContact = null
-      console.log('No existing accepter contact found')
-    }
-    
-    if (accepterContact?.id) {
-      // Update existing contact to mark as verified
-      const { error: updateAccepterError } = await admin
-        .from('emergency_contacts')
-        .update({ verified: true })
-        .eq('id', accepterContact.id)
-      
-      if (updateAccepterError) {
-        console.warn('Failed to update accepter contact (non-critical):', updateAccepterError)
-      } else {
-        console.log('Updated accepter contact as verified')
-      }
-    } else {
-      // Insert new contact in accepter's list for the inviter
-      const { error: insertAccepterError } = await admin
-        .from('emergency_contacts')
-        .insert({
-          user_id: session.user.id,
-          contact_user_id: invite.inviter_user_id,
-          email: inviterEmail || undefined,
-          name: inviterEmail ? inviterEmail.split('@')[0] : 'Contact',
-          can_see_location: true,
-          verified: true,
-        })
-      
-      if (insertAccepterError) {
-        console.warn('Failed to insert accepter contact (non-critical):', insertAccepterError)
-      } else {
-        console.log('Inserted new contact in accepter\'s list')
-      }
+      await createBidirectionalContact(
+        invite.inviter_user_id,
+        session.user.id,
+        inviterEmail,
+        targetEmail
+      )
+    } catch (contactError: any) {
+      console.error('Failed to create bidirectional contacts:', contactError)
+      return NextResponse.json(
+        { error: contactError.message || 'Failed to create emergency contacts' },
+        { status: 500 }
+      )
     }
 
     // Mark invite accepted

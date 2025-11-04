@@ -68,6 +68,112 @@ export async function getEmergencyContacts(userId: string) {
 }
 
 /**
+ * Create bidirectional emergency contacts between two users
+ * When User A invites User B and B accepts, both become emergency contacts for each other
+ */
+export async function createBidirectionalContact(
+  inviterUserId: string,
+  accepterUserId: string,
+  inviterEmail: string,
+  accepterEmail: string
+): Promise<void> {
+  const { createAdminClient } = await import('./supabase')
+  const admin = createAdminClient()
+
+  try {
+    // Check if contact already exists in inviter's list
+    const { data: existingInviter } = await admin
+      .from('emergency_contacts')
+      .select('id')
+      .eq('user_id', inviterUserId)
+      .eq('contact_user_id', accepterUserId)
+      .maybeSingle()
+
+    // Create or update contact in inviter's list pointing to accepter
+    if (existingInviter?.id) {
+      const { error: inviterError } = await admin
+        .from('emergency_contacts')
+        .update({
+          contact_user_id: accepterUserId,
+          email: accepterEmail,
+          verified: true,
+        })
+        .eq('id', existingInviter.id)
+
+      if (inviterError) {
+        console.error('Failed to update inviter contact:', inviterError)
+        throw new Error(`Failed to create contact: ${inviterError.message}`)
+      }
+    } else {
+      const { error: inviterError } = await admin
+        .from('emergency_contacts')
+        .insert({
+          user_id: inviterUserId,
+          contact_user_id: accepterUserId,
+          email: accepterEmail,
+          name: accepterEmail.split('@')[0],
+          can_see_location: true,
+          verified: true,
+        })
+
+      if (inviterError) {
+        console.error('Failed to create inviter contact:', inviterError)
+        throw new Error(`Failed to create contact: ${inviterError.message}`)
+      }
+    }
+
+    // Check if contact already exists in accepter's list
+    const { data: existingAccepter } = await admin
+      .from('emergency_contacts')
+      .select('id')
+      .eq('user_id', accepterUserId)
+      .eq('contact_user_id', inviterUserId)
+      .maybeSingle()
+
+    // Create or update contact in accepter's list pointing to inviter
+    if (existingAccepter?.id) {
+      const { error: accepterError } = await admin
+        .from('emergency_contacts')
+        .update({
+          contact_user_id: inviterUserId,
+          email: inviterEmail,
+          verified: true,
+        })
+        .eq('id', existingAccepter.id)
+
+      if (accepterError) {
+        console.error('Failed to update accepter contact:', accepterError)
+        throw new Error(`Failed to create contact: ${accepterError.message}`)
+      }
+    } else {
+      const { error: accepterError } = await admin
+        .from('emergency_contacts')
+        .insert({
+          user_id: accepterUserId,
+          contact_user_id: inviterUserId,
+          email: inviterEmail,
+          name: inviterEmail.split('@')[0],
+          can_see_location: true,
+          verified: true,
+        })
+
+      if (accepterError) {
+        console.error('Failed to create accepter contact:', accepterError)
+        throw new Error(`Failed to create contact: ${accepterError.message}`)
+      }
+    }
+
+    console.log('Bidirectional contacts created successfully:', {
+      inviterUserId,
+      accepterUserId,
+    })
+  } catch (error: any) {
+    console.error('Error creating bidirectional contacts:', error)
+    throw error
+  }
+}
+
+/**
  * Send notifications to all emergency contacts
  */
 export async function notifyEmergencyContacts(

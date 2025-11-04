@@ -216,7 +216,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Failed to sign in. Please try again.')
       }
 
-      console.log('Sign-in successful - refreshing session and waiting for state update')
+      console.log('Sign-in successful - refreshing session')
       
       // Explicitly refresh session to ensure it's immediately available
       // This fixes cases where session isn't immediately available after sign-in
@@ -234,11 +234,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Continue anyway - onAuthStateChange will handle it
       }
       
-      // Small delay to ensure onAuthStateChange fires and updates state
-      // This prevents navigation before auth state is ready
-      await new Promise(resolve => setTimeout(resolve, 500))
-      
-      console.log('Sign-in complete - state should be updated')
+      // Don't wait here - let the login page wait for actual state update via useEffect
+      // This ensures we wait for the actual auth state change, not just a fixed delay
+      console.log('Sign-in complete - onAuthStateChange will update state')
     } catch (err: any) {
       console.error('Sign-in failed:', err)
       // Don't manipulate state here - only throw errors

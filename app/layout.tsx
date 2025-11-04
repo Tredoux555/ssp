@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/contexts/AuthContext";
 import { ErrorHandler } from "@/components/ErrorHandler";
+import PushNotificationSetup from "@/components/PushNotificationSetup";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -24,6 +25,7 @@ export default function RootLayout({
       <body className={`${inter.variable} font-sans antialiased`}>
         <ErrorHandler />
         <AuthProvider>
+          <PushNotificationSetup />
           {children}
         </AuthProvider>
       </body>
