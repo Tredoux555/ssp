@@ -216,7 +216,11 @@ export function subscribeToContactAlerts(
   contactUserId: string,
   callback: (alert: any) => void
 ): () => void {
-  console.log(`[Realtime] Setting up contact alert subscription for user: ${contactUserId}`)
+  console.log(`[Realtime] 🔔 Setting up contact alert subscription for user: ${contactUserId}`)
+  console.log(`[Realtime] 📡 Channel: contact-alerts-${contactUserId}`)
+  console.log(`[Realtime] 📋 Table: emergency_alerts`)
+  console.log(`[Realtime] 📨 Event: * (all events)`)
+  
   const manager = getSubscriptionManager()
   const unsubscribe = manager.subscribe({
     channel: `contact-alerts-${contactUserId}`,
@@ -224,11 +228,13 @@ export function subscribeToContactAlerts(
     event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
     callback: (payload) => {
       const alert = payload.new || payload.old
-      console.log(`[Realtime] Contact alert received for user ${contactUserId}:`, {
+      console.log(`[Realtime] 📨 Contact alert event received for user ${contactUserId}:`, {
         eventType: payload.eventType,
         alertId: alert?.id,
         status: alert?.status,
         contactsNotified: alert?.contacts_notified,
+        contactsNotifiedType: Array.isArray(alert?.contacts_notified) ? 'array' : typeof alert?.contacts_notified,
+        contactsNotifiedLength: Array.isArray(alert?.contacts_notified) ? alert.contacts_notified.length : 'N/A',
         alertUserId: alert?.user_id,
         hasNew: !!payload.new,
         hasOld: !!payload.old,
@@ -236,29 +242,47 @@ export function subscribeToContactAlerts(
       
       // Only fire callback if this contact user is in the contacts_notified array
       if (alert && alert.contacts_notified && Array.isArray(alert.contacts_notified)) {
-        const isNotified = alert.contacts_notified.some((id: string) => id === contactUserId)
-        console.log(`[Realtime] Checking if user ${contactUserId} is notified:`, {
+        // Normalize IDs for comparison (trim whitespace, ensure string comparison)
+        const normalizedContactUserId = contactUserId.trim()
+        const normalizedContactsNotified = alert.contacts_notified.map((id: string) => String(id).trim())
+        
+        const isNotified = normalizedContactsNotified.some((id: string) => id === normalizedContactUserId)
+        
+        console.log(`[Realtime] 🔍 Checking if user ${contactUserId} is notified:`, {
           isNotified,
-          contactsNotified: alert.contacts_notified,
-          contactUserId,
+          contactUserId: normalizedContactUserId,
+          contactsNotified: normalizedContactsNotified,
+          contactsNotifiedRaw: alert.contacts_notified,
           alertStatus: alert.status,
           alertUserId: alert.user_id,
+          matchFound: normalizedContactsNotified.includes(normalizedContactUserId),
         })
         
         // Check if this is a new alert being created or updated to active status
         if (isNotified && alert.status === 'active') {
-          console.log(`[Realtime] ✅ Triggering callback for contact ${contactUserId} - Alert ${alert.id}`)
+          console.log(`[Realtime] ✅ TRIGGERING CALLBACK for contact ${contactUserId} - Alert ${alert.id}`)
+          console.log(`[Realtime] 🚨 ALERT SHOULD NOW APPEAR ON DEVICE`)
           callback(alert)
         } else {
-          console.log(`[Realtime] ⏭️ Skipping callback - isNotified: ${isNotified}, status: ${alert.status}`)
+          console.log(`[Realtime] ⏭️ Skipping callback:`, {
+            isNotified,
+            status: alert.status,
+            reason: !isNotified ? 'user not in contacts_notified' : `status is ${alert.status} (not 'active')`
+          })
         }
       } else {
-        console.log(`[Realtime] ⚠️ No contacts_notified array or invalid alert structure`)
+        console.log(`[Realtime] ⚠️ No contacts_notified array or invalid alert structure:`, {
+          hasAlert: !!alert,
+          hasContactsNotified: !!alert?.contacts_notified,
+          isArray: Array.isArray(alert?.contacts_notified),
+          contactsNotifiedType: typeof alert?.contacts_notified,
+          contactsNotifiedValue: alert?.contacts_notified
+        })
       }
     },
   })
   
-  console.log(`[Realtime] Contact alert subscription setup complete for user: ${contactUserId}`)
+  console.log(`[Realtime] ✅ Contact alert subscription setup complete for user: ${contactUserId}`)
   return unsubscribe
 }
 

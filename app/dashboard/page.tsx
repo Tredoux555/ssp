@@ -101,35 +101,80 @@ export default function DashboardPage() {
       // Fallback polling mechanism - check for active alerts every 5 seconds
       // This ensures alerts are received even if Realtime subscription fails
       const startPolling = () => {
-        console.log(`[Dashboard] Starting fallback polling for user: ${user.id}`)
+        console.log(`[Dashboard] 📡 Starting fallback polling for user: ${user.id}`)
         pollingInterval = setInterval(async () => {
           try {
             // Check if there are any active alerts where this user is in contacts_notified
             const { createClient } = await import('@/lib/supabase')
             const supabase = createClient()
-            if (!supabase) return
+            if (!supabase) {
+              console.warn(`[Dashboard] ⚠️ Supabase client not available for polling`)
+              return
+            }
             
+            // Use cs (contains) filter for array containment
+            // This checks if user.id is in the contacts_notified array
             const { data: alerts, error } = await supabase
               .from('emergency_alerts')
               .select('*')
               .eq('status', 'active')
-              .contains('contacts_notified', user.id)
+              .cs('contacts_notified', [user.id])
               .order('triggered_at', { ascending: false })
               .limit(1)
             
             if (error) {
-              console.warn(`[Dashboard] Polling error:`, error)
+              console.warn(`[Dashboard] ⚠️ Polling query error:`, error)
+              // Try alternative query syntax if .cs() fails
+              try {
+                const { data: allAlerts, error: allError } = await supabase
+                  .from('emergency_alerts')
+                  .select('*')
+                  .eq('status', 'active')
+                  .order('triggered_at', { ascending: false })
+                  .limit(10)
+                
+                if (!allError && allAlerts) {
+                  // Filter client-side
+                  const relevantAlerts = allAlerts.filter((alert: any) => 
+                    alert.contacts_notified && 
+                    Array.isArray(alert.contacts_notified) && 
+                    alert.contacts_notified.includes(user.id)
+                  )
+                  
+                  if (relevantAlerts.length > 0) {
+                    const alert = relevantAlerts[0]
+                    console.log(`[Dashboard] 📡 Polling found active alert (client-side filter):`, alert.id)
+                    
+                    const currentPath = window.location.pathname
+                    if (!currentPath.includes(`/alert/${alert.id}`) && !currentPath.includes(`/emergency/active/${alert.id}`)) {
+                      console.log(`[Dashboard] 🚨 Navigating to alert page via polling: ${alert.id}`)
+                      showEmergencyAlert(alert.id, {
+                        address: alert.address,
+                        alert_type: alert.alert_type,
+                      })
+                      router.push(`/alert/${alert.id}`)
+                    }
+                  }
+                }
+              } catch (fallbackError) {
+                console.warn(`[Dashboard] ⚠️ Fallback polling error:`, fallbackError)
+              }
               return
             }
             
             if (alerts && alerts.length > 0) {
               const alert = alerts[0]
-              console.log(`[Dashboard] 📡 Polling found active alert for user ${user.id}:`, alert.id)
+              console.log(`[Dashboard] 📡 Polling found active alert for user ${user.id}:`, {
+                alertId: alert.id,
+                userId: alert.user_id,
+                contactsNotified: alert.contacts_notified,
+                userIsInContacts: alert.contacts_notified?.includes(user.id)
+              })
               
               // Check if we're already on this alert page
               const currentPath = window.location.pathname
               if (!currentPath.includes(`/alert/${alert.id}`) && !currentPath.includes(`/emergency/active/${alert.id}`)) {
-                console.log(`[Dashboard] Navigating to alert page via polling: ${alert.id}`)
+                console.log(`[Dashboard] 🚨 Navigating to alert page via polling: ${alert.id}`)
                 showEmergencyAlert(alert.id, {
                   address: alert.address,
                   alert_type: alert.alert_type,
@@ -138,18 +183,15 @@ export default function DashboardPage() {
               }
             }
           } catch (error) {
-            console.warn(`[Dashboard] Polling error:`, error)
+            console.warn(`[Dashboard] ⚠️ Polling error:`, error)
           }
         }, 5000) // Poll every 5 seconds
       }
       
-      // Start polling after 2 seconds (give Realtime a chance to connect first)
-      const pollingTimeout = setTimeout(() => {
-        if (!subscriptionActive) {
-          console.log(`[Dashboard] Realtime subscription may not be active, starting fallback polling`)
-          startPolling()
-        }
-      }, 2000)
+      // Start polling immediately (works alongside Realtime)
+      // This ensures alerts are received even if Realtime has issues
+      console.log(`[Dashboard] 🔄 Starting fallback polling immediately`)
+      startPolling()
       
       return () => {
         console.log(`[Dashboard] Cleaning up subscription for user: ${user.id}`)

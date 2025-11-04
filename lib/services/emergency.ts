@@ -239,7 +239,7 @@ export async function createEmergencyAlert(
         .single()
 
       if (alertError || !alertDataResult) {
-        console.error('Failed to create emergency alert:', alertError)
+        console.error('[Alert] ❌ Failed to create emergency alert:', alertError)
         throw new Error(alertError?.message || 'Failed to create emergency alert')
       }
 
@@ -248,10 +248,23 @@ export async function createEmergencyAlert(
       // Contacts are already notified via contacts_notified in the INSERT above
       // This ensures Realtime subscriptions fire immediately on INSERT event
       // No need for separate UPDATE - contacts will receive the alert via Realtime
+      console.log(`[Alert] ✅ Alert created successfully:`, {
+        alertId: alert.id,
+        userId: alert.user_id,
+        status: alert.status,
+        contactsNotified: alert.contacts_notified,
+        contactsNotifiedCount: alert.contacts_notified?.length || 0,
+        contactIds: contactIds,
+        contactIdsCount: contactIds.length
+      })
+      
       if (alert.contacts_notified && Array.isArray(alert.contacts_notified) && alert.contacts_notified.length > 0) {
-        console.log(`Alert created with ${alert.contacts_notified.length} contact(s) notified via Realtime subscription.`)
+        console.log(`[Alert] ✅ Alert created with ${alert.contacts_notified.length} contact(s) in contacts_notified array.`)
+        console.log(`[Alert] 📋 Contacts to be notified:`, alert.contacts_notified)
+        console.log(`[Alert] 🔔 Realtime subscriptions should fire immediately for these users.`)
       } else {
-        console.warn('Alert created but no contacts were notified. Make sure you have verified contacts.')
+        console.warn('[Alert] ⚠️ Alert created but contacts_notified array is empty!')
+        console.warn('[Alert] ⚠️ Make sure you have verified contacts with contact_user_id set.')
       }
 
       return alert
