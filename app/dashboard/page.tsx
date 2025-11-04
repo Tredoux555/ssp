@@ -200,7 +200,6 @@ export default function DashboardPage() {
         if (pollingInterval) {
           clearInterval(pollingInterval)
         }
-        clearTimeout(pollingTimeout)
       }
     }
   }, [user, router])
