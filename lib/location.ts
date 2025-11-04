@@ -10,12 +10,13 @@ export interface LocationCoordinates {
 
 /**
  * Get current location using browser Geolocation API
+ * Returns null gracefully if permission denied or unavailable
  */
-export async function getCurrentLocation(): Promise<LocationCoordinates> {
-  return new Promise((resolve, reject) => {
+export async function getCurrentLocation(): Promise<LocationCoordinates | null> {
+  return new Promise((resolve) => {
     if (!navigator.geolocation) {
-      reject(new Error('Geolocation is not supported by this browser'))
-      return
+      // Geolocation not supported - return null gracefully
+      return resolve(null)
     }
 
     navigator.geolocation.getCurrentPosition(
@@ -27,28 +28,23 @@ export async function getCurrentLocation(): Promise<LocationCoordinates> {
         })
       },
       (error) => {
-        let errorMessage = 'Unable to get your location'
-        
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            errorMessage = 'Location permission denied. Please enable location access in your browser settings.'
-            break
-          case error.POSITION_UNAVAILABLE:
-            errorMessage = 'Location information is unavailable. Please check your device settings.'
-            break
-          case error.TIMEOUT:
-            errorMessage = 'Location request timed out. Please try again.'
-            break
-          default:
-            errorMessage = `Geolocation error: ${error.message || 'Unknown error'}`
+        // Handle errors gracefully - don't throw, just return null
+        // Only log unexpected errors (not permission denials)
+        if (error.code !== error.PERMISSION_DENIED) {
+          // Log only unexpected errors (timeout, unavailable)
+          if (error.code === error.POSITION_UNAVAILABLE || error.code === error.TIMEOUT) {
+            // These are expected in some cases - don't log as error
+            // Just return null gracefully
+          }
         }
-        
-        reject(new Error(errorMessage))
+        // Return null instead of throwing error
+        // This allows the app to continue without location
+        resolve(null)
       },
       {
         enableHighAccuracy: true,
-        timeout: 8000, // Reduced from 10000 to fail faster
-        maximumAge: 60000, // Accept cached location if less than 1 minute old
+        timeout: 8000,
+        maximumAge: 60000,
       }
     )
   })
@@ -111,14 +107,20 @@ export function startLocationTracking(
     try {
       const location = await getCurrentLocation()
       
-      // Update in database
-      await updateLocation(userId, alertId, location)
+      // Only update if location is available
+      if (location) {
+        // Update in database
+        await updateLocation(userId, alertId, location)
 
-      // Callback for real-time updates
-      if (onLocationUpdate) {
-        onLocationUpdate(location)
+        // Callback for real-time updates
+        if (onLocationUpdate) {
+          onLocationUpdate(location)
+        }
       }
+      // If location is null (permission denied/unavailable), just skip silently
+      // Don't log errors - this is expected behavior
     } catch (error) {
+      // Only log unexpected errors
       console.error('Location tracking error:', error)
     }
   }

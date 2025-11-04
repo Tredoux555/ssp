@@ -9,6 +9,7 @@ let isAlertActive = false
 
 /**
  * Play emergency alert sound
+ * Handles missing audio file gracefully
  */
 export function playAlertSound(): void {
   try {
@@ -16,20 +17,34 @@ export function playAlertSound(): void {
     if (alertSound) {
       alertSound.pause()
       alertSound.currentTime = 0
+      alertSound = null
     }
 
     // Create and play emergency sound
-    alertSound = new Audio('/emergency-alert.mp3')
+    const audioPath = '/emergency-alert.mp3'
+    alertSound = new Audio(audioPath)
     alertSound.volume = 1.0
     alertSound.loop = true
+    
+    // Handle audio loading errors (404, network issues, etc.)
+    alertSound.addEventListener('error', (e) => {
+      // Audio file may not exist - that's ok, just skip audio
+      // Don't log as error - this is expected if file doesn't exist
+      alertSound = null
+    })
     
     // Play sound (user interaction required for autoplay)
     alertSound.play().catch((error) => {
       // Browser may block autoplay - this is expected
-      console.warn('Sound autoplay blocked (requires user interaction):', error)
+      // Only log if it's not a permission/autoplay error
+      if (error.name !== 'NotSupportedError' && error.name !== 'NotAllowedError') {
+        console.warn('Sound playback error:', error)
+      }
     })
   } catch (error) {
-    console.warn('Failed to play alert sound:', error)
+    // Audio not available - that's ok, continue without sound
+    // Don't log as error - audio is optional
+    alertSound = null
   }
 }
 

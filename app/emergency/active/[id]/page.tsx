@@ -50,32 +50,57 @@ export default function EmergencyActivePage() {
       10000 // Update every 10 seconds
     )
 
-    // Get initial location
+    // Get initial location - use alert location as fallback
     getCurrentLocation()
       .then(async (loc) => {
-        setLocation(loc)
-        const addr = await reverseGeocode(loc.lat, loc.lng)
-        if (addr) setAddress(addr)
+        if (loc) {
+          setLocation(loc)
+          const addr = await reverseGeocode(loc.lat, loc.lng)
+          if (addr) setAddress(addr)
+        } else {
+          // Location unavailable - use alert location from database as fallback
+          if (alert.location_lat && alert.location_lng) {
+            setLocation({
+              lat: alert.location_lat,
+              lng: alert.location_lng,
+            })
+            if (alert.address) {
+              setAddress(alert.address)
+            } else {
+              const addr = await reverseGeocode(alert.location_lat, alert.location_lng)
+              if (addr) setAddress(addr)
+            }
+          }
+        }
       })
-      .catch(console.error)
+      .catch(() => {
+        // Location failed - use alert location as fallback
+        if (alert.location_lat && alert.location_lng) {
+          setLocation({
+            lat: alert.location_lat,
+            lng: alert.location_lng,
+          })
+          if (alert.address) {
+            setAddress(alert.address)
+          }
+        }
+      })
 
     // Play alert sound (requires user interaction in modern browsers)
+    // Handle missing audio file gracefully
     let audio: HTMLAudioElement | null = null
     let audioLoaded = false
     
     try {
-      audio = new Audio('/emergency-alert.mp3')
+      const audioPath = '/emergency-alert.mp3'
+      audio = new Audio(audioPath)
       audio.loop = true
       audio.volume = 1.0
       
-      // Handle audio loading errors (file not found, network issues, etc.)
-      audio.addEventListener('error', (e) => {
-        // Audio file may not exist - that's ok, we'll just skip audio
-        // Only log if it's not a simple 404/network error
-        const error = audio?.error
-        if (error && error.code !== error.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-          console.warn('Audio loading error:', error)
-        }
+      // Handle audio loading errors (404, network issues, etc.)
+      audio.addEventListener('error', () => {
+        // Audio file may not exist - that's ok, just skip audio
+        // Don't log as error - this is expected if file doesn't exist
         audio = null
       })
       
@@ -85,13 +110,15 @@ export default function EmergencyActivePage() {
       
       // Try to play - will fail if no user interaction yet (modern browser requirement)
       audio.play().catch((error) => {
-        // NotSupportedError is expected when autoplay is blocked
+        // NotSupportedError/NotAllowedError are expected when autoplay is blocked
+        // Only log unexpected errors
         if (error.name !== 'NotSupportedError' && error.name !== 'NotAllowedError') {
           console.warn('Audio playback error:', error)
         }
       })
     } catch (error) {
-      console.warn('Could not create audio element:', error)
+      // Audio not available - that's ok, continue without sound
+      // Don't log as error - audio is optional
       audio = null
     }
     
