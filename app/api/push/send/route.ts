@@ -69,10 +69,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
     })
 
-    // Convert subscription keys from base64 to Buffer
-    const p256dh = Buffer.from(subscription.p256dh_key, 'base64')
-    const auth = Buffer.from(subscription.auth_key, 'base64')
-
     // Import web-push (should be installed via npm)
     let webpush: any
     try {
@@ -102,13 +98,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     webpush.setVapidDetails(vapidEmail, vapidPublicKey, vapidPrivateKey)
 
     // Send push notification
+    // Keys are already base64 strings from database - pass directly to web-push
     try {
       await webpush.sendNotification(
         {
           endpoint: subscription.endpoint,
           keys: {
-            p256dh: p256dh.toString('base64'),
-            auth: auth.toString('base64'),
+            p256dh: subscription.p256dh_key,
+            auth: subscription.auth_key,
           },
         },
         notificationPayload
