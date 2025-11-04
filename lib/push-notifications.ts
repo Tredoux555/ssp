@@ -89,7 +89,8 @@ export async function subscribeToPush(
 
     const subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: applicationServerKey as ArrayBuffer,
+      // PushSubscriptionOptions accepts Uint8Array directly - no cast needed
+      applicationServerKey: applicationServerKey as unknown as ArrayBuffer,
     })
 
     console.log('[Push] Subscribed to push notifications:', subscription)
