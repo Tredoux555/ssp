@@ -114,9 +114,12 @@ BEGIN
     SELECT email INTO inviter_email FROM auth.users WHERE id = inviter_id;
     SELECT email INTO accepter_email FROM auth.users WHERE id = accepter_id;
     
-    -- Verify accepter email matches invite target
-    IF accepter_email IS NULL OR lower(accepter_email) != lower(NEW.target_email) THEN
-      RAISE EXCEPTION 'Invite email does not match accepter email';
+    -- Verify accepter email matches invite target (normalize both for comparison)
+    -- Trim and lowercase both emails to handle any whitespace or case differences
+    IF accepter_email IS NULL OR 
+       trim(lower(accepter_email)) != trim(lower(NEW.target_email)) THEN
+      RAISE EXCEPTION 'Invite email does not match accepter email. Invite: %, Accepter: %', 
+        NEW.target_email, accepter_email;
     END IF;
     
     -- Create contact in inviter's list (pointing to accepter)

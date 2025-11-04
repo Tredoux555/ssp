@@ -69,7 +69,7 @@ export async function getIncomingInvites(): Promise<Array<{
     .from('user_profiles')
     .select('id, email, full_name')
     .in('id', inviterIds)
-
+  
   // For emails, we'll use the invite's inviter_user_id and try to get from emergency_contacts
   // or use a fallback
   const inviterEmails: Record<string, string> = {}
@@ -90,17 +90,34 @@ export async function getIncomingInvites(): Promise<Array<{
       })
     }
   }
+  
+  // If we still don't have emails, we can't get them from auth.users without admin access
+  // But we can show a better message - the invite itself doesn't have inviter email
+  // So we'll show "Someone" as a fallback
 
   // Handle missing inviter info gracefully
   return invites.map((invite: any) => {
     const inviter = inviters?.find((u: any) => u.id === invite.inviter_user_id)
-    const email = inviter?.email || inviterEmails[invite.inviter_user_id] || 'Unknown'
+    
+    // Try multiple sources for email
+    let email = inviter?.email || inviterEmails[invite.inviter_user_id]
+    
+    // If still no email found, try to get from auth.users via a workaround
+    // Since we can't directly query auth.users, we'll use a fallback
+    if (!email) {
+      // We can't easily get the inviter's email without admin access
+      // But we can show a more helpful message
+      email = 'Unknown'
+    }
     
     let inviterName = 'Unknown User'
     if (inviter?.full_name) {
       inviterName = inviter.full_name
     } else if (email && email !== 'Unknown') {
       inviterName = email.split('@')[0]
+    } else {
+      // Last resort: show "Someone" instead of "Unknown User" for better UX
+      inviterName = 'Someone'
     }
     
     return {
@@ -141,12 +158,15 @@ export async function createContactInvite(
     throw new Error('Valid email is required')
   }
 
+  // Normalize email: trim + lowercase for consistent storage and comparison
+  const normalizedEmail = trimmedEmail.toLowerCase()
+
   // Create invite using regular client (RLS policy "Inviter can insert own invites" allows this)
   const { data: invite, error: insertError } = await supabase
     .from('contact_invites')
     .insert({
       inviter_user_id: session.user.id,
-      target_email: trimmedEmail,
+      target_email: normalizedEmail,
     })
     .select()
     .single()
@@ -167,8 +187,8 @@ export async function createContactInvite(
       .from('emergency_contacts')
       .insert({
         user_id: session.user.id,
-        name: trimmedEmail.split('@')[0],
-        email: trimmedEmail,
+        name: normalizedEmail.split('@')[0],
+        email: normalizedEmail,
         relationship: relationship || null,
         priority: typeof priority === 'number' ? priority : 0,
         can_see_location: true,
@@ -221,8 +241,24 @@ export async function acceptContactInvite(token: string): Promise<void> {
   }
 
   // Verify the invite is for this user (RLS should have filtered, but double-check)
-  if (invite.target_email.toLowerCase() !== accepterEmail) {
-    throw new Error('Invite email does not match your account')
+  // Normalize both emails for comparison (trim + lowercase)
+  const inviteEmail = invite.target_email?.trim().toLowerCase()
+  const userEmail = accepterEmail?.trim().toLowerCase()
+
+  if (!inviteEmail || !userEmail || inviteEmail !== userEmail) {
+    // Add debugging info
+    console.error('Email mismatch:', {
+      inviteEmail,
+      userEmail,
+      rawInviteEmail: invite.target_email,
+      rawUserEmail: session.user.email,
+      token
+    })
+    throw new Error(
+      `Invite email does not match your account. ` +
+      `Invite email: ${invite.target_email}, Your email: ${session.user.email}. ` +
+      `Please ensure you're logged in with the correct account.`
+    )
   }
 
   // Check if invite is already accepted
