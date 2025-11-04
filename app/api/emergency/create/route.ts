@@ -181,11 +181,13 @@ export async function POST(request: NextRequest) {
         console.error('Failed to get contacts:', contactsError)
         // Continue - don't block on contact fetch error
       } else if (contacts && contacts.length > 0) {
-        // Filter and get contact IDs
+        // Filter and get contact USER IDs (not contact record IDs)
+        // Only use contacts that have contact_user_id set (linked users)
+        // Contacts without contact_user_id are just email/phone entries that haven't accepted invites
         const contactIds = contacts
-          .filter(c => c.verified && (c.contact_user_id || c.email || c.phone))
-          .map(c => c.contact_user_id || c.id)
-          .filter(id => id) // Filter out null/undefined
+          .filter(c => c.verified && c.contact_user_id) // Only verified contacts with linked user IDs
+          .map(c => c.contact_user_id)
+          .filter((id): id is string => !!id) // Filter out null/undefined and ensure type safety
 
         if (contactIds.length > 0) {
           // Update alert with notified contacts using admin client
@@ -219,10 +221,9 @@ export async function POST(request: NextRequest) {
           // Send push notifications to all contacts (non-blocking)
           // This runs in parallel with Realtime subscriptions
           try {
-            const contactUserIds = contacts
-              .filter(c => c.verified && c.contact_user_id)
-              .map(c => c.contact_user_id)
-              .filter(id => id) as string[]
+            // Use the same contact IDs that were used for Realtime notifications
+            // This ensures push notifications go to the same users
+            const contactUserIds = contactIds as string[]
 
             if (contactUserIds.length > 0) {
               // Import push send function directly (server-side)
