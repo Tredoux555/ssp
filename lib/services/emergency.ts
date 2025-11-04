@@ -56,6 +56,29 @@ export async function createEmergencyAlert(
         }
       }
 
+      // Get contacts BEFORE creating the alert so we can include them in the INSERT
+      // This ensures contacts_notified is set immediately, triggering Realtime subscriptions on INSERT
+      let contactIds: string[] = []
+      try {
+        const { data: contacts, error: contactsError } = await supabase
+          .from('emergency_contacts')
+          .select('id, contact_user_id, email, phone, verified')
+          .eq('user_id', userId)
+          .eq('verified', true)
+        
+        if (contactsError) {
+          console.error('Failed to get contacts before alert creation:', contactsError)
+        } else if (contacts && contacts.length > 0) {
+          // Filter and get contact USER IDs (not contact record IDs)
+          contactIds = contacts
+            .filter((c: any) => c.verified && c.contact_user_id)
+            .map((c: any) => c.contact_user_id)
+            .filter((id: any): id is string => !!id)
+        }
+      } catch (contactError) {
+        console.warn('Failed to get contacts before alert creation (non-critical):', contactError)
+      }
+
       // Use regular client (RLS should allow these operations for the user's own data)
       // Auto-cancel any existing active alerts before creating new one
       let cancelledCount = 0
@@ -133,10 +156,16 @@ export async function createEmergencyAlert(
       }
 
       // Create emergency alert using regular client
+      // Include contacts_notified in initial INSERT so Realtime subscriptions fire immediately
       const alertData: any = {
         user_id: userId,
         status: 'active',
         alert_type: alertType,
+      }
+
+      // Include contacts_notified in initial insert so contacts receive alert immediately via Realtime
+      if (contactIds.length > 0) {
+        alertData.contacts_notified = contactIds
       }
 
       if (validatedLocation) {
@@ -160,49 +189,13 @@ export async function createEmergencyAlert(
 
       const alert = alertDataResult as EmergencyAlert
 
-      // Get contacts and notify them (non-blocking)
-      try {
-        // Get emergency contacts using regular client (RLS allows users to read their own contacts)
-        const { data: contacts, error: contactsError } = await supabase
-          .from('emergency_contacts')
-          .select('id, contact_user_id, email, phone, verified')
-          .eq('user_id', userId)
-          .eq('verified', true)
-        
-        if (contactsError) {
-          console.error('Failed to get contacts:', contactsError)
-        } else if (contacts && contacts.length > 0) {
-          // Filter and get contact USER IDs (not contact record IDs)
-          const contactIds = contacts
-            .filter((c: any) => c.verified && c.contact_user_id)
-            .map((c: any) => c.contact_user_id)
-            .filter((id: any): id is string => !!id)
-
-          if (contactIds.length > 0) {
-            // Update alert with notified contacts
-            const { error: updateError } = await supabase
-              .from('emergency_alerts')
-              .update({ contacts_notified: contactIds })
-              .eq('id', alert.id)
-              .eq('user_id', userId)
-            
-            if (updateError) {
-              console.error('Failed to update alert with notified contacts:', updateError)
-            } else {
-              // Note: alert_responses creation is handled by contacts when they acknowledge
-              // RLS policy only allows contacts to insert their own responses
-              // We can't create responses on behalf of contacts from the client-side
-              // This is fine - responses will be created when contacts acknowledge the alert
-              console.log(`Alert created with ${contactIds.length} contact(s) notified. Responses will be created when contacts acknowledge.`)
-
-              // Push notifications are handled server-side via Supabase Realtime
-              // When contacts_notified is updated, Realtime subscriptions will fire
-              console.log(`Push notifications should be sent server-side for ${contactIds.length} contact(s)`)
-            }
-          }
-        }
-      } catch (contactError) {
-        console.error('Failed to notify contacts (non-critical):', contactError)
+      // Contacts are already notified via contacts_notified in the INSERT above
+      // This ensures Realtime subscriptions fire immediately on INSERT event
+      // No need for separate UPDATE - contacts will receive the alert via Realtime
+      if (alert.contacts_notified && Array.isArray(alert.contacts_notified) && alert.contacts_notified.length > 0) {
+        console.log(`Alert created with ${alert.contacts_notified.length} contact(s) notified via Realtime subscription.`)
+      } else {
+        console.warn('Alert created but no contacts were notified. Make sure you have verified contacts.')
       }
 
       return alert

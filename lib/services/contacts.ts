@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase'
 
 /**
  * Get incoming contact invites (client-side replacement for /api/contacts/invites/incoming)
- * Uses RLS policy "Invitees can view invites sent to them" which checks if target_email matches user's email
+ * Uses the API route which has admin access to get inviter emails from auth.users
  */
 export async function getIncomingInvites(): Promise<Array<{
   id: string
@@ -15,121 +15,36 @@ export async function getIncomingInvites(): Promise<Array<{
   created_at: string
   expires_at: string
 }>> {
-  const supabase = createClient()
-  
-  if (!supabase) {
-    throw new Error('Failed to fetch invites: Server configuration error')
-  }
+  try {
+    const res = await fetch('/api/contacts/invites/incoming', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
 
-  // Get authenticated user
-  const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-  
-  if (sessionError || !session?.user) {
-    throw new Error('Unauthorized - please sign in')
-  }
+    if (!res.ok) {
+      let error: any = { error: 'Failed to fetch invites' }
+      try {
+        error = await res.json()
+      } catch {
+        // If response isn't JSON, use default error
+      }
+      throw new Error(error.error || `Failed to fetch invites (${res.status})`)
+    }
 
-  const userEmail = session.user.email?.toLowerCase()
-  if (!userEmail) {
-    return []
-  }
-
-  // Query invites where target_email matches logged-in user's email
-  // RLS policy "Invitees can view invites sent to them" will filter automatically
-  const { data: invites, error: invitesError } = await supabase
-    .from('contact_invites')
-    .select('id, token, inviter_user_id, target_email, created_at, expires_at, accepted_at')
-    .is('accepted_at', null)
-    .gt('expires_at', new Date().toISOString())
-    .order('created_at', { ascending: false })
-
-  if (invitesError) {
-    console.error('Error fetching incoming invites:', invitesError)
+    const data = await res.json()
+    return data.invites || []
+  } catch (error: any) {
+    console.error('Error fetching incoming invites:', error)
     
-    // Handle specific "table not found" error
-    if (invitesError.message?.includes('schema cache') || invitesError.message?.includes('table') || invitesError.code === 'PGRST301') {
-      console.warn('Schema cache issue - table might not exist or cache needs refresh')
-      return []
+    // Handle network errors gracefully
+    if (error instanceof TypeError || error.message?.includes('fetch')) {
+      throw new Error('Network error: Unable to connect to server. Please check your internet connection.')
     }
     
-    throw new Error(invitesError.message || 'Failed to fetch invites')
+    throw error
   }
-
-  // If no invites, return empty array
-  if (!invites || invites.length === 0) {
-    return []
-  }
-
-  // Get inviter user info
-  const inviterIds = [...new Set(invites.map((invite: any) => invite.inviter_user_id))]
-  
-  // Get profile info using regular client
-  // Note: We can only see profiles of users we have contacts with, or we can use public data
-  // For now, we'll try to get profiles, but if RLS blocks it, we'll use fallback
-  const { data: inviters } = await supabase
-    .from('user_profiles')
-    .select('id, email, full_name')
-    .in('id', inviterIds)
-  
-  // For emails, we'll use the invite's inviter_user_id and try to get from emergency_contacts
-  // or use a fallback
-  const inviterEmails: Record<string, string> = {}
-  
-  // Try to get emails from contacts if we have them
-  if (inviterIds.length > 0) {
-    const { data: contacts } = await supabase
-      .from('emergency_contacts')
-      .select('contact_user_id, email')
-      .in('contact_user_id', inviterIds)
-      .eq('user_id', session.user.id)
-    
-    if (contacts) {
-      contacts.forEach((contact: any) => {
-        if (contact.email) {
-          inviterEmails[contact.contact_user_id] = contact.email
-        }
-      })
-    }
-  }
-  
-  // If we still don't have emails, we can't get them from auth.users without admin access
-  // But we can show a better message - the invite itself doesn't have inviter email
-  // So we'll show "Someone" as a fallback
-
-  // Handle missing inviter info gracefully
-  return invites.map((invite: any) => {
-    const inviter = inviters?.find((u: any) => u.id === invite.inviter_user_id)
-    
-    // Try multiple sources for email
-    let email = inviter?.email || inviterEmails[invite.inviter_user_id]
-    
-    // If still no email found, try to get from auth.users via a workaround
-    // Since we can't directly query auth.users, we'll use a fallback
-    if (!email) {
-      // We can't easily get the inviter's email without admin access
-      // But we can show a more helpful message
-      email = 'Unknown'
-    }
-    
-    let inviterName = 'Unknown User'
-    if (inviter?.full_name) {
-      inviterName = inviter.full_name
-    } else if (email && email !== 'Unknown') {
-      inviterName = email.split('@')[0]
-    } else {
-      // Last resort: show "Someone" instead of "Unknown User" for better UX
-      inviterName = 'Someone'
-    }
-    
-    return {
-      id: invite.id,
-      token: invite.token,
-      inviter_user_id: invite.inviter_user_id,
-      inviter_email: email,
-      inviter_name: inviterName,
-      created_at: invite.created_at,
-      expires_at: invite.expires_at,
-    }
-  })
 }
 
 /**
