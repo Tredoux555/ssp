@@ -87,10 +87,10 @@ export async function subscribeToPush(
     // Convert VAPID key to Uint8Array
     const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey)
 
-    // PushSubscriptionOptions accepts Uint8Array directly - no cast needed
+    // Use underlying ArrayBuffer - PushSubscriptionOptions accepts ArrayBuffer
     const subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey,
+      applicationServerKey: applicationServerKey.buffer,
     })
 
     console.log('[Push] Subscribed to push notifications:', subscription)
