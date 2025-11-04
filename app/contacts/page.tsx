@@ -302,7 +302,7 @@ export default function ContactsPage() {
           phone: formData.phone?.trim() || null,
           email: formData.email?.trim() || null,
           relationship: formData.relationship?.trim() || null,
-          priority: parseInt(formData.priority) || 0,
+          priority: 10, // Default priority to 10 (all emergencies are of utmost importance)
           can_see_location: true,
           verified: false,
         })
@@ -378,7 +378,7 @@ export default function ContactsPage() {
           phone: formData.phone?.trim() || null,
           email: formData.email?.trim() || null,
           relationship: formData.relationship?.trim() || null,
-          priority: parseInt(formData.priority) || 0,
+          priority: 10, // Default priority to 10 (all emergencies are of utmost importance)
         })
         .eq('id', editingContact.id)
         .eq('user_id', user.id)
@@ -560,14 +560,6 @@ export default function ContactsPage() {
               onChange={(e) => setInviteRelationship(e.target.value)}
               placeholder="Family, Friend, etc."
             />
-            <Input
-              label="Priority (0-10)"
-              type="number"
-              min="0"
-              max="10"
-              value={invitePriority}
-              onChange={(e) => setInvitePriority(e.target.value)}
-            />
           </div>
           <div className="mt-3 flex gap-2">
             <Button
@@ -581,7 +573,7 @@ export default function ContactsPage() {
                   const result = await createContactInvite(
                     inviteEmail,
                     inviteRelationship || undefined,
-                    parseInt(invitePriority) || undefined
+                    10 // Default priority to 10 (all emergencies are of utmost importance)
                   )
                   setInviteLink(result.inviteUrl)
                 } catch (e: any) {
@@ -611,23 +603,8 @@ export default function ContactsPage() {
           )}
         </Card>
 
-        {/* Add Contact Button */}
-        {!showAddForm && (
-          <Card className="mb-6">
-            <Button
-              variant="primary"
-              size="lg"
-              onClick={() => setShowAddForm(true)}
-              className="w-full flex items-center justify-center gap-2"
-            >
-              <Plus className="w-5 h-5" />
-              Add Emergency Contact
-            </Button>
-          </Card>
-        )}
-
-        {/* Add/Edit Form */}
-        {showAddForm && (
+        {/* Edit Form (only show when editing existing contact) */}
+        {showAddForm && editingContact && (
           <Card className="mb-6">
             <h2 className="text-xl font-bold mb-4">
               {editingContact ? 'Edit Contact' : 'Add New Contact'}
@@ -659,14 +636,6 @@ export default function ContactsPage() {
                 value={formData.relationship}
                 onChange={(e) => setFormData({ ...formData, relationship: e.target.value })}
                 placeholder="Family, Friend, etc."
-              />
-              <Input
-                label="Priority (0-10, higher = notified first)"
-                type="number"
-                min="0"
-                max="10"
-                value={formData.priority}
-                onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
               />
               <div className="flex gap-2">
                 <Button
@@ -730,9 +699,6 @@ export default function ContactsPage() {
                         </div>
                       )}
                     </div>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Priority: {contact.priority}
-                    </p>
                   </div>
                   <div className="flex gap-2 ml-4">
                     <Button

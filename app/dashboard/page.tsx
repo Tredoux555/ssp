@@ -329,13 +329,6 @@ export default function DashboardPage() {
 
         {/* Quick Actions */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => router.push('/contacts')}>
-            <div className="flex items-center gap-3">
-              <Users className="w-5 h-5 text-sa-green" />
-              <span className="font-medium">Manage Contacts</span>
-            </div>
-          </Card>
-
           <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => router.push('/profile')}>
             <div className="flex items-center gap-3">
               <Phone className="w-5 h-5 text-sa-blue" />
