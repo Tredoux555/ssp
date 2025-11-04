@@ -112,74 +112,70 @@ export default function DashboardPage() {
               return
             }
             
-            // Use cs (contains) filter for array containment
-            // This checks if user.id is in the contacts_notified array
-            const { data: alerts, error } = await supabase
+            // Get ALL active alerts and filter client-side (more reliable than .cs() filter)
+            // This bypasses potential RLS issues with array queries
+            const { data: allAlerts, error: queryError } = await supabase
               .from('emergency_alerts')
               .select('*')
               .eq('status', 'active')
-              .cs('contacts_notified', [user.id])
               .order('triggered_at', { ascending: false })
-              .limit(1)
+              .limit(20) // Get more alerts to check
             
-            if (error) {
-              console.warn(`[Dashboard] ⚠️ Polling query error:`, error)
-              // Try alternative query syntax if .cs() fails
-              try {
-                const { data: allAlerts, error: allError } = await supabase
-                  .from('emergency_alerts')
-                  .select('*')
-                  .eq('status', 'active')
-                  .order('triggered_at', { ascending: false })
-                  .limit(10)
-                
-                if (!allError && allAlerts) {
-                  // Filter client-side
-                  const relevantAlerts = allAlerts.filter((alert: any) => 
-                    alert.contacts_notified && 
-                    Array.isArray(alert.contacts_notified) && 
-                    alert.contacts_notified.includes(user.id)
-                  )
-                  
-                  if (relevantAlerts.length > 0) {
-                    const alert = relevantAlerts[0]
-                    console.log(`[Dashboard] 📡 Polling found active alert (client-side filter):`, alert.id)
-                    
-                    const currentPath = window.location.pathname
-                    if (!currentPath.includes(`/alert/${alert.id}`) && !currentPath.includes(`/emergency/active/${alert.id}`)) {
-                      console.log(`[Dashboard] 🚨 Navigating to alert page via polling: ${alert.id}`)
-                      showEmergencyAlert(alert.id, {
-                        address: alert.address,
-                        alert_type: alert.alert_type,
-                      })
-                      router.push(`/alert/${alert.id}`)
-                    }
-                  }
-                }
-              } catch (fallbackError) {
-                console.warn(`[Dashboard] ⚠️ Fallback polling error:`, fallbackError)
-              }
+            if (queryError) {
+              console.warn(`[Dashboard] ⚠️ Polling query error:`, queryError)
               return
             }
             
-            if (alerts && alerts.length > 0) {
-              const alert = alerts[0]
-              console.log(`[Dashboard] 📡 Polling found active alert for user ${user.id}:`, {
-                alertId: alert.id,
-                userId: alert.user_id,
-                contactsNotified: alert.contacts_notified,
-                userIsInContacts: alert.contacts_notified?.includes(user.id)
+            if (allAlerts && allAlerts.length > 0) {
+              console.log(`[Dashboard] 🔍 Checking ${allAlerts.length} active alerts for user ${user.id}`)
+              
+              // Filter client-side: check if user.id is in contacts_notified array
+              const relevantAlerts = allAlerts.filter((alert: any) => {
+                if (!alert.contacts_notified || !Array.isArray(alert.contacts_notified)) {
+                  return false
+                }
+                
+                // Normalize IDs for comparison (trim whitespace, ensure string)
+                const normalizedUserId = String(user.id).trim()
+                const normalizedContacts = alert.contacts_notified.map((id: string) => String(id).trim())
+                
+                const isInContacts = normalizedContacts.includes(normalizedUserId)
+                
+                if (isInContacts) {
+                  console.log(`[Dashboard] ✅ Found alert for user ${user.id}:`, {
+                    alertId: alert.id,
+                    alertUserId: alert.user_id,
+                    contactsNotified: alert.contacts_notified,
+                    normalizedUserId,
+                    normalizedContacts,
+                    matchFound: true
+                  })
+                }
+                
+                return isInContacts
               })
               
-              // Check if we're already on this alert page
-              const currentPath = window.location.pathname
-              if (!currentPath.includes(`/alert/${alert.id}`) && !currentPath.includes(`/emergency/active/${alert.id}`)) {
-                console.log(`[Dashboard] 🚨 Navigating to alert page via polling: ${alert.id}`)
-                showEmergencyAlert(alert.id, {
-                  address: alert.address,
-                  alert_type: alert.alert_type,
+              if (relevantAlerts.length > 0) {
+                const alert = relevantAlerts[0]
+                console.log(`[Dashboard] 🚨 POLLING FOUND ALERT FOR USER ${user.id}:`, {
+                  alertId: alert.id,
+                  alertUserId: alert.user_id,
+                  contactsNotified: alert.contacts_notified,
+                  userIsInContacts: true
                 })
-                router.push(`/alert/${alert.id}`)
+                
+                // Check if we're already on this alert page
+                const currentPath = window.location.pathname
+                if (!currentPath.includes(`/alert/${alert.id}`) && !currentPath.includes(`/emergency/active/${alert.id}`)) {
+                  console.log(`[Dashboard] 🚨 Navigating to alert page via polling: ${alert.id}`)
+                  showEmergencyAlert(alert.id, {
+                    address: alert.address,
+                    alert_type: alert.alert_type,
+                  })
+                  router.push(`/alert/${alert.id}`)
+                }
+              } else {
+                console.log(`[Dashboard] ℹ️ No alerts found for user ${user.id} in ${allAlerts.length} active alerts`)
               }
             }
           } catch (error) {
