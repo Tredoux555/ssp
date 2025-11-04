@@ -30,54 +30,96 @@ export default function LoginPage() {
     
     // Start waiting for auth state update
     setWaitingForAuth(true)
+    console.log(`[Login] Starting auth state polling for mobile: ${isMobile}`)
     
-    // Poll for auth state update with timeout
-    const maxWaitTime = isMobile ? 15000 : 10000 // 15s mobile, 10s desktop
-    const checkInterval = 500 // Check every 500ms
+    // Poll for auth state update with timeout (longer on mobile)
+    const maxWaitTime = isMobile ? 25000 : 15000 // 25s mobile, 15s desktop
+    const checkInterval = isMobile ? 1000 : 500 // Check every 1s mobile, 500ms desktop
     const maxChecks = maxWaitTime / checkInterval
     
     let checks = 0
     let intervalId: NodeJS.Timeout | null = null
+    let sessionCheckAttempted = false
     
-    const checkAuthState = () => {
+    const checkAuthState = async () => {
       checks++
       
       // Check if user is set and auth loading is complete
       if (user && !authLoading) {
-        console.log('Auth state updated - navigating to dashboard')
+        console.log('[Login] ✅ Auth state updated - navigating to dashboard')
         if (intervalId) {
           clearInterval(intervalId)
           intervalId = null
         }
         setWaitingForAuth(false)
         
-        // Small delay to ensure state is stable
-        setTimeout(() => {
-          window.location.href = '/dashboard'
-        }, 100)
+        // Use window.location.href for mobile reliability
+        window.location.href = '/dashboard'
         return
+      }
+      
+      // Fallback: Directly check session if auth state hasn't updated after a few checks
+      if (!sessionCheckAttempted && checks >= 3) {
+        sessionCheckAttempted = true
+        console.log('[Login] 🔍 Checking session directly as fallback...')
+        try {
+          const { createClient } = await import('@/lib/supabase')
+          const supabase = createClient()
+          if (supabase) {
+            const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+            if (!sessionError && session?.user) {
+              console.log('[Login] ✅ Session found directly - navigating to dashboard')
+              if (intervalId) {
+                clearInterval(intervalId)
+                intervalId = null
+              }
+              setWaitingForAuth(false)
+              window.location.href = '/dashboard'
+              return
+            }
+          }
+        } catch (sessionErr) {
+          console.warn('[Login] Session check failed:', sessionErr)
+        }
       }
       
       // Timeout reached
       if (checks >= maxChecks) {
-        console.warn('Auth state update timeout - checking if user exists anyway')
+        console.warn(`[Login] ⏱️ Auth state update timeout after ${maxWaitTime}ms - checking session directly`)
         if (intervalId) {
           clearInterval(intervalId)
           intervalId = null
         }
-        setWaitingForAuth(false)
         
-        // If user exists but we didn't detect it, navigate anyway
-        if (user) {
-          console.log('User exists - navigating to dashboard')
-          window.location.href = '/dashboard'
-        } else {
-          // No user - sign-in may have failed
-          console.error('Auth state update timeout - no user found')
-          setError('Sign-in completed but authentication state did not update. Please try again.')
+        // Final attempt: Check session directly
+        const checkSessionDirectly = async () => {
+          try {
+            const { createClient } = await import('@/lib/supabase')
+            const supabase = createClient()
+            if (supabase) {
+              const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+              if (!sessionError && session?.user) {
+                console.log('[Login] ✅ Session found in final check - navigating to dashboard')
+                setWaitingForAuth(false)
+                window.location.href = '/dashboard'
+                return
+              }
+            }
+          } catch (sessionErr) {
+            console.warn('[Login] Final session check failed:', sessionErr)
+          }
+          
+          // No session found - sign-in may have failed
+          console.error('[Login] ❌ Auth state update timeout - no user found')
+          setWaitingForAuth(false)
+          setError(isMobile 
+            ? 'Sign-in timed out. Please check your internet connection and try again. If the problem persists, try closing and reopening the app.'
+            : 'Sign-in completed but authentication state did not update. Please try again.')
           setLoading(false)
           setSignInSuccess(false)
         }
+        
+        checkSessionDirectly()
       }
     }
     
@@ -99,32 +141,39 @@ export default function LoginPage() {
     e.preventDefault()
     setError('')
     setLoading(true)
+    setSignInSuccess(false)
+    setWaitingForAuth(false)
 
     try {
-      console.log('Calling signIn...')
+      console.log(`[Login] 🚀 Starting sign-in... (mobile: ${isMobile})`)
       
-      // Add retry logic for network errors (max 2 retries)
+      // Add retry logic for network errors (more retries on mobile)
       let retries = 0
-      const maxRetries = 2
+      const maxRetries = isMobile ? 3 : 2
       let lastError: any = null
       
       while (retries <= maxRetries) {
         try {
+          console.log(`[Login] Attempt ${retries + 1}/${maxRetries + 1}...`)
           await signIn(email, password)
-          console.log('signIn completed successfully')
+          console.log('[Login] ✅ signIn completed successfully')
           lastError = null
           break // Success - exit retry loop
         } catch (err: any) {
           lastError = err
           const isNetworkError = err?.message?.includes('network') || 
                                  err?.message?.includes('fetch') ||
-                                 err?.message?.includes('timeout')
+                                 err?.message?.includes('timeout') ||
+                                 err?.message?.includes('connection') ||
+                                 err?.message?.includes('Failed to fetch')
+          
+          console.warn(`[Login] Attempt ${retries + 1} failed:`, err.message)
           
           if (isNetworkError && retries < maxRetries) {
             retries++
-            console.warn(`Sign-in attempt ${retries} failed with network error, retrying...`)
-            // Wait 1 second before retry
-            await new Promise(resolve => setTimeout(resolve, 1000))
+            const retryDelay = isMobile ? 2000 : 1000 // 2s mobile, 1s desktop
+            console.warn(`[Login] ⏳ Network error detected, retrying in ${retryDelay}ms... (${retries}/${maxRetries})`)
+            await new Promise(resolve => setTimeout(resolve, retryDelay))
             continue
           } else {
             // Not a network error or max retries reached
@@ -137,7 +186,7 @@ export default function LoginPage() {
         throw lastError
       }
       
-      console.log('Sign-in successful - waiting for auth state update')
+      console.log('[Login] ✅ Sign-in successful - waiting for auth state update')
       
       // Mark sign-in as successful - useEffect will handle navigation
       setSignInSuccess(true)
@@ -145,8 +194,22 @@ export default function LoginPage() {
       // Loading will be set to false when navigation happens or error occurs
       
     } catch (err: any) {
-      console.error('Sign-in error:', err)
-      setError(err.message || 'Failed to sign in')
+      console.error('[Login] ❌ Sign-in error:', err)
+      
+      // Provide mobile-specific error messages
+      let errorMessage = err.message || 'Failed to sign in'
+      
+      if (isMobile && (errorMessage.includes('timeout') || errorMessage.includes('network'))) {
+        errorMessage = 'Connection timeout. Please check your internet connection and try again. If you\'re on a slow network, try moving to a better location.'
+      } else if (errorMessage.includes('Invalid login credentials')) {
+        errorMessage = 'Invalid email or password. Please check your credentials and try again.'
+      } else if (errorMessage.includes('Email not confirmed')) {
+        errorMessage = 'Please verify your email address before signing in.'
+      } else if (errorMessage.includes('fetch') || errorMessage.includes('network')) {
+        errorMessage = 'Network error. Please check your internet connection and try again.'
+      }
+      
+      setError(errorMessage)
       setLoading(false)
       setSignInSuccess(false)
       setWaitingForAuth(false)
