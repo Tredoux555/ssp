@@ -27,7 +27,8 @@ export async function POST(
       )
     }
 
-    const userEmail = session.user.email?.toLowerCase()
+    // Normalize email: trim + lowercase for consistent comparison
+    const userEmail = session.user.email?.trim().toLowerCase()
     if (!userEmail) {
       return NextResponse.json(
         { error: 'User email not found' },
@@ -60,11 +61,13 @@ export async function POST(
     }
 
     // Verify the invite exists and belongs to this user (email match)
+    // Normalize both emails for comparison (trim + lowercase)
+    const normalizedUserEmail = userEmail.trim().toLowerCase()
     const { data: invite, error: fetchError } = await admin
       .from('contact_invites')
       .select('*')
       .eq('id', inviteId)
-      .ilike('target_email', userEmail)
+      .ilike('target_email', normalizedUserEmail)
       .single()
 
     if (fetchError || !invite) {
@@ -76,6 +79,14 @@ export async function POST(
           { status: 503 }
         )
       }
+      
+      // Add debugging info
+      console.error('Invite not found or access denied:', {
+        inviteId,
+        userEmail: normalizedUserEmail,
+        error: fetchError,
+        invite: invite ? { id: invite.id, target_email: invite.target_email } : null
+      })
       
       return NextResponse.json(
         { error: 'Invite not found or access denied' },
