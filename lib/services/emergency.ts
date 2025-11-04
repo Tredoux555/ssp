@@ -60,6 +60,7 @@ export async function createEmergencyAlert(
       // This ensures contacts_notified is set immediately, triggering Realtime subscriptions on INSERT
       let contactIds: string[] = []
       try {
+        console.log('[Alert] Fetching contacts for user:', userId)
         const { data: contacts, error: contactsError } = await supabase
           .from('emergency_contacts')
           .select('id, contact_user_id, email, phone, verified')
@@ -69,11 +70,41 @@ export async function createEmergencyAlert(
         if (contactsError) {
           console.error('Failed to get contacts before alert creation:', contactsError)
         } else if (contacts && contacts.length > 0) {
+          console.log('[Alert] Raw contacts fetched:', contacts.map((c: any) => ({
+            id: c.id,
+            contact_user_id: c.contact_user_id,
+            email: c.email,
+            verified: c.verified
+          })))
+          
           // Filter and get contact USER IDs (not contact record IDs)
+          // Add validation to filter out invalid self-references
           contactIds = contacts
-            .filter((c: any) => c.verified && c.contact_user_id)
+            .filter((c: any) => {
+              // Must be verified
+              if (!c.verified) {
+                console.warn('[Alert] Skipping unverified contact:', c.id)
+                return false
+              }
+              // Must have contact_user_id
+              if (!c.contact_user_id) {
+                console.warn('[Alert] Skipping contact without contact_user_id:', c.id)
+                return false
+              }
+              // contact_user_id must be different from user_id (no self-references)
+              if (c.contact_user_id === userId) {
+                console.warn('[Alert] Skipping invalid self-reference contact:', c.id, 'contact_user_id equals user_id:', userId)
+                return false
+              }
+              return true
+            })
             .map((c: any) => c.contact_user_id)
             .filter((id: any): id is string => !!id)
+          
+          console.log('[Alert] Final contactIds to notify:', contactIds)
+          console.log('[Alert] User triggering alert:', userId)
+        } else {
+          console.warn('[Alert] No verified contacts found for user:', userId)
         }
       } catch (contactError) {
         console.warn('Failed to get contacts before alert creation (non-critical):', contactError)
