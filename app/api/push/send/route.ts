@@ -73,12 +73,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const p256dh = Buffer.from(subscription.p256dh_key, 'base64')
     const auth = Buffer.from(subscription.auth_key, 'base64')
 
-    // Check if web-push is available
-    let webpush: any = null
+    // Import web-push (should be installed via npm)
+    let webpush: any
     try {
       webpush = require('web-push')
-    } catch {
-      console.warn('[Push] web-push not installed. Install with: npm install web-push')
+    } catch (error) {
+      console.warn('[Push] web-push not available:', error)
       // Return success anyway - notification will be sent via Realtime
       return NextResponse.json(
         { success: false, message: 'web-push not configured' },

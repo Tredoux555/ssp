@@ -89,7 +89,7 @@ export async function subscribeToPush(
 
     const subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey,
+      applicationServerKey: applicationServerKey as ArrayBuffer,
     })
 
     console.log('[Push] Subscribed to push notifications:', subscription)
