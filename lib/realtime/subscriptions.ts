@@ -58,28 +58,36 @@ class SubscriptionManager {
             ...(config.filter && { filter: config.filter }),
           },
           (payload: any) => {
-            console.log(`[Realtime] Event received: ${payload.eventType || 'unknown'} on ${config.table}`, {
-              channel: config.channel,
-              event: config.event,
-              table: config.table,
-              filter: config.filter,
-              hasNew: !!payload.new,
-              hasOld: !!payload.old,
-            })
-            config.callback(payload)
+            try {
+              console.log(`[Realtime] Event received: ${payload.eventType || 'unknown'} on ${config.table}`, {
+                channel: config.channel,
+                event: config.event,
+                table: config.table,
+                filter: config.filter,
+                hasNew: !!payload.new,
+                hasOld: !!payload.old,
+              })
+              config.callback(payload)
+            } catch (callbackError) {
+              console.error(`[Realtime] ❌ Error in callback for ${config.channel}:`, callbackError)
+              // Don't rethrow - prevent breaking the subscription
+            }
           }
         )
-        .subscribe((status: any) => {
+        .subscribe((status: any, err?: any) => {
           if (status === 'SUBSCRIBED') {
             console.log(`[Realtime] ✅ Successfully subscribed to ${config.channel} (${config.table}, event: ${config.event || 'UPDATE'})`)
           } else if (status === 'CHANNEL_ERROR') {
-            console.error(`[Realtime] ❌ Channel error for ${config.channel}`)
+            console.error(`[Realtime] ❌ Channel error for ${config.channel}:`, err)
+            console.warn(`[Realtime] ⚠️ Realtime subscription failed - polling will handle alerts`)
+            // Don't throw - polling will handle alerts
           } else if (status === 'TIMED_OUT') {
             console.error(`[Realtime] ⏱️ Subscription timed out for ${config.channel}`)
+            console.warn(`[Realtime] ⚠️ Realtime subscription timed out - polling will handle alerts`)
           } else if (status === 'CLOSED') {
             console.warn(`[Realtime] ⚠️ Subscription closed for ${config.channel}`)
           } else {
-            console.log(`[Realtime] Subscription status for ${config.channel}: ${status}`)
+            console.log(`[Realtime] Subscription status for ${config.channel}: ${status}`, err ? `Error: ${err}` : '')
           }
         })
 
@@ -227,57 +235,67 @@ export function subscribeToContactAlerts(
     table: 'emergency_alerts',
     event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
     callback: (payload) => {
-      const alert = payload.new || payload.old
-      console.log(`[Realtime] 📨 Contact alert event received for user ${contactUserId}:`, {
-        eventType: payload.eventType,
-        alertId: alert?.id,
-        status: alert?.status,
-        contactsNotified: alert?.contacts_notified,
-        contactsNotifiedType: Array.isArray(alert?.contacts_notified) ? 'array' : typeof alert?.contacts_notified,
-        contactsNotifiedLength: Array.isArray(alert?.contacts_notified) ? alert.contacts_notified.length : 'N/A',
-        alertUserId: alert?.user_id,
-        hasNew: !!payload.new,
-        hasOld: !!payload.old,
-      })
-      
-      // Only fire callback if this contact user is in the contacts_notified array
-      if (alert && alert.contacts_notified && Array.isArray(alert.contacts_notified)) {
-        // Normalize IDs for comparison (trim whitespace, ensure string comparison)
-        const normalizedContactUserId = contactUserId.trim()
-        const normalizedContactsNotified = alert.contacts_notified.map((id: string) => String(id).trim())
-        
-        const isNotified = normalizedContactsNotified.some((id: string) => id === normalizedContactUserId)
-        
-        console.log(`[Realtime] 🔍 Checking if user ${contactUserId} is notified:`, {
-          isNotified,
-          contactUserId: normalizedContactUserId,
-          contactsNotified: normalizedContactsNotified,
-          contactsNotifiedRaw: alert.contacts_notified,
-          alertStatus: alert.status,
-          alertUserId: alert.user_id,
-          matchFound: normalizedContactsNotified.includes(normalizedContactUserId),
+      try {
+        const alert = payload.new || payload.old
+        console.log(`[Realtime] 📨 Contact alert event received for user ${contactUserId}:`, {
+          eventType: payload.eventType,
+          alertId: alert?.id,
+          status: alert?.status,
+          contactsNotified: alert?.contacts_notified,
+          contactsNotifiedType: Array.isArray(alert?.contacts_notified) ? 'array' : typeof alert?.contacts_notified,
+          contactsNotifiedLength: Array.isArray(alert?.contacts_notified) ? alert.contacts_notified.length : 'N/A',
+          alertUserId: alert?.user_id,
+          hasNew: !!payload.new,
+          hasOld: !!payload.old,
         })
         
-        // Check if this is a new alert being created or updated to active status
-        if (isNotified && alert.status === 'active') {
-          console.log(`[Realtime] ✅ TRIGGERING CALLBACK for contact ${contactUserId} - Alert ${alert.id}`)
-          console.log(`[Realtime] 🚨 ALERT SHOULD NOW APPEAR ON DEVICE`)
-          callback(alert)
+        // Only fire callback if this contact user is in the contacts_notified array
+        if (alert && alert.contacts_notified && Array.isArray(alert.contacts_notified)) {
+          try {
+            // Normalize IDs for comparison (trim whitespace, ensure string comparison)
+            const normalizedContactUserId = contactUserId.trim()
+            const normalizedContactsNotified = alert.contacts_notified.map((id: string) => String(id).trim())
+            
+            const isNotified = normalizedContactsNotified.some((id: string) => id === normalizedContactUserId)
+            
+            console.log(`[Realtime] 🔍 Checking if user ${contactUserId} is notified:`, {
+              isNotified,
+              contactUserId: normalizedContactUserId,
+              contactsNotified: normalizedContactsNotified,
+              contactsNotifiedRaw: alert.contacts_notified,
+              alertStatus: alert.status,
+              alertUserId: alert.user_id,
+              matchFound: normalizedContactsNotified.includes(normalizedContactUserId),
+            })
+            
+            // Check if this is a new alert being created or updated to active status
+            if (isNotified && alert.status === 'active') {
+              console.log(`[Realtime] ✅ TRIGGERING CALLBACK for contact ${contactUserId} - Alert ${alert.id}`)
+              console.log(`[Realtime] 🚨 ALERT SHOULD NOW APPEAR ON DEVICE`)
+              callback(alert)
+            } else {
+              console.log(`[Realtime] ⏭️ Skipping callback:`, {
+                isNotified,
+                status: alert.status,
+                reason: !isNotified ? 'user not in contacts_notified' : `status is ${alert.status} (not 'active')`
+              })
+            }
+          } catch (processingError) {
+            console.error(`[Realtime] ❌ Error processing alert for user ${contactUserId}:`, processingError)
+            // Don't rethrow - prevent breaking the subscription
+          }
         } else {
-          console.log(`[Realtime] ⏭️ Skipping callback:`, {
-            isNotified,
-            status: alert.status,
-            reason: !isNotified ? 'user not in contacts_notified' : `status is ${alert.status} (not 'active')`
+          console.log(`[Realtime] ⚠️ No contacts_notified array or invalid alert structure:`, {
+            hasAlert: !!alert,
+            hasContactsNotified: !!alert?.contacts_notified,
+            isArray: Array.isArray(alert?.contacts_notified),
+            contactsNotifiedType: typeof alert?.contacts_notified,
+            contactsNotifiedValue: alert?.contacts_notified
           })
         }
-      } else {
-        console.log(`[Realtime] ⚠️ No contacts_notified array or invalid alert structure:`, {
-          hasAlert: !!alert,
-          hasContactsNotified: !!alert?.contacts_notified,
-          isArray: Array.isArray(alert?.contacts_notified),
-          contactsNotifiedType: typeof alert?.contacts_notified,
-          contactsNotifiedValue: alert?.contacts_notified
-        })
+      } catch (callbackError) {
+        console.error(`[Realtime] ❌ Error in contact alert callback for user ${contactUserId}:`, callbackError)
+        // Don't rethrow - prevent breaking the subscription
       }
     },
   })
