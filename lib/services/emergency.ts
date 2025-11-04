@@ -60,22 +60,43 @@ export async function createEmergencyAlert(
       // This ensures contacts_notified is set immediately, triggering Realtime subscriptions on INSERT
       let contactIds: string[] = []
       try {
-        console.log('[Alert] Fetching contacts for user:', userId)
+        console.log(`[Alert] 🔍 Fetching contacts for user: ${userId}`)
         const { data: contacts, error: contactsError } = await supabase
           .from('emergency_contacts')
-          .select('id, contact_user_id, email, phone, verified')
+          .select('id, contact_user_id, email, phone, verified, user_id')
           .eq('user_id', userId)
           .eq('verified', true)
         
         if (contactsError) {
-          console.error('Failed to get contacts before alert creation:', contactsError)
+          console.error(`[Alert] ❌ Failed to get contacts before alert creation:`, contactsError)
         } else if (contacts && contacts.length > 0) {
-          console.log('[Alert] Raw contacts fetched:', contacts.map((c: any) => ({
+          console.log(`[Alert] 📋 Raw contacts fetched (${contacts.length} total):`, contacts.map((c: any) => ({
             id: c.id,
+            user_id: c.user_id,
             contact_user_id: c.contact_user_id,
             email: c.email,
             verified: c.verified
           })))
+          
+          // Verify bidirectional relationship exists
+          console.log(`[Alert] 🔗 Verifying contact relationships...`)
+          for (const contact of contacts) {
+            if (contact.contact_user_id) {
+              // Check if reverse contact exists (bidirectional)
+              const { data: reverseContact } = await supabase
+                .from('emergency_contacts')
+                .select('id, verified')
+                .eq('user_id', contact.contact_user_id)
+                .eq('contact_user_id', userId)
+                .maybeSingle()
+              
+              if (reverseContact) {
+                console.log(`[Alert] ✅ Bidirectional contact confirmed: ${userId} ↔ ${contact.contact_user_id}`)
+              } else {
+                console.warn(`[Alert] ⚠️ Bidirectional contact missing: ${contact.contact_user_id} does not have ${userId} as contact`)
+              }
+            }
+          }
           
           // Filter and get contact USER IDs (not contact record IDs)
           // Add validation to filter out invalid self-references
@@ -83,17 +104,17 @@ export async function createEmergencyAlert(
             .filter((c: any) => {
               // Must be verified
               if (!c.verified) {
-                console.warn('[Alert] Skipping unverified contact:', c.id)
+                console.warn(`[Alert] ⏭️ Skipping unverified contact:`, c.id)
                 return false
               }
               // Must have contact_user_id
               if (!c.contact_user_id) {
-                console.warn('[Alert] Skipping contact without contact_user_id:', c.id)
+                console.warn(`[Alert] ⏭️ Skipping contact without contact_user_id:`, c.id)
                 return false
               }
               // contact_user_id must be different from user_id (no self-references)
               if (c.contact_user_id === userId) {
-                console.warn('[Alert] Skipping invalid self-reference contact:', c.id, 'contact_user_id equals user_id:', userId)
+                console.warn(`[Alert] ⏭️ Skipping invalid self-reference contact:`, c.id, `contact_user_id (${c.contact_user_id}) equals user_id (${userId})`)
                 return false
               }
               return true
@@ -101,13 +122,17 @@ export async function createEmergencyAlert(
             .map((c: any) => c.contact_user_id)
             .filter((id: any): id is string => !!id)
           
-          console.log('[Alert] Final contactIds to notify:', contactIds)
-          console.log('[Alert] User triggering alert:', userId)
+          console.log(`[Alert] ✅ Final contactIds to notify (${contactIds.length}):`, contactIds)
+          console.log(`[Alert] 👤 User triggering alert: ${userId}`)
+          
+          if (contactIds.length === 0) {
+            console.warn(`[Alert] ⚠️ No valid contacts to notify after filtering`)
+          }
         } else {
-          console.warn('[Alert] No verified contacts found for user:', userId)
+          console.warn(`[Alert] ⚠️ No verified contacts found for user: ${userId}`)
         }
       } catch (contactError) {
-        console.warn('Failed to get contacts before alert creation (non-critical):', contactError)
+        console.warn(`[Alert] ⚠️ Failed to get contacts before alert creation (non-critical):`, contactError)
       }
 
       // Use regular client (RLS should allow these operations for the user's own data)

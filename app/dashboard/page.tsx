@@ -75,13 +75,18 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (user) {
+      console.log(`[Dashboard] Setting up subscription for user: ${user.id}`)
       loadActiveEmergency()
       loadContactCount()
+      
+      let subscriptionActive = false
+      let pollingInterval: NodeJS.Timeout | null = null
       
       // Subscribe to emergency alerts for this contact user
       // This fires when someone in their contact list triggers an alert
       const unsubscribe = subscribeToContactAlerts(user.id, (alert) => {
-        console.log('Emergency alert received for contact:', alert)
+        console.log(`[Dashboard] ✅ Emergency alert received for contact user ${user.id}:`, alert)
+        subscriptionActive = true // Mark subscription as active when we receive an event
         
         // Show full-screen alert notification
         showEmergencyAlert(alert.id, {
@@ -93,9 +98,67 @@ export default function DashboardPage() {
         router.push(`/alert/${alert.id}`)
       })
       
+      // Fallback polling mechanism - check for active alerts every 5 seconds
+      // This ensures alerts are received even if Realtime subscription fails
+      const startPolling = () => {
+        console.log(`[Dashboard] Starting fallback polling for user: ${user.id}`)
+        pollingInterval = setInterval(async () => {
+          try {
+            // Check if there are any active alerts where this user is in contacts_notified
+            const { createClient } = await import('@/lib/supabase')
+            const supabase = createClient()
+            if (!supabase) return
+            
+            const { data: alerts, error } = await supabase
+              .from('emergency_alerts')
+              .select('*')
+              .eq('status', 'active')
+              .contains('contacts_notified', user.id)
+              .order('triggered_at', { ascending: false })
+              .limit(1)
+            
+            if (error) {
+              console.warn(`[Dashboard] Polling error:`, error)
+              return
+            }
+            
+            if (alerts && alerts.length > 0) {
+              const alert = alerts[0]
+              console.log(`[Dashboard] 📡 Polling found active alert for user ${user.id}:`, alert.id)
+              
+              // Check if we're already on this alert page
+              const currentPath = window.location.pathname
+              if (!currentPath.includes(`/alert/${alert.id}`) && !currentPath.includes(`/emergency/active/${alert.id}`)) {
+                console.log(`[Dashboard] Navigating to alert page via polling: ${alert.id}`)
+                showEmergencyAlert(alert.id, {
+                  address: alert.address,
+                  alert_type: alert.alert_type,
+                })
+                router.push(`/alert/${alert.id}`)
+              }
+            }
+          } catch (error) {
+            console.warn(`[Dashboard] Polling error:`, error)
+          }
+        }, 5000) // Poll every 5 seconds
+      }
+      
+      // Start polling after 2 seconds (give Realtime a chance to connect first)
+      const pollingTimeout = setTimeout(() => {
+        if (!subscriptionActive) {
+          console.log(`[Dashboard] Realtime subscription may not be active, starting fallback polling`)
+          startPolling()
+        }
+      }, 2000)
+      
       return () => {
+        console.log(`[Dashboard] Cleaning up subscription for user: ${user.id}`)
         unsubscribe()
         hideEmergencyAlert()
+        if (pollingInterval) {
+          clearInterval(pollingInterval)
+        }
+        clearTimeout(pollingTimeout)
       }
     }
   }, [user, router])

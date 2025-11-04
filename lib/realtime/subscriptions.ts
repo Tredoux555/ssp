@@ -34,9 +34,17 @@ class SubscriptionManager {
 
     // Check if supabase client is available
     if (!this.supabase) {
-      console.warn('Supabase client not available for subscription')
+      console.warn('[Realtime] Supabase client not available for subscription')
       return () => {} // Return no-op unsubscribe function
     }
+
+    console.log(`[Realtime] Setting up subscription:`, {
+      channel: config.channel,
+      table: config.table,
+      event: config.event || 'UPDATE',
+      filter: config.filter || 'none',
+      key
+    })
 
     try {
       const channel = this.supabase
@@ -63,9 +71,13 @@ class SubscriptionManager {
         )
         .subscribe((status: any) => {
           if (status === 'SUBSCRIBED') {
-            console.log(`[Realtime] Successfully subscribed to ${config.channel} (${config.table}, event: ${config.event || 'UPDATE'})`)
+            console.log(`[Realtime] ✅ Successfully subscribed to ${config.channel} (${config.table}, event: ${config.event || 'UPDATE'})`)
           } else if (status === 'CHANNEL_ERROR') {
-            console.error(`[Realtime] Channel error for ${config.channel}`)
+            console.error(`[Realtime] ❌ Channel error for ${config.channel}`)
+          } else if (status === 'TIMED_OUT') {
+            console.error(`[Realtime] ⏱️ Subscription timed out for ${config.channel}`)
+          } else if (status === 'CLOSED') {
+            console.warn(`[Realtime] ⚠️ Subscription closed for ${config.channel}`)
           } else {
             console.log(`[Realtime] Subscription status for ${config.channel}: ${status}`)
           }
@@ -73,9 +85,22 @@ class SubscriptionManager {
 
       this.subscriptions.set(key, { channel, config })
 
+      // Log subscription health check
+      setTimeout(() => {
+        const subscription = this.subscriptions.get(key)
+        if (subscription) {
+          const channelState = (subscription.channel as any).state
+          console.log(`[Realtime] Subscription health check for ${config.channel}:`, {
+            state: channelState,
+            key,
+            table: config.table
+          })
+        }
+      }, 2000)
+
       return () => this.unsubscribe(key)
     } catch (error) {
-      console.error('Failed to create subscription:', error)
+      console.error('[Realtime] Failed to create subscription:', error)
       return () => {} // Return no-op unsubscribe function
     }
   }
@@ -191,8 +216,9 @@ export function subscribeToContactAlerts(
   contactUserId: string,
   callback: (alert: any) => void
 ): () => void {
+  console.log(`[Realtime] Setting up contact alert subscription for user: ${contactUserId}`)
   const manager = getSubscriptionManager()
-  return manager.subscribe({
+  const unsubscribe = manager.subscribe({
     channel: `contact-alerts-${contactUserId}`,
     table: 'emergency_alerts',
     event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
@@ -203,6 +229,7 @@ export function subscribeToContactAlerts(
         alertId: alert?.id,
         status: alert?.status,
         contactsNotified: alert?.contacts_notified,
+        alertUserId: alert?.user_id,
         hasNew: !!payload.new,
         hasOld: !!payload.old,
       })
@@ -213,21 +240,26 @@ export function subscribeToContactAlerts(
         console.log(`[Realtime] Checking if user ${contactUserId} is notified:`, {
           isNotified,
           contactsNotified: alert.contacts_notified,
+          contactUserId,
           alertStatus: alert.status,
+          alertUserId: alert.user_id,
         })
         
         // Check if this is a new alert being created or updated to active status
         if (isNotified && alert.status === 'active') {
-          console.log(`[Realtime] Triggering callback for contact ${contactUserId} - Alert ${alert.id}`)
+          console.log(`[Realtime] ✅ Triggering callback for contact ${contactUserId} - Alert ${alert.id}`)
           callback(alert)
         } else {
-          console.log(`[Realtime] Skipping callback - isNotified: ${isNotified}, status: ${alert.status}`)
+          console.log(`[Realtime] ⏭️ Skipping callback - isNotified: ${isNotified}, status: ${alert.status}`)
         }
       } else {
-        console.log(`[Realtime] No contacts_notified array or invalid alert structure`)
+        console.log(`[Realtime] ⚠️ No contacts_notified array or invalid alert structure`)
       }
     },
   })
+  
+  console.log(`[Realtime] Contact alert subscription setup complete for user: ${contactUserId}`)
+  return unsubscribe
 }
 
 /**
