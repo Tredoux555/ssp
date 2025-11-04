@@ -104,11 +104,21 @@ export default function DashboardPage() {
     if (!user) return
 
     try {
+      // Add a small delay to allow cancelled alerts to process
+      // This prevents race conditions where cancellation hasn't fully processed yet
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
       const emergency = await getActiveEmergency(user.id)
       setActiveEmergency(emergency)
       
-      if (emergency) {
-        router.push(`/emergency/active/${emergency.id}`)
+      // Only auto-redirect if we have a confirmed active emergency
+      // Don't redirect if we just came from cancelling an alert
+      if (emergency && emergency.status === 'active') {
+        // Check if we're already on the emergency page to prevent redirect loops
+        const currentPath = window.location.pathname
+        if (!currentPath.includes(`/emergency/active/${emergency.id}`)) {
+          router.push(`/emergency/active/${emergency.id}`)
+        }
       }
     } catch (error: any) {
       console.error('Failed to load active emergency:', error)
@@ -139,94 +149,44 @@ export default function DashboardPage() {
     // Old active alerts are auto-cancelled server-side before rate limit check
     setEmergencyLoading(true)
 
-    try {
-      // Get current location on client-side (optional - continue without if fails)
-      let location
       try {
-        const coords = await getCurrentLocation()
-        const address = await reverseGeocode(coords.lat, coords.lng).catch(() => null)
-        location = {
-          lat: coords.lat,
-          lng: coords.lng,
-          address: address || undefined,
+        // Get current location on client-side (optional - continue without if fails)
+        let location
+        try {
+          const coords = await getCurrentLocation()
+          // Check if coords is null before using it
+          if (coords) {
+            const address = await reverseGeocode(coords.lat, coords.lng).catch(() => null)
+            location = {
+              lat: coords.lat,
+              lng: coords.lng,
+              address: address || undefined,
+            }
+          }
+          // If coords is null, location remains undefined and we continue without it
+        } catch (error) {
+          console.warn('Failed to get location, continuing without location:', error)
+          // Continue without location - alert can still be created
         }
-      } catch (error) {
-        console.warn('Failed to get location, continuing without location:', error)
-        // Continue without location - alert can still be created
-      }
 
-      // Create emergency alert via API route (location sent in body)
+      // Create emergency alert using client-side service
       let emergencyAlert
       try {
-        let response: Response
+        const { createEmergencyAlert } = await import('@/lib/services/emergency')
         
-        // Wrap fetch in try-catch to handle network errors
-        try {
-          response = await fetch('/api/emergency/create', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              alert_type: 'other',
-              location: location || undefined,
-            }),
-          })
-        } catch (fetchError: any) {
-          // Network error (TypeError: fetch failed, CORS, etc.)
-          const networkError = fetchError instanceof TypeError
-            ? new Error(`Network error: ${fetchError.message || 'Failed to connect to server'}`)
-            : fetchError instanceof Error
-            ? fetchError
-            : new Error(`Network error: ${String(fetchError)}`)
-          
-          console.error('Emergency alert network error:', serializeError(networkError))
-          throw networkError
-        }
-
-        // Handle rate limit (429) explicitly - don't treat as error, handle gracefully
-        if (response.status === 429) {
-          // Parse rate limit message
-          let rateLimitMessage = 'Rate limit exceeded. Please wait 30 seconds.'
-          try {
-            const text = await response.text()
-            if (text) {
-              const errorData = JSON.parse(text)
-              rateLimitMessage = errorData.error || rateLimitMessage
-            }
-          } catch {
-            // Response parsing failed - use default message
-          }
-          
-          // Show alert and return early - don't log as error
+        emergencyAlert = await createEmergencyAlert(
+          'other',
+          location || undefined
+        )
+      } catch (alertError: any) {
+        // Handle rate limit errors specifically
+        if (alertError.message?.includes('Rate limit')) {
           setEmergencyLoading(false)
-          window.alert(rateLimitMessage)
+          window.alert(alertError.message)
           return
         }
-
-        if (!response.ok) {
-          // Parse error response for non-429 errors
-          let errorMessage = `Failed to create emergency alert (${response.status})`
-          try {
-            const text = await response.text()
-            if (text) {
-              const errorData = JSON.parse(text)
-              errorMessage = errorData.error || errorMessage
-            }
-          } catch {
-            // Response is not JSON or empty - use status text
-            errorMessage = response.statusText || errorMessage
-          }
-          
-          // Throw error for non-429 failures
-          throw new Error(`Failed to create emergency alert: ${errorMessage}`)
-        }
-
-        const data = await response.json()
-        emergencyAlert = data.alert
-      } catch (alertError: any) {
-        // Only catch non-429 errors here (429 is handled above)
-        // All errors here should be wrapped with generic prefix
+        
+        // Re-throw other errors
         throw new Error(`Failed to create emergency alert: ${alertError.message || 'Unknown error'}`)
       }
 

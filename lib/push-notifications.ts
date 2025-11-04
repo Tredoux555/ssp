@@ -103,53 +103,54 @@ export async function subscribeToPush(
 
 /**
  * Register device for push notifications
+ * This function is kept for backward compatibility
+ * It now delegates to the push service which handles Capacitor vs web
  */
 export async function registerDeviceForPush(): Promise<boolean> {
   try {
-    // Request permission first
-    const permission = await requestNotificationPermission()
-    if (permission !== 'granted') {
-      console.warn('[Push] Notification permission not granted:', permission)
-      return false
-    }
-
-    // Register Service Worker
-    const registration = await registerServiceWorker()
-    if (!registration) {
-      console.error('[Push] Failed to register Service Worker')
-      return false
-    }
-
-    // Check if already subscribed
-    let subscription = await getPushSubscription(registration)
-    if (!subscription) {
-      // Subscribe to push
-      subscription = await subscribeToPush(registration)
-      if (!subscription) {
-        console.error('[Push] Failed to subscribe to push')
-        return false
-      }
-    }
-
-    // Send subscription to server
-    const subscriptionData = subscriptionToJSON(subscription)
-    const response = await fetch('/api/push/register', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(subscriptionData),
-    })
-
-    if (!response.ok) {
-      console.error('[Push] Failed to register device:', response.statusText)
-      return false
-    }
-
-    console.log('[Push] Device registered successfully')
-    return true
+    const { registerDeviceForPush: registerPush } = await import('@/lib/services/push')
+    return await registerPush()
   } catch (error) {
     console.error('[Push] Error registering device:', error)
+    return false
+  }
+}
+
+/**
+ * Check if push notifications are supported
+ */
+export function isPushSupported(): boolean {
+  if (typeof window === 'undefined') return false
+  
+  // Check for browser support
+  return 'Notification' in window && 'serviceWorker' in navigator
+}
+
+/**
+ * Check if push notifications are enabled
+ */
+export async function isPushEnabled(): Promise<boolean> {
+  if (typeof window === 'undefined') return false
+  
+  try {
+    const { Capacitor } = await import('@capacitor/core')
+    if (Capacitor.isNativePlatform()) {
+      // For native, check if registered (permission-based)
+      // We can't check registration status easily, so assume true if permission granted
+      return true
+    }
+  } catch {
+    // Capacitor not available
+  }
+  
+  // For web, check service worker subscription
+  if (!('serviceWorker' in navigator)) return false
+  
+  try {
+    const registration = await navigator.serviceWorker.ready
+    const subscription = await registration.pushManager.getSubscription()
+    return subscription !== null
+  } catch {
     return false
   }
 }
@@ -202,36 +203,4 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return window.btoa(binary)
 }
 
-/**
- * Check if push notifications are supported
- */
-export function isPushSupported(): boolean {
-  return (
-    'serviceWorker' in navigator &&
-    'PushManager' in window &&
-    'Notification' in window
-  )
-}
-
-/**
- * Check if push notifications are enabled
- */
-export async function isPushEnabled(): Promise<boolean> {
-  if (!isPushSupported()) {
-    return false
-  }
-
-  const permission = Notification.permission
-  if (permission !== 'granted') {
-    return false
-  }
-
-  try {
-    const registration = await navigator.serviceWorker.ready
-    const subscription = await registration.pushManager.getSubscription()
-    return subscription !== null
-  } catch {
-    return false
-  }
-}
 

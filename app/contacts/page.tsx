@@ -97,64 +97,11 @@ export default function ContactsPage() {
     try {
       console.log('Loading incoming invites for user:', user.email)
       
-      // Wrap fetch in try-catch to handle network errors
-      let res: Response
-      try {
-        res = await fetch('/api/contacts/invites/incoming')
-      } catch (fetchError: any) {
-        // Network error (TypeError: fetch failed, CORS, etc.)
-        const networkError = fetchError instanceof TypeError
-          ? new Error(`Network error: ${fetchError.message || 'Failed to connect to server'}`)
-          : fetchError instanceof Error
-          ? fetchError
-          : new Error(`Network error: ${String(fetchError)}`)
-        
-        console.error('Failed to load incoming invites (network error):', {
-          ...serializeError(networkError),
-          userEmail: user?.email,
-          rawError: fetchError instanceof Error ? {
-            name: fetchError.name,
-            message: fetchError.message,
-            stack: fetchError.stack,
-          } : fetchError,
-        })
-        
-        // Don't show alert for network errors - just log and set empty array
-        // Network errors are often temporary and will resolve on retry
-        setIncomingInvites([])
-        setLoadingInvites(false)
-        return
-      }
+      const { getIncomingInvites } = await import('@/lib/services/contacts')
+      const invites = await getIncomingInvites()
       
-      // Check if response is ok before parsing
-      if (!res.ok) {
-        // Try to parse error response
-        let errorMessage = `Failed to load invites (${res.status})`
-        try {
-          const errorText = await res.text()
-          if (errorText) {
-            const parsed = JSON.parse(errorText)
-            errorMessage = parsed.error || errorMessage
-          }
-        } catch {
-          // Response is not JSON or empty - use status text
-          errorMessage = res.statusText || errorMessage
-        }
-        
-        console.error('Failed to load incoming invites:', errorMessage)
-        // Show error to user if there's a clear error message
-        if (errorMessage && !errorMessage.includes('schema cache')) {
-          alert(`Failed to load invites: ${errorMessage}`)
-        }
-        setIncomingInvites([])
-        setLoadingInvites(false)
-        return
-      }
-      
-      // Parse successful response
-      const data = await res.json()
-      console.log('Loaded incoming invites:', data.invites?.length || 0, 'invites')
-      setIncomingInvites(data.invites || [])
+      console.log('Loaded incoming invites:', invites?.length || 0, 'invites')
+      setIncomingInvites(invites || [])
     } catch (error: any) {
       // Properly serialize error for logging
       const serializedError = serializeError(error)
@@ -200,50 +147,8 @@ export default function ContactsPage() {
     setAcceptingInvite(token)
     
     try {
-      let res: Response
-      
-      // Wrap fetch in try-catch to handle network errors
-      try {
-        res = await fetch(`/api/contacts/invite/${token}/accept`, {
-          method: 'POST',
-        })
-      } catch (fetchError: any) {
-        // Network error (TypeError: fetch failed, CORS, etc.)
-        const networkError = fetchError instanceof TypeError
-          ? new Error(`Network error: ${fetchError.message || 'Failed to connect to server'}`)
-          : fetchError instanceof Error
-          ? fetchError
-          : new Error(`Network error: ${String(fetchError)}`)
-        
-        console.error('Accept invite network error:', serializeError(networkError))
-        throw networkError
-      }
-      
-      // Parse response - handle empty or non-JSON responses
-      let data: any = {}
-      try {
-        const text = await res.text()
-        if (text) {
-          data = JSON.parse(text)
-        }
-      } catch (parseError) {
-        console.warn('Failed to parse response:', serializeError(parseError))
-        // If response is not JSON, create error message from status
-        if (!res.ok) {
-          data = { error: `Server error: ${res.status} ${res.statusText || 'Unknown error'}` }
-        }
-      }
-      
-      console.log('Accept invite response:', {
-        ok: res.ok,
-        status: res.status,
-        data,
-      })
-      
-      if (!res.ok) {
-        const errorMessage = data.error || `Failed to accept invite (${res.status})`
-        throw new Error(errorMessage)
-      }
+      const { acceptContactInvite } = await import('@/lib/services/contacts')
+      await acceptContactInvite(token)
 
       console.log('Invite accepted successfully!')
       
@@ -509,43 +414,8 @@ export default function ContactsPage() {
     if (!confirmed) return
 
     try {
-      let response: Response
-      
-      // Wrap fetch in try-catch to handle network errors
-      try {
-        response = await fetch(`/api/contacts/${contactId}`, {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        })
-      } catch (fetchError: any) {
-        // Network error (TypeError: fetch failed, CORS, etc.)
-        const networkError = fetchError instanceof TypeError
-          ? new Error(`Network error: ${fetchError.message || 'Failed to connect to server'}`)
-          : fetchError instanceof Error
-          ? fetchError
-          : new Error(`Network error: ${String(fetchError)}`)
-        
-        console.error('Delete contact network error:', serializeError(networkError))
-        throw networkError
-      }
-
-      if (!response.ok) {
-        // Try to parse error response
-        let errorMessage = `Failed to delete contact (${response.status})`
-        try {
-          const text = await response.text()
-          if (text) {
-            const errorData = JSON.parse(text)
-            errorMessage = errorData.error || errorMessage
-          }
-        } catch {
-          // Response is not JSON or empty - use status text
-          errorMessage = response.statusText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
+      const { deleteContact } = await import('@/lib/services/contacts')
+      await deleteContact(contactId)
 
       // Successfully deleted - reload contacts list
       await loadContacts()
@@ -707,18 +577,13 @@ export default function ContactsPage() {
                 setInviteSubmitting(true)
                 setInviteLink(null)
                 try {
-                  const res = await fetch('/api/contacts/invite', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      email: inviteEmail,
-                      relationship: inviteRelationship,
-                      priority: parseInt(invitePriority) || 0,
-                    }),
-                  })
-                  const data = await res.json()
-                  if (!res.ok) throw new Error(data.error || 'Failed to create invite')
-                  setInviteLink(data.inviteUrl)
+                  const { createContactInvite } = await import('@/lib/services/contacts')
+                  const result = await createContactInvite(
+                    inviteEmail,
+                    inviteRelationship || undefined,
+                    parseInt(invitePriority) || undefined
+                  )
+                  setInviteLink(result.inviteUrl)
                 } catch (e: any) {
                   alert(e.message || 'Failed to create invite')
                 } finally {

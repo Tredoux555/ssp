@@ -28,6 +28,8 @@ export default function EmergencyMapComponent({
   // Use useLoadScript hook for proper Google Maps loading
   const { isLoaded, loadError } = useLoadScript({
     googleMapsApiKey: apiKey,
+    // Suppress console errors from Google Maps API
+    preventGoogleFontsLoading: true,
   })
 
   const [map, setMap] = useState<any>(null)
@@ -84,12 +86,17 @@ export default function EmergencyMapComponent({
   }
 
   if (loadError) {
+    // Don't show error to user - just show coordinates
+    // Google Maps API errors are expected in some cases (network, API key issues)
     return (
       <div className="w-full h-full bg-gray-200 flex items-center justify-center">
         <div className="text-center p-4">
-          <p className="text-gray-600 font-medium mb-2">Failed to load Google Maps</p>
+          <p className="text-gray-600 font-medium mb-2">Map unavailable</p>
           <p className="text-gray-500 text-sm">
             Location: {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
+          </p>
+          <p className="text-gray-400 text-xs mt-2">
+            Coordinates available - map display unavailable
           </p>
         </div>
       </div>

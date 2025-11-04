@@ -30,8 +30,11 @@ export function playAlertSound(): void {
     alertSound.addEventListener('error', (e) => {
       // Audio file may not exist - that's ok, just skip audio
       // Don't log as error - this is expected if file doesn't exist
+      // Suppress the error event from propagating
+      e.preventDefault()
+      e.stopPropagation()
       alertSound = null
-    })
+    }, { once: true })
     
     // Play sound (user interaction required for autoplay)
     alertSound.play().catch((error) => {

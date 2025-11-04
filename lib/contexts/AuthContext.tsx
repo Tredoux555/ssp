@@ -190,12 +190,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log('Starting sign-in...', { email: email.trim(), hasUrl: !!supabaseUrl, hasKey: !!supabaseAnonKey })
       
-      // Let Supabase handle its own timeout (typically 30s) - don't add artificial timeout
-      // This prevents premature timeouts on slow networks
-      const { data, error } = await supabase.auth.signInWithPassword({
+      // Add timeout wrapper to prevent indefinite hanging on slow/poor networks
+      // Mobile networks can be slow, so 20 seconds is reasonable
+      const signInPromise = supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       })
+      
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Sign-in request timed out. Please check your internet connection and try again.'))
+        }, 20000) // 20 second timeout
+      })
+      
+      // Race between sign-in and timeout
+      // If timeout wins, we get a timeout error
+      // If sign-in wins, we get the sign-in result
+      const signInResult: any = await Promise.race([signInPromise, timeoutPromise])
+      
+      const { data, error } = signInResult
       
       console.log('Sign-in response received')
 
@@ -219,15 +232,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.log('Sign-in successful - refreshing session')
       
       // Explicitly refresh session to ensure it's immediately available
-      // This fixes cases where session isn't immediately available after sign-in
+      // Add timeout to prevent hanging on session refresh (non-critical)
       try {
-        const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.getSession()
-        if (!refreshError && refreshedSession) {
-          console.log('Session refreshed successfully')
-          // Session is now confirmed - onAuthStateChange will fire and update state
-        } else {
-          console.warn('Session refresh returned error, but sign-in succeeded:', refreshError)
-          // Continue anyway - onAuthStateChange will handle it
+        const sessionPromise = supabase.auth.getSession()
+        const sessionTimeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error('Session refresh timed out'))
+          }, 5000) // 5 second timeout for session refresh
+        })
+        
+        try {
+          const sessionResult: any = await Promise.race([sessionPromise, sessionTimeoutPromise])
+          const { data: { session: refreshedSession }, error: refreshError } = sessionResult
+          
+          if (!refreshError && refreshedSession) {
+            console.log('Session refreshed successfully')
+            // Session is now confirmed - onAuthStateChange will fire and update state
+          } else {
+            console.warn('Session refresh returned error, but sign-in succeeded:', refreshError)
+            // Continue anyway - onAuthStateChange will handle it
+          }
+        } catch (sessionTimeoutError: any) {
+          // Session refresh timeout - log but don't fail sign-in
+          // This is non-critical - onAuthStateChange will handle state updates
+          console.warn('Session refresh timed out (non-critical):', sessionTimeoutError)
+          // Continue - onAuthStateChange will handle it
         }
       } catch (refreshErr) {
         console.warn('Error refreshing session (non-critical):', refreshErr)
