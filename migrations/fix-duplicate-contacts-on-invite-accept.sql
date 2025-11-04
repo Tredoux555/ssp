@@ -42,7 +42,7 @@ BEGIN
     LIMIT 1;
     
     IF existing_inviter_contact_id IS NOT NULL THEN
-      -- Update existing placeholder contact
+      -- Update existing placeholder contact (preserve priority)
       UPDATE emergency_contacts
       SET 
         contact_user_id = accepter_id,
@@ -50,6 +50,7 @@ BEGIN
         email = accepter_email,
         name = split_part(accepter_email, '@', 1),
         can_see_location = true
+        -- Note: priority is preserved (not updated)
       WHERE id = existing_inviter_contact_id;
     ELSE
       -- Insert new contact (or update if conflict on user_id + contact_user_id)
@@ -87,7 +88,7 @@ BEGIN
     LIMIT 1;
     
     IF existing_accepter_contact_id IS NOT NULL THEN
-      -- Update existing placeholder contact
+      -- Update existing placeholder contact (preserve priority)
       UPDATE emergency_contacts
       SET 
         contact_user_id = inviter_id,
@@ -95,6 +96,7 @@ BEGIN
         email = inviter_email,
         name = split_part(inviter_email, '@', 1),
         can_see_location = true
+        -- Note: priority is preserved (not updated)
       WHERE id = existing_accepter_contact_id;
     ELSE
       -- Insert new contact (or update if conflict on user_id + contact_user_id)

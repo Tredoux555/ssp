@@ -28,6 +28,7 @@ class SubscriptionManager {
 
     // Check if subscription already exists
     if (this.subscriptions.has(key)) {
+      console.log(`[Realtime] Subscription already exists for ${key}`)
       return () => this.unsubscribe(key)
     }
 
@@ -48,9 +49,27 @@ class SubscriptionManager {
             table: config.table,
             ...(config.filter && { filter: config.filter }),
           },
-          config.callback
+          (payload: any) => {
+            console.log(`[Realtime] Event received: ${payload.eventType || 'unknown'} on ${config.table}`, {
+              channel: config.channel,
+              event: config.event,
+              table: config.table,
+              filter: config.filter,
+              hasNew: !!payload.new,
+              hasOld: !!payload.old,
+            })
+            config.callback(payload)
+          }
         )
-        .subscribe()
+        .subscribe((status: any) => {
+          if (status === 'SUBSCRIBED') {
+            console.log(`[Realtime] Successfully subscribed to ${config.channel} (${config.table}, event: ${config.event || 'UPDATE'})`)
+          } else if (status === 'CHANNEL_ERROR') {
+            console.error(`[Realtime] Channel error for ${config.channel}`)
+          } else {
+            console.log(`[Realtime] Subscription status for ${config.channel}: ${status}`)
+          }
+        })
 
       this.subscriptions.set(key, { channel, config })
 
@@ -176,16 +195,36 @@ export function subscribeToContactAlerts(
   return manager.subscribe({
     channel: `contact-alerts-${contactUserId}`,
     table: 'emergency_alerts',
-    event: '*',
+    event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
     callback: (payload) => {
       const alert = payload.new || payload.old
+      console.log(`[Realtime] Contact alert received for user ${contactUserId}:`, {
+        eventType: payload.eventType,
+        alertId: alert?.id,
+        status: alert?.status,
+        contactsNotified: alert?.contacts_notified,
+        hasNew: !!payload.new,
+        hasOld: !!payload.old,
+      })
+      
       // Only fire callback if this contact user is in the contacts_notified array
       if (alert && alert.contacts_notified && Array.isArray(alert.contacts_notified)) {
         const isNotified = alert.contacts_notified.some((id: string) => id === contactUserId)
-        // Also check if this is a new alert being created or updated to active status
+        console.log(`[Realtime] Checking if user ${contactUserId} is notified:`, {
+          isNotified,
+          contactsNotified: alert.contacts_notified,
+          alertStatus: alert.status,
+        })
+        
+        // Check if this is a new alert being created or updated to active status
         if (isNotified && alert.status === 'active') {
+          console.log(`[Realtime] Triggering callback for contact ${contactUserId} - Alert ${alert.id}`)
           callback(alert)
+        } else {
+          console.log(`[Realtime] Skipping callback - isNotified: ${isNotified}, status: ${alert.status}`)
         }
+      } else {
+        console.log(`[Realtime] No contacts_notified array or invalid alert structure`)
       }
     },
   })
