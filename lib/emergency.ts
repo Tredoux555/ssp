@@ -189,10 +189,12 @@ export async function notifyEmergencyContacts(
   }
 
   try {
-    // Filter and get contact IDs
+    // Filter and get contact USER IDs (not contact record IDs)
+    // Only use contacts that have contact_user_id set (linked users)
+    // Contacts without contact_user_id are just email/phone entries that haven't accepted invites
     const contactIds = contacts
-      .filter(c => c.verified && (c.contact_user_id || c.email || c.phone))
-      .map(c => c.contact_user_id || c.id)
+      .filter(c => c.verified && c.contact_user_id) // Only verified contacts with linked user IDs
+      .map(c => c.contact_user_id)
 
     if (contactIds.length === 0) {
       console.warn('No verified contacts to notify')
