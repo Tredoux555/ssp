@@ -255,16 +255,37 @@ export async function createEmergencyAlert(
         contactsNotified: alert.contacts_notified,
         contactsNotifiedCount: alert.contacts_notified?.length || 0,
         contactIds: contactIds,
-        contactIdsCount: contactIds.length
+        contactIdsCount: contactIds.length,
+        alertJson: JSON.stringify(alert, null, 2)
       })
       
       if (alert.contacts_notified && Array.isArray(alert.contacts_notified) && alert.contacts_notified.length > 0) {
         console.log(`[Alert] ✅ Alert created with ${alert.contacts_notified.length} contact(s) in contacts_notified array.`)
-        console.log(`[Alert] 📋 Contacts to be notified:`, alert.contacts_notified)
+        console.log(`[Alert] 📋 Contacts to be notified (EXACT IDs):`, alert.contacts_notified)
         console.log(`[Alert] 🔔 Realtime subscriptions should fire immediately for these users.`)
+        console.log(`[Alert] 📡 Polling will also check for this alert every 2 seconds on contact devices.`)
+        
+        // Verify the alert was actually saved with contacts_notified
+        const { data: verifyAlert, error: verifyError } = await supabase
+          .from('emergency_alerts')
+          .select('id, contacts_notified, status')
+          .eq('id', alert.id)
+          .single()
+        
+        if (verifyError) {
+          console.error(`[Alert] ❌ Failed to verify alert after creation:`, verifyError)
+        } else if (verifyAlert) {
+          console.log(`[Alert] ✅ Verified alert in database:`, {
+            alertId: verifyAlert.id,
+            contactsNotified: verifyAlert.contacts_notified,
+            contactsNotifiedType: Array.isArray(verifyAlert.contacts_notified) ? 'array' : typeof verifyAlert.contacts_notified,
+            matchesOriginal: JSON.stringify(verifyAlert.contacts_notified) === JSON.stringify(alert.contacts_notified)
+          })
+        }
       } else {
         console.warn('[Alert] ⚠️ Alert created but contacts_notified array is empty!')
         console.warn('[Alert] ⚠️ Make sure you have verified contacts with contact_user_id set.')
+        console.warn(`[Alert] ⚠️ Contact IDs that were supposed to be added:`, contactIds)
       }
 
       return alert

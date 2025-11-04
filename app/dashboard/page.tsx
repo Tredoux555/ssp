@@ -181,12 +181,12 @@ export default function DashboardPage() {
           } catch (error) {
             console.warn(`[Dashboard] ⚠️ Polling error:`, error)
           }
-        }, 5000) // Poll every 5 seconds
+        }, 2000) // Poll every 2 seconds (more aggressive)
       }
       
       // Start polling immediately (works alongside Realtime)
-      // This ensures alerts are received even if Realtime has issues
-      console.log(`[Dashboard] 🔄 Starting fallback polling immediately`)
+      // This is now the PRIMARY mechanism since Realtime has been unreliable
+      console.log(`[Dashboard] 🔄 Starting aggressive polling immediately (every 2 seconds)`)
       startPolling()
       
       return () => {

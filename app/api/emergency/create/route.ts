@@ -128,8 +128,28 @@ export async function POST(request: NextRequest) {
     }
 
     // Create emergency alert using admin client (server-side)
+    // Fetch contacts BEFORE creating the alert so we can include them in the INSERT
+    // This ensures Realtime subscriptions fire immediately on INSERT with contacts_notified
     let alert
+    let contactIds: string[] = []
     try {
+      const { data: contacts, error: contactsError } = await admin
+        .from('emergency_contacts')
+        .select('id, contact_user_id, email, phone, verified')
+        .eq('user_id', userId)
+        .eq('verified', true)
+
+      if (contactsError) {
+        console.error('Failed to fetch contacts before creating alert:', contactsError)
+      } else if (contacts && contacts.length > 0) {
+        contactIds = contacts
+          .filter((c: any) => c.contact_user_id)
+          .map((c: any) => String(c.contact_user_id).trim())
+          .filter(Boolean)
+        // Deduplicate
+        contactIds = Array.from(new Set(contactIds))
+      }
+
       const alertData: any = {
         user_id: userId,
         status: 'active',
@@ -142,6 +162,10 @@ export async function POST(request: NextRequest) {
         if (validatedLocation.address) {
           alertData.address = validatedLocation.address
         }
+      }
+
+      if (contactIds.length > 0) {
+        alertData.contacts_notified = contactIds
       }
 
       const { data: alertDataResult, error: alertError } = await admin
