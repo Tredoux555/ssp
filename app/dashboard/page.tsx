@@ -112,17 +112,29 @@ export default function DashboardPage() {
               return
             }
             
-            // Get ALL active alerts and filter client-side (more reliable than .cs() filter)
-            // This bypasses potential RLS issues with array queries
+            // Check if user session is valid
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) {
+              console.warn(`[Dashboard] ⚠️ No active session for polling`)
+              return
+            }
+            
+            // Query alerts - RLS will automatically filter to only alerts where user is in contacts_notified
+            // This is more efficient than querying all alerts and filtering client-side
             const { data: allAlerts, error: queryError } = await supabase
               .from('emergency_alerts')
               .select('*')
               .eq('status', 'active')
               .order('triggered_at', { ascending: false })
-              .limit(20) // Get more alerts to check
+              .limit(20)
             
+            // If error is RLS-related (42501) or CORS-related, it means RLS is blocking
+            // This is expected if the user has no alerts - don't spam the console
             if (queryError) {
-              console.warn(`[Dashboard] ⚠️ Polling query error:`, queryError)
+              // Only log if it's not a CORS/RLS error (which is expected when user has no access)
+              if (queryError.code !== '42501' && !queryError.message?.includes('row-level security') && !queryError.message?.includes('access control') && !queryError.message?.includes('Load failed')) {
+                console.warn(`[Dashboard] ⚠️ Polling query error:`, queryError)
+              }
               return
             }
             
@@ -433,6 +445,12 @@ export default function DashboardPage() {
             <div className="flex items-center gap-3">
               <Phone className="w-5 h-5 text-sa-blue" />
               <span className="font-medium">Profile Settings</span>
+            </div>
+          </Card>
+          <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => router.push('/diagnostics')}>
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-yellow-500" />
+              <span className="font-medium">Connection Diagnostics</span>
             </div>
           </Card>
         </div>

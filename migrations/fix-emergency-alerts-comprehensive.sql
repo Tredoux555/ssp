@@ -120,3 +120,19 @@ CREATE INDEX IF NOT EXISTS idx_alert_responses_contact_user_id
   ON alert_responses(contact_user_id) 
   WHERE contact_user_id IS NOT NULL;
 
+-- 9. Fix alert_responses RLS policy to allow alert creators to create responses for contacts
+-- Drop existing restrictive policy
+DROP POLICY IF EXISTS "Alert creators can create responses for contacts" ON alert_responses;
+
+-- Create policy that allows alert creators to insert responses for their contacts
+CREATE POLICY "Alert creators can create responses for contacts" ON alert_responses
+  FOR INSERT WITH CHECK (
+    -- Allow if the alert creator owns the alert and the contact is in contacts_notified
+    EXISTS (
+      SELECT 1 FROM emergency_alerts ea
+      WHERE ea.id = alert_responses.alert_id
+      AND ea.user_id = auth.uid()
+      AND alert_responses.contact_user_id::text = ANY(ea.contacts_notified)
+    )
+  );
+

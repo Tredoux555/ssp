@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { createClient } from '@/lib/supabase'
@@ -29,6 +29,134 @@ export default function AlertResponsePage() {
   const [acknowledged, setAcknowledged] = useState(false)
   const [loading, setLoading] = useState(true)
 
+  const loadAlert = useCallback(async () => {
+    if (!user) return
+
+    const supabase = createClient()
+
+    try {
+      // Get alert - contact can see if they're in the contacts_notified array
+      const { data, error } = await supabase
+        .from('emergency_alerts')
+        .select('*')
+        .eq('id', alertId)
+        .single()
+
+      if (error) {
+        // Check if it's an RLS error
+        if (error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('RLS')) {
+          console.error('[Alert] RLS policy blocked access to alert:', {
+            error: error.message,
+            code: error.code,
+            alertId,
+            userId: user.id
+          })
+          router.push('/dashboard')
+          return
+        }
+        // Check if alert not found
+        if (error.code === 'PGRST116') {
+          console.error('[Alert] Alert not found:', alertId)
+          router.push('/dashboard')
+          return
+        }
+        throw error
+      }
+
+      if (!data) {
+        console.error('[Alert] Alert not found or access denied:', alertId)
+        router.push('/dashboard')
+        return
+      }
+
+      const alertData = data as EmergencyAlert
+
+      // Check if user is a contact - normalize IDs for comparison (UUID vs TEXT)
+      const normalizedUserId = String(user.id).trim()
+      const normalizedContacts = alertData.contacts_notified?.map((id: string) => String(id).trim()) || []
+      const isContact = normalizedContacts.includes(normalizedUserId)
+
+      if (!isContact) {
+        console.warn('[Alert] User not in contacts_notified:', {
+          userId: normalizedUserId,
+          contactsNotified: normalizedContacts,
+          alertId: alertId,
+          alertUserId: alertData.user_id
+        })
+        router.push('/dashboard')
+        return
+      }
+
+      console.log('[Alert] ✅ User has access to alert:', {
+        alertId,
+        userId: normalizedUserId,
+        contactsNotifiedCount: normalizedContacts.length
+      })
+
+      setAlert(alertData)
+
+      // Show full-screen emergency alert with sound and vibration
+      showEmergencyAlert(alertId, {
+        address: alertData.address,
+        alert_type: alertData.alert_type,
+      })
+      
+      // Play sound and vibrate
+      playAlertSound()
+      vibrateDevice()
+
+      // Check if user has acknowledged
+      // Note: This query should work because RLS allows contacts to see their own responses
+      try {
+        const { data: response, error: responseError } = await supabase
+          .from('alert_responses')
+          .select('*')
+          .eq('alert_id', alertId)
+          .eq('contact_user_id', user.id)
+          .maybeSingle() // Use maybeSingle instead of single to handle null case
+
+        if (responseError) {
+          // If error is RLS-related (406), alert_responses might not exist yet or RLS is blocking
+          // This is OK - the contact hasn't acknowledged yet, or the response record doesn't exist yet
+          if (responseError.code === '42501' || responseError.message?.includes('row-level security')) {
+            console.log('[Alert] RLS blocking alert_responses query (non-critical, response may not exist yet):', responseError.message)
+          } else {
+            console.log('[Alert] No response record found yet (normal if not acknowledged):', responseError.message)
+          }
+        } else if (response?.acknowledged_at) {
+          setAcknowledged(true)
+          console.log('[Alert] ✅ User has already acknowledged this alert')
+        }
+      } catch (err: any) {
+        // Non-critical - response might not exist yet
+        console.log('[Alert] Could not check acknowledgment status (non-critical):', err?.message || err)
+      }
+
+      // Get initial location
+      if (alertData.location_lat && alertData.location_lng) {
+        setLocation({
+          id: 'initial',
+          user_id: alertData.user_id,
+          alert_id: alertId,
+          latitude: alertData.location_lat,
+          longitude: alertData.location_lng,
+          timestamp: alertData.triggered_at,
+          created_at: alertData.triggered_at,
+        })
+      }
+    } catch (error: any) {
+      console.error('[Alert] ❌ Failed to load alert:', {
+        error: error?.message || error,
+        code: error?.code,
+        alertId,
+        userId: user?.id
+      })
+      router.push('/dashboard')
+    } finally {
+      setLoading(false)
+    }
+  }, [user, alertId, router])
+
   useEffect(() => {
     if (!user) {
       router.push('/auth/login')
@@ -36,7 +164,7 @@ export default function AlertResponsePage() {
     }
 
     loadAlert()
-  }, [user, alertId, router])
+  }, [user, alertId, router, loadAlert])
 
   useEffect(() => {
     if (!alert || !user) return
@@ -69,11 +197,22 @@ export default function AlertResponsePage() {
       )
       .subscribe()
 
-    // Subscribe to alert responses
-    const unsubscribeResponses = subscribeToAlertResponses(alert.id, (response) => {
-      // Handle new responses (e.g., update UI to show who acknowledged)
-      console.log('New alert response:', response)
-    })
+    // Subscribe to alert responses (only if user has access)
+    // Note: This subscription might fail if RLS blocks access, which is OK
+    let unsubscribeResponses: (() => void) | null = null
+    try {
+      unsubscribeResponses = subscribeToAlertResponses(alert.id, (response) => {
+        // Handle new responses (e.g., update UI to show who acknowledged)
+        console.log('New alert response:', response)
+        // If this is the current user's response, update acknowledged state
+        if (response.contact_user_id === user.id && response.acknowledged_at) {
+          setAcknowledged(true)
+        }
+      })
+    } catch (err) {
+      // Subscription might fail if RLS blocks - that's OK, we'll still show the alert
+      console.log('[Alert] Could not subscribe to alert responses (non-critical)')
+    }
 
     // Play alert sound and vibrate device
     playAlertSound()
@@ -82,77 +221,12 @@ export default function AlertResponsePage() {
     return () => {
       unsubscribeLocation()
       unsubscribeAlert?.unsubscribe()
-      unsubscribeResponses()
+      if (unsubscribeResponses) {
+        unsubscribeResponses()
+      }
       hideEmergencyAlert()
     }
   }, [alert, user, router])
-
-  const loadAlert = async () => {
-    if (!user) return
-
-    const supabase = createClient()
-
-    try {
-      // Get alert - contact can see if they're in the contacts_notified array
-      const { data, error } = await supabase
-        .from('emergency_alerts')
-        .select('*')
-        .eq('id', alertId)
-        .single()
-
-      if (error) throw error
-
-      const alertData = data as EmergencyAlert
-
-      // Check if user is a contact
-      if (!alertData.contacts_notified.includes(user.id)) {
-        router.push('/dashboard')
-        return
-      }
-
-      setAlert(alertData)
-
-      // Show full-screen emergency alert with sound and vibration
-      showEmergencyAlert(alertId, {
-        address: alertData.address,
-        alert_type: alertData.alert_type,
-      })
-      
-      // Play sound and vibrate
-      playAlertSound()
-      vibrateDevice()
-
-      // Check if user has acknowledged
-      const { data: response } = await supabase
-        .from('alert_responses')
-        .select('*')
-        .eq('alert_id', alertId)
-        .eq('contact_user_id', user.id)
-        .single()
-
-      if (response?.acknowledged_at) {
-        setAcknowledged(true)
-      }
-
-      // Get initial location
-      if (alertData.location_lat && alertData.location_lng) {
-        setLocation({
-          id: 'initial',
-          user_id: alertData.user_id,
-          alert_id: alertId,
-          latitude: alertData.location_lat,
-          longitude: alertData.location_lng,
-          timestamp: alertData.triggered_at,
-          created_at: alertData.triggered_at,
-        })
-      }
-    } catch (error) {
-      console.error('Failed to load alert:', error)
-      router.push('/dashboard')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const loadLocationHistory = async () => {
     if (!alert || !user) return

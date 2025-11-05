@@ -77,17 +77,22 @@ class SubscriptionManager {
         .subscribe((status: any, err?: any) => {
           if (status === 'SUBSCRIBED') {
             console.log(`[Realtime] ✅ Successfully subscribed to ${config.channel} (${config.table}, event: ${config.event || 'UPDATE'})`)
+            console.log(`[Realtime] 🔗 Connection established - ready to receive events`)
           } else if (status === 'CHANNEL_ERROR') {
             console.error(`[Realtime] ❌ Channel error for ${config.channel}:`, err)
+            console.error(`[Realtime] 🔗 Connection failed - check Supabase Realtime configuration`)
             console.warn(`[Realtime] ⚠️ Realtime subscription failed - polling will handle alerts`)
             // Don't throw - polling will handle alerts
           } else if (status === 'TIMED_OUT') {
             console.error(`[Realtime] ⏱️ Subscription timed out for ${config.channel}`)
+            console.error(`[Realtime] 🔗 Connection timeout - check network and Supabase Realtime`)
             console.warn(`[Realtime] ⚠️ Realtime subscription timed out - polling will handle alerts`)
           } else if (status === 'CLOSED') {
             console.warn(`[Realtime] ⚠️ Subscription closed for ${config.channel}`)
+            console.warn(`[Realtime] 🔗 Connection closed - subscription may need to be re-established`)
           } else {
             console.log(`[Realtime] Subscription status for ${config.channel}: ${status}`, err ? `Error: ${err}` : '')
+            console.log(`[Realtime] 🔗 Connection status: ${status}`)
           }
         })
 
@@ -198,21 +203,31 @@ export function subscribeToLocationHistory(
 
 /**
  * Subscribe to alert responses for an emergency
+ * Note: This subscription may fail if RLS blocks access - that's OK
  */
 export function subscribeToAlertResponses(
   alertId: string,
   callback: (response: any) => void
 ): () => void {
   const manager = getSubscriptionManager()
-  return manager.subscribe({
-    channel: `alert-responses-${alertId}`,
-    table: 'alert_responses',
-    filter: `alert_id=eq.${alertId}`,
-    event: '*',
-    callback: (payload) => {
-      callback(payload.new || payload.old)
-    },
-  })
+  try {
+    return manager.subscribe({
+      channel: `alert-responses-${alertId}`,
+      table: 'alert_responses',
+      filter: `alert_id=eq.${alertId}`,
+      event: '*',
+      callback: (payload) => {
+        // Only process if payload has data
+        if (payload.new || payload.old) {
+          callback(payload.new || payload.old)
+        }
+      },
+    })
+  } catch (error) {
+    // If subscription fails (e.g., RLS blocks), return no-op unsubscribe
+    console.warn('[Realtime] Failed to subscribe to alert_responses (non-critical):', error)
+    return () => {}
+  }
 }
 
 /**

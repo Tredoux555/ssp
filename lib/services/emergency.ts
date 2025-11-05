@@ -245,26 +245,28 @@ export async function createEmergencyAlert(
 
       const alert = alertDataResult as EmergencyAlert
 
-      // Create alert_responses immediately for each contact
+      // Create alert_responses via server-side API (bypasses RLS)
       // This provides an alternative path for contacts to see alerts via RLS policy
       if (contactIds.length > 0) {
         try {
-          const responses = contactIds
-            .filter((id: any): id is string => !!id)
-            .map((contactId: string) => ({
-              alert_id: alert.id,
-              contact_user_id: contactId,
-            }))
+          const response = await fetch('/api/emergency/create-responses', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              alertId: alert.id,
+              contactIds: contactIds,
+            }),
+          })
 
-          const { error: responsesError } = await supabase
-            .from('alert_responses')
-            .insert(responses)
-
-          if (responsesError) {
-            console.error('[Alert] ⚠️ Failed to create alert_responses (non-critical):', responsesError)
+          if (!response.ok) {
+            const result = await response.json().catch(() => ({}))
+            console.warn('[Alert] ⚠️ Failed to create alert_responses (non-critical):', result.error || `HTTP ${response.status}`)
             // Don't throw - alert is already created, responses can be created later
           } else {
-            console.log(`[Alert] ✅ Created ${responses.length} alert_response(s) for contacts`)
+            const result = await response.json()
+            console.log(`[Alert] ✅ Created ${result.count || contactIds.length} alert_response(s) for contacts`)
           }
         } catch (responsesErr: any) {
           console.error('[Alert] ⚠️ Error creating alert_responses (non-critical):', responsesErr)
