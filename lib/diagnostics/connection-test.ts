@@ -389,7 +389,7 @@ export async function testContactRelationships(userId: string): Promise<Connecti
       }
     }
 
-    const verifiedContacts = contacts?.filter(c => c.contact_user_id) || []
+    const verifiedContacts = contacts?.filter((c: any) => c.contact_user_id) || []
 
     return {
       name: 'Contact Relationships',

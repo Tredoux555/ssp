@@ -61,7 +61,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     try {
       const admin = createAdminClient()
       // Query to check if emergency_alerts is in Realtime publication
-      const { data: pubData, error: pubError } = await admin.rpc('get_realtime_publication_tables', {}).catch(() => ({ data: null, error: null }))
+      let pubData = null
+      let pubError = null
+      try {
+        const result = await admin.rpc('get_realtime_publication_tables', {})
+        pubData = result.data
+        pubError = result.error
+      } catch (err) {
+        pubError = err as any
+      }
       
       // Alternative: Try to query pg_publication_tables directly
       const { data: tableData, error: tableError } = await admin
