@@ -21,7 +21,7 @@ const GoogleMapComponent = dynamic(
 export default function AlertResponsePage() {
   const params = useParams()
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const alertId = params.id as string
   const [alert, setAlert] = useState<EmergencyAlert | null>(null)
   const [location, setLocation] = useState<LocationHistory | null>(null)
@@ -158,13 +158,19 @@ export default function AlertResponsePage() {
   }, [user, alertId, router])
 
   useEffect(() => {
+    // Wait for auth to finish loading before checking user
+    if (authLoading) {
+      return // Still loading, wait
+    }
+
+    // Only redirect if auth loading is complete and no user
     if (!user) {
       router.push('/auth/login')
       return
     }
 
     loadAlert()
-  }, [user, alertId, router, loadAlert])
+  }, [user, alertId, router, loadAlert, authLoading])
 
   useEffect(() => {
     if (!alert || !user) return
