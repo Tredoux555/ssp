@@ -97,13 +97,11 @@ export default function AlertResponsePage() {
 
       setAlert(alertData)
 
-      // Show full-screen emergency alert with sound and vibration
-      showEmergencyAlert(alertId, {
-        address: alertData.address,
-        alert_type: alertData.alert_type,
-      })
+      // DON'T show overlay on alert page - the page itself is the alert view
+      // Hide any existing overlay when viewing alert page
+      hideEmergencyAlert()
       
-      // Play sound and vibrate
+      // Play sound and vibrate (keep these for alert notification)
       playAlertSound()
       vibrateDevice()
 

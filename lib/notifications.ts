@@ -163,7 +163,12 @@ export function showEmergencyAlert(alertId: string, alertData: any): void {
     margin-top: 1rem;
   `
   button.onclick = () => {
-    window.location.href = `/alert/${alertId}`
+    // Hide overlay before navigating to alert page
+    hideEmergencyAlert()
+    // Small delay to ensure overlay is removed before navigation
+    setTimeout(() => {
+      window.location.href = `/alert/${alertId}`
+    }, 50)
   }
 
   content.appendChild(title)
