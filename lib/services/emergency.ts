@@ -245,6 +245,33 @@ export async function createEmergencyAlert(
 
       const alert = alertDataResult as EmergencyAlert
 
+      // Create alert_responses immediately for each contact
+      // This provides an alternative path for contacts to see alerts via RLS policy
+      if (contactIds.length > 0) {
+        try {
+          const responses = contactIds
+            .filter((id: any): id is string => !!id)
+            .map((contactId: string) => ({
+              alert_id: alert.id,
+              contact_user_id: contactId,
+            }))
+
+          const { error: responsesError } = await supabase
+            .from('alert_responses')
+            .insert(responses)
+
+          if (responsesError) {
+            console.error('[Alert] ⚠️ Failed to create alert_responses (non-critical):', responsesError)
+            // Don't throw - alert is already created, responses can be created later
+          } else {
+            console.log(`[Alert] ✅ Created ${responses.length} alert_response(s) for contacts`)
+          }
+        } catch (responsesErr: any) {
+          console.error('[Alert] ⚠️ Error creating alert_responses (non-critical):', responsesErr)
+          // Don't throw - alert is already created
+        }
+      }
+
       // Contacts are already notified via contacts_notified in the INSERT above
       // This ensures Realtime subscriptions fire immediately on INSERT event
       // No need for separate UPDATE - contacts will receive the alert via Realtime
@@ -264,6 +291,53 @@ export async function createEmergencyAlert(
         console.log(`[Alert] 📋 Contacts to be notified (EXACT IDs):`, alert.contacts_notified)
         console.log(`[Alert] 🔔 Realtime subscriptions should fire immediately for these users.`)
         console.log(`[Alert] 📡 Polling will also check for this alert every 2 seconds on contact devices.`)
+        
+        // Send push notifications to all contacts (non-blocking, fire and forget)
+        // This ensures contacts receive push notifications even when app is closed
+        if (contactIds.length > 0) {
+          Promise.allSettled(
+            contactIds.map(async (contactUserId: string) => {
+              try {
+                // Call the push notification API endpoint
+                const response = await fetch('/api/push/send', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    userId: contactUserId,
+                    alertId: alert.id,
+                    title: '🚨 Emergency Alert',
+                    body: `Emergency alert from ${session.user.email || 'a contact'}`,
+                    data: {
+                      alertId: alert.id,
+                      alertType: alert.alert_type,
+                      address: alert.address,
+                    },
+                  }),
+                })
+                
+                if (!response.ok) {
+                  // Not an error - user might not have push enabled
+                  const result = await response.json()
+                  if (result.message?.includes('not enabled') || result.message?.includes('not configured')) {
+                    console.log(`[Push] User ${contactUserId} does not have push enabled`)
+                  } else {
+                    console.warn(`[Push] Failed to send push to user ${contactUserId}:`, result)
+                  }
+                } else {
+                  console.log(`[Push] ✅ Push notification sent to user ${contactUserId}`)
+                }
+              } catch (pushError) {
+                // Non-critical - alert is already created
+                console.warn(`[Push] Error sending push to user ${contactUserId}:`, pushError)
+              }
+            })
+          ).catch((err) => {
+            console.warn('[Push] Error in push notification batch:', err)
+            // Don't throw - push notifications are non-critical
+          })
+        }
         
         // Verify the alert was actually saved with contacts_notified
         const { data: verifyAlert, error: verifyError } = await supabase

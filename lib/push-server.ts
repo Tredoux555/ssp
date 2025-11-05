@@ -33,6 +33,16 @@ export async function sendPushNotification(
     return
   }
 
+  // Check if this is a native push token (stored with "native:" prefix)
+  if (subscription.endpoint.startsWith('native:')) {
+    // Native push notifications require FCM (Android) or APNS (iOS) setup
+    // For now, we'll skip native push and log a message
+    // TODO: Implement FCM/APNS push notification support for native platforms
+    console.log(`[Push] Native push token detected for user ${userId}, but native push not yet implemented`)
+    console.log(`[Push] Native push requires FCM (Android) or APNS (iOS) server setup`)
+    return
+  }
+
   // Prepare notification payload
   const notificationPayload = JSON.stringify({
     title: notification.title || 'Emergency Alert',
