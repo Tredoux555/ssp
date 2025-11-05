@@ -3,7 +3,7 @@
 import { createClient } from '@/lib/supabase'
 import { EmergencyAlert } from '@/types/database'
 
-const TIMEOUT_MS = 15000 // 15 seconds timeout
+const TIMEOUT_MS = 30000 // 30 seconds timeout
 
 /**
  * Create an emergency alert (client-side replacement for /api/emergency/create)
@@ -245,38 +245,7 @@ export async function createEmergencyAlert(
 
       const alert = alertDataResult as EmergencyAlert
 
-      // Create alert_responses via server-side API (bypasses RLS)
-      // This provides an alternative path for contacts to see alerts via RLS policy
-      if (contactIds.length > 0) {
-        try {
-          const response = await fetch('/api/emergency/create-responses', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              alertId: alert.id,
-              contactIds: contactIds,
-            }),
-          })
-
-          if (!response.ok) {
-            const result = await response.json().catch(() => ({}))
-            console.warn('[Alert] ⚠️ Failed to create alert_responses (non-critical):', result.error || `HTTP ${response.status}`)
-            // Don't throw - alert is already created, responses can be created later
-          } else {
-            const result = await response.json()
-            console.log(`[Alert] ✅ Created ${result.count || contactIds.length} alert_response(s) for contacts`)
-          }
-        } catch (responsesErr: any) {
-          console.error('[Alert] ⚠️ Error creating alert_responses (non-critical):', responsesErr)
-          // Don't throw - alert is already created
-        }
-      }
-
-      // Contacts are already notified via contacts_notified in the INSERT above
-      // This ensures Realtime subscriptions fire immediately on INSERT event
-      // No need for separate UPDATE - contacts will receive the alert via Realtime
+      // Log alert creation success immediately
       console.log(`[Alert] ✅ Alert created successfully:`, {
         alertId: alert.id,
         userId: alert.user_id,
@@ -285,64 +254,123 @@ export async function createEmergencyAlert(
         contactsNotifiedCount: alert.contacts_notified?.length || 0,
         contactIds: contactIds,
         contactIdsCount: contactIds.length,
-        alertJson: JSON.stringify(alert, null, 2)
       })
       
-      if (alert.contacts_notified && Array.isArray(alert.contacts_notified) && alert.contacts_notified.length > 0) {
-        console.log(`[Alert] ✅ Alert created with ${alert.contacts_notified.length} contact(s) in contacts_notified array.`)
-        console.log(`[Alert] 📋 Contacts to be notified (EXACT IDs):`, alert.contacts_notified)
-        console.log(`[Alert] 🔔 Realtime subscriptions should fire immediately for these users.`)
-        console.log(`[Alert] 📡 Polling will also check for this alert every 2 seconds on contact devices.`)
+      // Return alert immediately - post-creation steps will run asynchronously
+      // This prevents timeout issues while still completing all operations
+      return alert
+    })(),
+    new Promise<EmergencyAlert>((_, reject) => 
+      setTimeout(() => reject(new Error('Alert creation timed out after 30 seconds. Please check your connection and try again.')), TIMEOUT_MS)
+    )
+  ]).then(async (alert) => {
+    // Post-creation steps run asynchronously after alert is returned
+    // This prevents timeout issues while ensuring all operations complete
+    if (alert.contacts_notified && Array.isArray(alert.contacts_notified) && alert.contacts_notified.length > 0) {
+      console.log(`[Alert] ✅ Alert created with ${alert.contacts_notified.length} contact(s) in contacts_notified array.`)
+      console.log(`[Alert] 📋 Contacts to be notified (EXACT IDs):`, alert.contacts_notified)
+      console.log(`[Alert] 🔔 Realtime subscriptions should fire immediately for these users.`)
+      console.log(`[Alert] 📡 Polling will also check for this alert every 2 seconds on contact devices.`)
+      
+      // Get session for push notifications
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const contactIds = alert.contacts_notified || []
+      
+      // Create alert_responses via server-side API (bypasses RLS)
+      // This provides an alternative path for contacts to see alerts via RLS policy
+      if (contactIds.length > 0) {
+        // Retry logic for create-responses (handles timing issues)
+        let retries = 3
+        let delay = 500
+        while (retries > 0) {
+          try {
+            const response = await fetch('/api/emergency/create-responses', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                alertId: alert.id,
+                contactIds: contactIds,
+              }),
+            })
+
+            if (!response.ok) {
+              const result = await response.json().catch(() => ({}))
+              if (response.status === 404 && retries > 1) {
+                // Alert might not be visible yet, retry after delay
+                retries--
+                await new Promise(resolve => setTimeout(resolve, delay))
+                delay *= 2 // Exponential backoff
+                continue
+              }
+              console.warn('[Alert] ⚠️ Failed to create alert_responses (non-critical):', result.error || `HTTP ${response.status}`)
+            } else {
+              const result = await response.json()
+              console.log(`[Alert] ✅ Created ${result.count || contactIds.length} alert_response(s) for contacts`)
+            }
+            break // Success, exit retry loop
+          } catch (responsesErr: any) {
+            if (retries > 1) {
+              retries--
+              await new Promise(resolve => setTimeout(resolve, delay))
+              delay *= 2
+              continue
+            }
+            console.error('[Alert] ⚠️ Error creating alert_responses (non-critical):', responsesErr)
+            break
+          }
+        }
         
         // Send push notifications to all contacts (non-blocking, fire and forget)
         // This ensures contacts receive push notifications even when app is closed
-        if (contactIds.length > 0) {
-          Promise.allSettled(
-            contactIds.map(async (contactUserId: string) => {
-              try {
-                // Call the push notification API endpoint
-                const response = await fetch('/api/push/send', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    userId: contactUserId,
+        Promise.allSettled(
+          contactIds.map(async (contactUserId: string) => {
+            try {
+              // Call the push notification API endpoint
+              const response = await fetch('/api/push/send', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  userId: contactUserId,
+                  alertId: alert.id,
+                  title: '🚨 Emergency Alert',
+                  body: `Emergency alert from ${session?.user?.email || 'a contact'}`,
+                  data: {
                     alertId: alert.id,
-                    title: '🚨 Emergency Alert',
-                    body: `Emergency alert from ${session.user.email || 'a contact'}`,
-                    data: {
-                      alertId: alert.id,
-                      alertType: alert.alert_type,
-                      address: alert.address,
-                    },
-                  }),
-                })
-                
-                if (!response.ok) {
-                  // Not an error - user might not have push enabled
-                  const result = await response.json()
-                  if (result.message?.includes('not enabled') || result.message?.includes('not configured')) {
-                    console.log(`[Push] User ${contactUserId} does not have push enabled`)
-                  } else {
-                    console.warn(`[Push] Failed to send push to user ${contactUserId}:`, result)
-                  }
+                    alertType: alert.alert_type,
+                    address: alert.address,
+                  },
+                }),
+              })
+              
+              if (!response.ok) {
+                // Not an error - user might not have push enabled
+                const result = await response.json()
+                if (result.message?.includes('not enabled') || result.message?.includes('not configured')) {
+                  console.log(`[Push] User ${contactUserId} does not have push enabled`)
                 } else {
-                  console.log(`[Push] ✅ Push notification sent to user ${contactUserId}`)
+                  console.warn(`[Push] Failed to send push to user ${contactUserId}:`, result)
                 }
-              } catch (pushError) {
-                // Non-critical - alert is already created
-                console.warn(`[Push] Error sending push to user ${contactUserId}:`, pushError)
+              } else {
+                console.log(`[Push] ✅ Push notification sent to user ${contactUserId}`)
               }
-            })
-          ).catch((err) => {
-            console.warn('[Push] Error in push notification batch:', err)
-            // Don't throw - push notifications are non-critical
+            } catch (pushError) {
+              // Non-critical - alert is already created
+              console.warn(`[Push] Error sending push to user ${contactUserId}:`, pushError)
+            }
           })
-        }
+        ).catch((err) => {
+          console.warn('[Push] Error in push notification batch:', err)
+          // Don't throw - push notifications are non-critical
+        })
         
         // Verify the alert was actually saved with contacts_notified
-        const { data: verifyAlert, error: verifyError } = await supabase
+        const supabaseVerify = createClient()
+        const { data: verifyAlert, error: verifyError } = await supabaseVerify
           .from('emergency_alerts')
           .select('id, contacts_notified, status')
           .eq('id', alert.id)
@@ -361,15 +389,11 @@ export async function createEmergencyAlert(
       } else {
         console.warn('[Alert] ⚠️ Alert created but contacts_notified array is empty!')
         console.warn('[Alert] ⚠️ Make sure you have verified contacts with contact_user_id set.')
-        console.warn(`[Alert] ⚠️ Contact IDs that were supposed to be added:`, contactIds)
       }
-
-      return alert
-    })(),
-    new Promise<EmergencyAlert>((_, reject) => 
-      setTimeout(() => reject(new Error('Alert creation timed out after 15 seconds. Please check your connection and try again.')), TIMEOUT_MS)
-    )
-  ])
+    }
+    
+    return alert
+  })
 }
 
 /**

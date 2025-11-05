@@ -29,18 +29,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       )
     }
 
-    // Verify the user owns this alert
-    const { data: alert, error: alertError } = await supabase
-      .from('emergency_alerts')
-      .select('user_id')
-      .eq('id', alertId)
-      .single()
-
-    if (alertError || !alert) {
-      return NextResponse.json(
-        { error: 'Alert not found' },
-        { status: 404 }
-      )
+    // Verify the user owns this alert (with retry logic for timing issues)
+    let alert = null
+    let alertError = null
+    let retries = 3
+    let delay = 500
+    
+    while (retries > 0) {
+      const result = await supabase
+        .from('emergency_alerts')
+        .select('user_id')
+        .eq('id', alertId)
+        .single()
+      
+      alert = result.data
+      alertError = result.error
+      
+      if (alertError || !alert) {
+        if (retries > 1) {
+          // Retry after delay (alert might not be visible yet due to RLS)
+          retries--
+          await new Promise(resolve => setTimeout(resolve, delay))
+          delay *= 2 // Exponential backoff
+          continue
+        }
+        return NextResponse.json(
+          { error: 'Alert not found' },
+          { status: 404 }
+        )
+      }
+      break // Success
     }
 
     if (alert.user_id !== session.user.id) {
