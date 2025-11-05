@@ -393,9 +393,25 @@ export default function AlertResponsePage() {
             )}
           </Button>
           <Button
-            onClick={() => router.push('/dashboard')}
+            onClick={() => {
+              // Use location state if available, otherwise use alert location
+              const coords = location 
+                ? { lat: location.latitude, lng: location.longitude }
+                : (alert.location_lat && alert.location_lng 
+                    ? { lat: alert.location_lat, lng: alert.location_lng }
+                    : null)
+              
+              if (!coords) {
+                window.alert('Location not available for this alert')
+                return
+              }
+              
+              const url = `https://www.google.com/maps/dir/?api=1&destination=${coords.lat},${coords.lng}`
+              window.open(url, '_blank')
+            }}
             variant="secondary"
             className="flex-1"
+            disabled={!location && (!alert.location_lat || !alert.location_lng)}
           >
             <Navigation className="w-4 h-4 mr-2" />
             Get Directions
