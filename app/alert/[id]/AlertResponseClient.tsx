@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { createClient } from '@/lib/supabase'
@@ -28,6 +28,7 @@ export default function AlertResponsePage() {
   const [locationHistory, setLocationHistory] = useState<LocationHistory[]>([])
   const [acknowledged, setAcknowledged] = useState(false)
   const [loading, setLoading] = useState(true)
+  const subscriptionsSetupRef = useRef<string | null>(null) // Track which alert ID subscriptions are set up for
 
   const loadAlert = useCallback(async () => {
     if (!user) return
@@ -174,6 +175,13 @@ export default function AlertResponsePage() {
 
   useEffect(() => {
     if (!alert || !user) return
+    
+    // Only set up subscriptions once per alert ID
+    if (subscriptionsSetupRef.current === alert.id) {
+      return // Already set up for this alert ID
+    }
+    
+    subscriptionsSetupRef.current = alert.id
 
     // Subscribe to location updates
     const unsubscribeLocation = subscribeToLocationHistory(alert.id, (newLocation) => {
@@ -209,7 +217,9 @@ export default function AlertResponsePage() {
     try {
       unsubscribeResponses = subscribeToAlertResponses(alert.id, (response) => {
         // Handle new responses (e.g., update UI to show who acknowledged)
-        console.log('New alert response:', response)
+        if (process.env.NODE_ENV === 'development') {
+          console.log('New alert response:', response)
+        }
         // If this is the current user's response, update acknowledged state
         if (response.contact_user_id === user.id && response.acknowledged_at) {
           setAcknowledged(true)
@@ -217,7 +227,9 @@ export default function AlertResponsePage() {
       })
     } catch (err) {
       // Subscription might fail if RLS blocks - that's OK, we'll still show the alert
-      console.log('[Alert] Could not subscribe to alert responses (non-critical)')
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[Alert] Could not subscribe to alert responses (non-critical)')
+      }
     }
 
     // Play alert sound and vibrate device
@@ -225,6 +237,7 @@ export default function AlertResponsePage() {
     vibrateDevice()
 
     return () => {
+      subscriptionsSetupRef.current = null
       unsubscribeLocation()
       unsubscribeAlert?.unsubscribe()
       if (unsubscribeResponses) {
@@ -232,7 +245,9 @@ export default function AlertResponsePage() {
       }
       hideEmergencyAlert()
     }
-  }, [alert, user, router])
+    // Only depend on alert.id and user.id, not the full alert object
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alert?.id, user?.id, router])
 
   const loadLocationHistory = async () => {
     if (!alert || !user) return

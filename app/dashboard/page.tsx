@@ -121,21 +121,33 @@ export default function DashboardPage() {
   }, [user, authLoading, router])
 
   useEffect(() => {
-    if (user) {
-      console.log(`[Dashboard] Setting up subscription for user: ${user.id}`)
+    if (!user) return
+    
+    // Only run once per user - use user.id as the key to prevent re-running
+    const userId = user.id
+    console.log(`[Dashboard] Setting up subscription for user: ${userId}`)
+    
+    // Call these functions directly - they're stable useCallback functions
+    // Use setTimeout to defer these calls and prevent blocking the effect
+    setTimeout(() => {
       loadActiveEmergency()
       loadContactCount()
-      
-      let subscriptionActive = false
-      let pollingInterval: NodeJS.Timeout | null = null
-      let isPollingActive = false
-      let isPageVisible = true
-      let isNetworkOnline = navigator.onLine
+    }, 0)
+    
+    let subscriptionActive = false
+    let pollingInterval: NodeJS.Timeout | null = null
+    let isPollingActive = false
+    let isPageVisible = true
+    let isNetworkOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
+    let debounceTimeout: NodeJS.Timeout | null = null
+    let isMounted = true
       
       // Subscribe to emergency alerts for this contact user
       // This fires when someone in their contact list triggers an alert
-      const unsubscribe = subscribeToContactAlerts(user.id, (alert) => {
-        console.log(`[Dashboard] ✅ Emergency alert received for contact user ${user.id}:`, alert)
+      const unsubscribe = subscribeToContactAlerts(userId, (alert) => {
+        if (!isMounted) return // Prevent navigation if component unmounted
+        
+        console.log(`[Dashboard] ✅ Emergency alert received for contact user ${userId}:`, alert)
         subscriptionActive = true // Mark subscription as active when we receive an event
         
         // Show full-screen alert notification
@@ -151,161 +163,201 @@ export default function DashboardPage() {
       // Adaptive polling mechanism - adjusts frequency based on app state
       // Idle: 30 seconds (when no active emergencies)
       // Active: 5 seconds (when there's an active emergency or recent activity)
+      
+      // Determine polling interval based on active emergency state
+      // This function checks the current state each time (using ref to avoid closure issues)
+      const getPollingInterval = () => {
+        // Check current activeEmergency state dynamically via ref
+        // If there's an active emergency, poll more frequently
+        const currentEmergency = activeEmergencyRef.current
+        if (currentEmergency && currentEmergency.status === 'active') {
+          return 5000 // 5 seconds when active
+        }
+        return 30000 // 30 seconds when idle
+      }
+      
+      const pollForAlerts = async () => {
+        // Skip if tab is hidden or offline or polling is stopped
+        if (!isPollingActive || !isPageVisible || !isNetworkOnline) {
+          return
+        }
+        
+        try {
+          // Check if there are any active alerts where this user is in contacts_notified
+          const { createClient } = await import('@/lib/supabase')
+          const supabase = createClient()
+          if (!supabase) {
+            console.warn(`[Dashboard] ⚠️ Supabase client not available for polling`)
+            return
+          }
+          
+          // Check if user session is valid
+          const { data: { session } } = await supabase.auth.getSession()
+          if (!session) {
+            console.warn(`[Dashboard] ⚠️ No active session for polling`)
+            return
+          }
+          
+          // Query alerts - RLS will automatically filter to only alerts where user is in contacts_notified
+          const { data: allAlerts, error: queryError } = await supabase
+            .from('emergency_alerts')
+            .select('*')
+            .eq('status', 'active')
+            .order('triggered_at', { ascending: false })
+            .limit(20)
+          
+          // If error is RLS-related (42501) or CORS-related, it means RLS is blocking
+          // This is expected if the user has no alerts - don't spam the console
+          if (queryError) {
+            // Only log if it's not a CORS/RLS error (which is expected when user has no access)
+            if (queryError.code !== '42501' && !queryError.message?.includes('row-level security') && !queryError.message?.includes('access control') && !queryError.message?.includes('Load failed')) {
+              console.warn(`[Dashboard] ⚠️ Polling query error:`, queryError)
+            }
+            return
+          }
+          
+          if (allAlerts && allAlerts.length > 0) {
+            // Filter client-side: check if user.id is in contacts_notified array
+            const relevantAlerts = allAlerts.filter((alert: any) => {
+              if (!alert.contacts_notified || !Array.isArray(alert.contacts_notified)) {
+                return false
+              }
+              
+              // Normalize IDs for comparison (trim whitespace, ensure string)
+              const normalizedUserId = String(userId).trim()
+              const normalizedContacts = alert.contacts_notified.map((id: string) => String(id).trim())
+              
+              return normalizedContacts.includes(normalizedUserId)
+            })
+            
+            if (relevantAlerts.length > 0) {
+              const alert = relevantAlerts[0]
+              if (!isMounted) return // Prevent navigation if component unmounted
+              
+              console.log(`[Dashboard] 🚨 POLLING FOUND ALERT FOR USER ${userId}:`, {
+                alertId: alert.id,
+                alertUserId: alert.user_id,
+                contactsNotified: alert.contacts_notified,
+                userIsInContacts: true
+              })
+              
+              // Check if we're already on this alert page
+              const currentPath = window.location.pathname
+              if (!currentPath.includes(`/alert/${alert.id}`) && !currentPath.includes(`/emergency/active/${alert.id}`)) {
+                console.log(`[Dashboard] 🚨 Navigating to alert page via polling: ${alert.id}`)
+                showEmergencyAlert(alert.id, {
+                  address: alert.address,
+                  alert_type: alert.alert_type,
+                })
+                router.push(`/alert/${alert.id}`)
+              }
+            }
+          }
+        } catch (error) {
+          console.warn(`[Dashboard] ⚠️ Polling error:`, error)
+        }
+      }
+      
       const startPolling = () => {
-        if (isPollingActive) return // Already polling
-        if (!isPageVisible || !isNetworkOnline) return // Pause if tab hidden or offline
+        // Already polling - don't start again
+        if (pollingInterval) {
+          return
+        }
+        
+        // Don't start if tab hidden or offline
+        if (!isPageVisible || !isNetworkOnline) {
+          return
+        }
         
         isPollingActive = true
         
-        const pollForAlerts = async () => {
-          // Skip if tab is hidden or offline
-          if (!isPageVisible || !isNetworkOnline) {
-            console.log(`[Dashboard] ⏸️ Polling paused (visible: ${isPageVisible}, online: ${isNetworkOnline})`)
-            return
-          }
-          
-          try {
-            // Check if there are any active alerts where this user is in contacts_notified
-            const { createClient } = await import('@/lib/supabase')
-            const supabase = createClient()
-            if (!supabase) {
-              console.warn(`[Dashboard] ⚠️ Supabase client not available for polling`)
-              return
-            }
-            
-            // Check if user session is valid
-            const { data: { session } } = await supabase.auth.getSession()
-            if (!session) {
-              console.warn(`[Dashboard] ⚠️ No active session for polling`)
-              return
-            }
-            
-            // Query alerts - RLS will automatically filter to only alerts where user is in contacts_notified
-            const { data: allAlerts, error: queryError } = await supabase
-              .from('emergency_alerts')
-              .select('*')
-              .eq('status', 'active')
-              .order('triggered_at', { ascending: false })
-              .limit(20)
-            
-            // If error is RLS-related (42501) or CORS-related, it means RLS is blocking
-            // This is expected if the user has no alerts - don't spam the console
-            if (queryError) {
-              // Only log if it's not a CORS/RLS error (which is expected when user has no access)
-              if (queryError.code !== '42501' && !queryError.message?.includes('row-level security') && !queryError.message?.includes('access control') && !queryError.message?.includes('Load failed')) {
-                console.warn(`[Dashboard] ⚠️ Polling query error:`, queryError)
-              }
-              return
-            }
-            
-            if (allAlerts && allAlerts.length > 0) {
-              // Filter client-side: check if user.id is in contacts_notified array
-              const relevantAlerts = allAlerts.filter((alert: any) => {
-                if (!alert.contacts_notified || !Array.isArray(alert.contacts_notified)) {
-                  return false
-                }
-                
-                // Normalize IDs for comparison (trim whitespace, ensure string)
-                const normalizedUserId = String(user.id).trim()
-                const normalizedContacts = alert.contacts_notified.map((id: string) => String(id).trim())
-                
-                return normalizedContacts.includes(normalizedUserId)
-              })
-              
-              if (relevantAlerts.length > 0) {
-                const alert = relevantAlerts[0]
-                console.log(`[Dashboard] 🚨 POLLING FOUND ALERT FOR USER ${user.id}:`, {
-                  alertId: alert.id,
-                  alertUserId: alert.user_id,
-                  contactsNotified: alert.contacts_notified,
-                  userIsInContacts: true
-                })
-                
-                // Check if we're already on this alert page
-                const currentPath = window.location.pathname
-                if (!currentPath.includes(`/alert/${alert.id}`) && !currentPath.includes(`/emergency/active/${alert.id}`)) {
-                  console.log(`[Dashboard] 🚨 Navigating to alert page via polling: ${alert.id}`)
-                  showEmergencyAlert(alert.id, {
-                    address: alert.address,
-                    alert_type: alert.alert_type,
-                  })
-                  router.push(`/alert/${alert.id}`)
-                }
-              }
-            }
-          } catch (error) {
-            console.warn(`[Dashboard] ⚠️ Polling error:`, error)
-          }
-        }
-        
-        // Determine polling interval based on active emergency state
-        // This function checks the current state each time (using ref to avoid closure issues)
-        const getPollingInterval = () => {
-          // Check current activeEmergency state dynamically via ref
-          // If there's an active emergency, poll more frequently
-          const currentEmergency = activeEmergencyRef.current
-          if (currentEmergency && currentEmergency.status === 'active') {
-            return 5000 // 5 seconds when active
-          }
-          return 30000 // 30 seconds when idle
-        }
-        
-        // Start polling with adaptive interval
-        const scheduleNextPoll = () => {
-          if (!isPollingActive) return
-          if (!isPageVisible || !isNetworkOnline) {
-            // Reschedule check when page becomes visible or network comes online
-            return
-          }
-          
-          // Get current interval (checks activeEmergency state each time)
-          const interval = getPollingInterval()
-          pollingInterval = setTimeout(() => {
-            pollForAlerts()
-            scheduleNextPoll() // Schedule next poll with updated interval
-          }, interval)
-        }
-        
-        // Initial poll
+        // Start with initial poll
         pollForAlerts()
-        scheduleNextPoll()
         
-        console.log(`[Dashboard] 📡 Started adaptive polling (initial interval: ${getPollingInterval()}ms)`)
+        // Set up interval with adaptive interval
+        // Use shortest interval (5s) and check state on each cycle
+        // This allows immediate adaptation without recursion
+        const baseInterval = 5000 // Check every 5 seconds minimum
+        
+        let lastCheck = Date.now()
+        
+        pollingInterval = setInterval(() => {
+          // Check if polling should continue
+          if (!isPollingActive || !isPageVisible || !isNetworkOnline) {
+            return
+          }
+          
+          const now = Date.now()
+          const timeSinceLastCheck = now - lastCheck
+          const desiredInterval = getPollingInterval()
+          
+          // Only poll if enough time has passed based on desired interval
+          if (timeSinceLastCheck >= desiredInterval) {
+            lastCheck = now
+            pollForAlerts()
+          }
+        }, baseInterval)
+        
+        console.log(`[Dashboard] 📡 Started adaptive polling (checks every ${baseInterval}ms, adapts to ${getPollingInterval()}ms)`)
       }
       
       const stopPolling = () => {
         isPollingActive = false
         if (pollingInterval) {
-          clearTimeout(pollingInterval)
+          clearInterval(pollingInterval)
           pollingInterval = null
         }
         console.log(`[Dashboard] ⏸️ Stopped polling`)
       }
       
       // Page Visibility API - pause polling when tab is hidden
+      // Debounce to prevent rapid start/stop cycles (500ms)
       const handleVisibilityChange = () => {
-        isPageVisible = !document.hidden
-        if (isPageVisible && isNetworkOnline) {
-          console.log(`[Dashboard] 👁️ Page visible - resuming polling`)
-          if (!isPollingActive) {
-            startPolling()
-          }
-        } else {
-          console.log(`[Dashboard] 👁️ Page hidden - pausing polling`)
-          stopPolling()
+        // Clear existing debounce timeout
+        if (debounceTimeout) {
+          clearTimeout(debounceTimeout)
         }
+        
+        debounceTimeout = setTimeout(() => {
+          isPageVisible = !document.hidden
+          if (isPageVisible && isNetworkOnline) {
+            console.log(`[Dashboard] 👁️ Page visible - resuming polling`)
+            if (!pollingInterval) {
+              startPolling()
+            }
+          } else {
+            console.log(`[Dashboard] 👁️ Page hidden - pausing polling`)
+            stopPolling()
+          }
+          debounceTimeout = null
+        }, 500)
       }
       
       // Network state monitoring
+      // Debounce to prevent rapid start/stop cycles (500ms)
       const handleOnline = () => {
-        isNetworkOnline = true
-        console.log(`[Dashboard] ✅ Network online - resuming polling`)
-        if (!isPollingActive && isPageVisible) {
-          startPolling()
+        // Clear existing debounce timeout
+        if (debounceTimeout) {
+          clearTimeout(debounceTimeout)
         }
+        
+        debounceTimeout = setTimeout(() => {
+          isNetworkOnline = true
+          console.log(`[Dashboard] ✅ Network online - resuming polling`)
+          if (!pollingInterval && isPageVisible) {
+            startPolling()
+          }
+          debounceTimeout = null
+        }, 500)
       }
       
       const handleOffline = () => {
+        // Clear existing debounce timeout
+        if (debounceTimeout) {
+          clearTimeout(debounceTimeout)
+        }
+        
+        // Stop immediately on offline (no debounce needed)
         isNetworkOnline = false
         console.log(`[Dashboard] ⚠️ Network offline - pausing polling`)
         stopPolling()
@@ -322,16 +374,25 @@ export default function DashboardPage() {
       }
       
       return () => {
-        console.log(`[Dashboard] Cleaning up subscription for user: ${user.id}`)
+        isMounted = false
+        console.log(`[Dashboard] Cleaning up subscription for user: ${userId}`)
         unsubscribe()
         hideEmergencyAlert()
         stopPolling()
+        
+        // Clear debounce timeout
+        if (debounceTimeout) {
+          clearTimeout(debounceTimeout)
+          debounceTimeout = null
+        }
+        
         document.removeEventListener('visibilitychange', handleVisibilityChange)
         window.removeEventListener('online', handleOnline)
         window.removeEventListener('offline', handleOffline)
       }
-    }
-  }, [user, router, loadActiveEmergency, loadContactCount])
+    // Only depend on user.id to prevent re-running when user object reference changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id])
 
   const handleEmergencyButton = async () => {
     if (!user) return

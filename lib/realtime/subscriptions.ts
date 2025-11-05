@@ -23,9 +23,17 @@ class SubscriptionManager {
   private subscriptions: Map<string, ActiveSubscription> = new Map()
   private supabase = createClient()
   private reconnectAttempts: Map<string, number> = new Map()
+  private reconnectTimeouts: Map<string, NodeJS.Timeout> = new Map()
+  private reconnecting: Map<string, boolean> = new Map()
   private healthCheckIntervals: Map<string, NodeJS.Timeout> = new Map()
+  private lastReconnectAttempt: Map<string, number> = new Map() // Timestamp of last reconnection attempt
+  private circuitOpen: Map<string, number> = new Map() // Timestamp when circuit opened (max attempts reached)
+  private reconnectHistory: Map<string, number[]> = new Map() // Track reconnection timestamps for rate limiting
+  private cooldownPeriods: Map<string, number> = new Map() // Per-subscription cooldown periods
   private maxReconnectAttempts = 5
   private reconnectDelays = [1000, 2000, 5000, 10000, 30000] // Exponential backoff
+  private defaultCooldownPeriod = 5000 // 5 seconds cooldown after failed reconnection
+  private circuitOpenDuration = 300000 // 5 minutes before allowing reconnection after max attempts
 
   subscribe(config: SubscriptionConfig): () => void {
     const key = `${config.channel}-${config.table}-${config.filter || ''}`
@@ -63,14 +71,17 @@ class SubscriptionManager {
           },
           (payload: any) => {
             try {
-              console.log(`[Realtime] Event received: ${payload.eventType || 'unknown'} on ${config.table}`, {
-                channel: config.channel,
-                event: config.event,
-                table: config.table,
-                filter: config.filter,
-                hasNew: !!payload.new,
-                hasOld: !!payload.old,
-              })
+              // Only log events in development to reduce noise
+              if (process.env.NODE_ENV === 'development') {
+                console.log(`[Realtime] Event received: ${payload.eventType || 'unknown'} on ${config.table}`, {
+                  channel: config.channel,
+                  event: config.event,
+                  table: config.table,
+                  filter: config.filter,
+                  hasNew: !!payload.new,
+                  hasOld: !!payload.old,
+                })
+              }
               config.callback(payload)
             } catch (callbackError) {
               console.error(`[Realtime] ❌ Error in callback for ${config.channel}:`, callbackError)
@@ -80,62 +91,88 @@ class SubscriptionManager {
         )
         .subscribe((status: any, err?: any) => {
           if (status === 'SUBSCRIBED') {
-            // Reset reconnect attempts on success
+            // Reset reconnect attempts, clear circuit, cooldown, and clear reconnecting flag on success
             this.reconnectAttempts.delete(key)
-            console.log(`[Realtime] ✅ Successfully subscribed to ${config.channel} (${config.table}, event: ${config.event || 'UPDATE'})`)
-            console.log(`[Realtime] 🔗 Connection established - ready to receive events`)
-          } else if (status === 'CHANNEL_ERROR') {
-            console.error(`[Realtime] ❌ Channel error for ${config.channel}:`, err)
-            console.error(`[Realtime] 🔗 Connection failed - check Supabase Realtime configuration`)
-            console.warn(`[Realtime] ⚠️ Realtime subscription failed - attempting reconnection...`)
-            // Attempt reconnection
-            setTimeout(() => this.reconnectSubscription(key, config), 1000)
-          } else if (status === 'TIMED_OUT') {
-            console.error(`[Realtime] ⏱️ Subscription timed out for ${config.channel}`)
-            console.error(`[Realtime] 🔗 Connection timeout - check network and Supabase Realtime`)
-            console.warn(`[Realtime] ⚠️ Realtime subscription timed out - attempting reconnection...`)
-            // Attempt reconnection
-            setTimeout(() => this.reconnectSubscription(key, config), 1000)
-          } else if (status === 'CLOSED') {
-            console.warn(`[Realtime] ⚠️ Subscription closed for ${config.channel}`)
-            console.warn(`[Realtime] 🔗 Connection closed - attempting reconnection...`)
-            // Attempt reconnection
-            setTimeout(() => this.reconnectSubscription(key, config), 1000)
+            this.circuitOpen.delete(key)
+            this.reconnecting.delete(key)
+            this.lastReconnectAttempt.delete(key)
+            this.reconnectHistory.delete(key)
+            this.cooldownPeriods.delete(key)
+            
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[Realtime] ✅ Successfully subscribed to ${config.channel} (${config.table}, event: ${config.event || 'UPDATE'})`)
+              console.log(`[Realtime] 🔗 Connection established - ready to receive events`)
+            }
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            // Only attempt reconnection if subscription still exists, not already reconnecting, not in cooldown, and circuit not open
+            if (this.subscriptions.has(key) && !this.reconnecting.get(key) && !this.isInCooldown(key) && !this.isCircuitOpen(key)) {
+              const statusMsg = status === 'CHANNEL_ERROR' ? 'Channel error' : 
+                               status === 'TIMED_OUT' ? 'Subscription timed out' : 
+                               'Subscription closed'
+              
+              // Only log in development to reduce noise
+              if (process.env.NODE_ENV === 'development') {
+                console.warn(`[Realtime] ⚠️ ${statusMsg} for ${config.channel} - attempting reconnection...`)
+              }
+              
+              // Clear existing reconnection timeout if any
+              const existingTimeout = this.reconnectTimeouts.get(key)
+              if (existingTimeout) {
+                clearTimeout(existingTimeout)
+                this.reconnectTimeouts.delete(key)
+              }
+              
+              // Debounce reconnection attempt (1 second)
+              const reconnectTimeout = setTimeout(() => {
+                // Double-check subscription still exists, not reconnecting, not in cooldown, circuit not open
+                if (this.subscriptions.has(key) && !this.reconnecting.get(key) && !this.isInCooldown(key) && !this.isCircuitOpen(key)) {
+                  this.reconnectSubscription(key, config)
+                }
+                this.reconnectTimeouts.delete(key)
+              }, 1000)
+              
+              this.reconnectTimeouts.set(key, reconnectTimeout)
+            }
           } else {
-            console.log(`[Realtime] Subscription status for ${config.channel}: ${status}`, err ? `Error: ${err}` : '')
-            console.log(`[Realtime] 🔗 Connection status: ${status}`)
+            // Only log non-successful statuses in development
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[Realtime] Subscription status for ${config.channel}: ${status}`, err ? `Error: ${err}` : '')
+            }
           }
         })
 
       this.subscriptions.set(key, { channel, config })
 
-      // Log subscription health check
+      // Start periodic health monitoring (reduced frequency and less logging)
       setTimeout(() => {
         const subscription = this.subscriptions.get(key)
         if (subscription) {
-          const channelState = (subscription.channel as any).state
-          console.log(`[Realtime] Subscription health check for ${config.channel}:`, {
-            state: channelState,
-            key,
-            table: config.table
-          })
-          
-          // Start periodic health monitoring
+          // Start periodic health monitoring (reduced from 30s to 60s)
           const healthCheckInterval = setInterval(() => {
             const currentSubscription = this.subscriptions.get(key)
             if (currentSubscription) {
+              // Skip health check if reconnecting, in cooldown, or circuit open
+              if (this.reconnecting.get(key) || this.isInCooldown(key) || this.isCircuitOpen(key)) {
+                return
+              }
+              
               const currentState = (currentSubscription.channel as any).state
-              if (currentState !== 'joined' && currentState !== 'joining') {
-                console.warn(`[Realtime] ⚠️ Channel ${config.channel} is not connected (state: ${currentState}), attempting reconnection...`)
-                clearInterval(healthCheckInterval)
-                this.healthCheckIntervals.delete(key)
-                this.reconnectSubscription(key, config)
+              // Only trigger reconnection for truly disconnected states, not during normal connection states
+              if (currentState === 'closed' || currentState === 'errored' || currentState === 'timedout') {
+                // Only attempt reconnection if not already reconnecting, not in cooldown, circuit not open
+                if (!this.reconnecting.get(key) && !this.isInCooldown(key) && !this.isCircuitOpen(key)) {
+                  if (process.env.NODE_ENV === 'development') {
+                    console.warn(`[Realtime] ⚠️ Channel ${config.channel} is not connected (state: ${currentState}), attempting reconnection...`)
+                  }
+                  this.reconnectSubscription(key, config)
+                }
               }
             } else {
+              // Subscription no longer exists, clean up
               clearInterval(healthCheckInterval)
               this.healthCheckIntervals.delete(key)
             }
-          }, 30000) // Check every 30 seconds
+          }, 60000) // Check every 60 seconds (reduced frequency)
           
           this.healthCheckIntervals.set(key, healthCheckInterval)
         }
@@ -166,8 +203,20 @@ class SubscriptionManager {
       this.healthCheckIntervals.delete(key)
     }
     
-    // Clear reconnect attempts
+    // Clear reconnection timeout if any
+    const reconnectTimeout = this.reconnectTimeouts.get(key)
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout)
+      this.reconnectTimeouts.delete(key)
+    }
+    
+    // Clear reconnect attempts, reconnecting flag, cooldown, circuit, and history
     this.reconnectAttempts.delete(key)
+    this.reconnecting.delete(key)
+    this.lastReconnectAttempt.delete(key)
+    this.circuitOpen.delete(key)
+    this.reconnectHistory.delete(key)
+    this.cooldownPeriods.delete(key)
   }
 
   unsubscribeAll(): void {
@@ -187,26 +236,155 @@ class SubscriptionManager {
     this.healthCheckIntervals.forEach((interval) => clearInterval(interval))
     this.healthCheckIntervals.clear()
     
-    // Clear all reconnect attempts
+    // Clear all reconnection timeouts
+    this.reconnectTimeouts.forEach((timeout) => clearTimeout(timeout))
+    this.reconnectTimeouts.clear()
+    
+    // Clear all reconnect attempts, reconnecting flags, cooldowns, circuits, and history
     this.reconnectAttempts.clear()
+    this.reconnecting.clear()
+    this.lastReconnectAttempt.clear()
+    this.circuitOpen.clear()
+    this.reconnectHistory.clear()
+    this.cooldownPeriods.clear()
     
     this.subscriptions.clear()
   }
 
+  private isInCooldown(key: string): boolean {
+    const lastAttempt = this.lastReconnectAttempt.get(key)
+    if (!lastAttempt) return false
+    
+    const cooldownPeriod = this.cooldownPeriods.get(key) || this.defaultCooldownPeriod
+    const now = Date.now()
+    const timeSinceLastAttempt = now - lastAttempt
+    return timeSinceLastAttempt < cooldownPeriod
+  }
+  
+  private isCircuitOpen(key: string): boolean {
+    const circuitOpenTime = this.circuitOpen.get(key)
+    if (!circuitOpenTime) return false
+    
+    const now = Date.now()
+    const timeSinceCircuitOpened = now - circuitOpenTime
+    
+    // If circuit has been open for more than circuitOpenDuration, allow reconnection
+    if (timeSinceCircuitOpened > this.circuitOpenDuration) {
+      this.circuitOpen.delete(key)
+      this.reconnectAttempts.delete(key) // Reset attempts after circuit cooldown
+      return false
+    }
+    
+    return true
+  }
+  
+  private checkRateLimit(key: string): boolean {
+    const now = Date.now()
+    const history = this.reconnectHistory.get(key) || []
+    
+    // Remove attempts older than 5 minutes
+    const recentHistory = history.filter(timestamp => now - timestamp < 300000)
+    
+    // Check if more than 10 attempts in last 5 minutes
+    if (recentHistory.length >= 10) {
+      return true // Rate limit exceeded
+    }
+    
+    // Check if more than 3 attempts in last minute
+    const lastMinute = recentHistory.filter(timestamp => now - timestamp < 60000)
+    if (lastMinute.length >= 3) {
+      return true // Rate limit exceeded
+    }
+    
+    // Add current attempt timestamp
+    recentHistory.push(now)
+    this.reconnectHistory.set(key, recentHistory)
+    
+    return false // Within rate limit
+  }
+  
   private reconnectSubscription(key: string, config: SubscriptionConfig): void {
+    // Prevent concurrent reconnection attempts
+    if (this.reconnecting.get(key)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[Realtime] ⏭️ Already reconnecting ${key}, skipping duplicate attempt`)
+      }
+      return
+    }
+    
+    // Check if subscription still exists
+    if (!this.subscriptions.has(key)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[Realtime] ⏭️ Subscription ${key} no longer exists, skipping reconnection`)
+      }
+      return
+    }
+    
+    // Check if in cooldown
+    if (this.isInCooldown(key)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[Realtime] ⏭️ Subscription ${key} is in cooldown, skipping reconnection`)
+      }
+      return
+    }
+    
+    // Check if circuit is open
+    if (this.isCircuitOpen(key)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[Realtime] ⏭️ Circuit open for ${key}, skipping reconnection`)
+      }
+      return
+    }
+    
+    // Check rate limit
+    if (this.checkRateLimit(key)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(`[Realtime] ⚠️ Rate limit exceeded for ${key}, increasing cooldown`)
+      }
+      // Increase cooldown to 30 seconds if rate limit exceeded
+      this.lastReconnectAttempt.set(key, Date.now())
+      this.cooldownPeriods.set(key, 30000)
+      return
+    }
+    
+    // Reset cooldown period to default for this subscription
+    this.cooldownPeriods.set(key, this.defaultCooldownPeriod)
+    
     const attempts = this.reconnectAttempts.get(key) || 0
     
     if (attempts >= this.maxReconnectAttempts) {
-      console.error(`[Realtime] ❌ Max reconnection attempts (${this.maxReconnectAttempts}) reached for ${key} - polling will handle alerts`)
+      // Open circuit breaker - stop reconnecting for 5 minutes
+      this.circuitOpen.set(key, Date.now())
+      if (process.env.NODE_ENV === 'development') {
+        console.error(`[Realtime] ❌ Max reconnection attempts (${this.maxReconnectAttempts}) reached for ${key} - circuit opened for ${this.circuitOpenDuration / 1000}s`)
+      }
+      this.reconnecting.delete(key)
       return
     }
+    
+    // Mark as reconnecting and record attempt time
+    this.reconnecting.set(key, true)
+    this.lastReconnectAttempt.set(key, Date.now())
     
     const delay = this.reconnectDelays[attempts] || 30000
     this.reconnectAttempts.set(key, attempts + 1)
     
-    console.log(`[Realtime] 🔄 Attempting to reconnect ${key} (attempt ${attempts + 1}/${this.maxReconnectAttempts}) in ${delay}ms`)
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[Realtime] 🔄 Attempting to reconnect ${key} (attempt ${attempts + 1}/${this.maxReconnectAttempts}) in ${delay}ms`)
+    }
     
-    setTimeout(() => {
+    // Clear any existing reconnection timeout
+    const existingTimeout = this.reconnectTimeouts.get(key)
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+      this.reconnectTimeouts.delete(key)
+    }
+    
+    const reconnectTimeout = setTimeout(() => {
+      // Clear reconnecting flag
+      this.reconnecting.delete(key)
+      this.reconnectTimeouts.delete(key)
+      
       // Only reconnect if subscription still exists
       if (this.subscriptions.has(key)) {
         // Unsubscribe old channel
@@ -229,8 +407,13 @@ class SubscriptionManager {
         
         // Resubscribe
         this.subscribe(config)
+      } else {
+        // Subscription was removed, clear reconnecting flag
+        this.reconnecting.delete(key)
       }
     }, delay)
+    
+    this.reconnectTimeouts.set(key, reconnectTimeout)
   }
 
   getActiveSubscriptions(): string[] {
@@ -327,10 +510,9 @@ export function subscribeToContactAlerts(
   contactUserId: string,
   callback: (alert: any) => void
 ): () => void {
-  console.log(`[Realtime] 🔔 Setting up contact alert subscription for user: ${contactUserId}`)
-  console.log(`[Realtime] 📡 Channel: contact-alerts-${contactUserId}`)
-  console.log(`[Realtime] 📋 Table: emergency_alerts`)
-  console.log(`[Realtime] 📨 Event: * (all events)`)
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[Realtime] 🔔 Setting up contact alert subscription for user: ${contactUserId}`)
+  }
   
   const manager = getSubscriptionManager()
   const unsubscribe = manager.subscribe({
@@ -340,17 +522,6 @@ export function subscribeToContactAlerts(
     callback: (payload) => {
       try {
         const alert = payload.new || payload.old
-        console.log(`[Realtime] 📨 Contact alert event received for user ${contactUserId}:`, {
-          eventType: payload.eventType,
-          alertId: alert?.id,
-          status: alert?.status,
-          contactsNotified: alert?.contacts_notified,
-          contactsNotifiedType: Array.isArray(alert?.contacts_notified) ? 'array' : typeof alert?.contacts_notified,
-          contactsNotifiedLength: Array.isArray(alert?.contacts_notified) ? alert.contacts_notified.length : 'N/A',
-          alertUserId: alert?.user_id,
-          hasNew: !!payload.new,
-          hasOld: !!payload.old,
-        })
         
         // Only fire callback if this contact user is in the contacts_notified array
         if (alert && alert.contacts_notified && Array.isArray(alert.contacts_notified)) {
@@ -361,40 +532,17 @@ export function subscribeToContactAlerts(
             
             const isNotified = normalizedContactsNotified.some((id: string) => id === normalizedContactUserId)
             
-            console.log(`[Realtime] 🔍 Checking if user ${contactUserId} is notified:`, {
-              isNotified,
-              contactUserId: normalizedContactUserId,
-              contactsNotified: normalizedContactsNotified,
-              contactsNotifiedRaw: alert.contacts_notified,
-              alertStatus: alert.status,
-              alertUserId: alert.user_id,
-              matchFound: normalizedContactsNotified.includes(normalizedContactUserId),
-            })
-            
             // Check if this is a new alert being created or updated to active status
             if (isNotified && alert.status === 'active') {
-              console.log(`[Realtime] ✅ TRIGGERING CALLBACK for contact ${contactUserId} - Alert ${alert.id}`)
-              console.log(`[Realtime] 🚨 ALERT SHOULD NOW APPEAR ON DEVICE`)
+              if (process.env.NODE_ENV === 'development') {
+                console.log(`[Realtime] ✅ TRIGGERING CALLBACK for contact ${contactUserId} - Alert ${alert.id}`)
+              }
               callback(alert)
-            } else {
-              console.log(`[Realtime] ⏭️ Skipping callback:`, {
-                isNotified,
-                status: alert.status,
-                reason: !isNotified ? 'user not in contacts_notified' : `status is ${alert.status} (not 'active')`
-              })
             }
           } catch (processingError) {
             console.error(`[Realtime] ❌ Error processing alert for user ${contactUserId}:`, processingError)
             // Don't rethrow - prevent breaking the subscription
           }
-        } else {
-          console.log(`[Realtime] ⚠️ No contacts_notified array or invalid alert structure:`, {
-            hasAlert: !!alert,
-            hasContactsNotified: !!alert?.contacts_notified,
-            isArray: Array.isArray(alert?.contacts_notified),
-            contactsNotifiedType: typeof alert?.contacts_notified,
-            contactsNotifiedValue: alert?.contacts_notified
-          })
         }
       } catch (callbackError) {
         console.error(`[Realtime] ❌ Error in contact alert callback for user ${contactUserId}:`, callbackError)
@@ -403,7 +551,9 @@ export function subscribeToContactAlerts(
     },
   })
   
-  console.log(`[Realtime] ✅ Contact alert subscription setup complete for user: ${contactUserId}`)
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[Realtime] ✅ Contact alert subscription setup complete for user: ${contactUserId}`)
+  }
   return unsubscribe
 }
 

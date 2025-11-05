@@ -81,12 +81,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     })()
 
-    // Add 10s timeout - never throw, always return null on timeout
+    // Add 5s timeout - never throw, always return null on timeout
+    // Reduced from 10s to prevent hanging
     const timeoutPromise = new Promise<UserProfile | null>((resolve) => {
       setTimeout(() => {
-        console.warn('Profile fetch timed out after 10s - returning null')
+        // Only log warning in development to reduce noise
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('Profile fetch timed out after 5s - returning null')
+        }
         resolve(null)
-      }, 10000)
+      }, 5000)
     })
 
     try {
