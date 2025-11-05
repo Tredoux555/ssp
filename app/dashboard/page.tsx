@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { getActiveEmergency, getEmergencyContacts } from '@/lib/emergency'
@@ -210,9 +210,9 @@ export default function DashboardPage() {
         }
       }
     }
-  }, [user, router])
+  }, [user, router, loadActiveEmergency, loadContactCount])
 
-  const loadActiveEmergency = async () => {
+  const loadActiveEmergency = useCallback(async () => {
     if (!user) return
 
     try {
@@ -238,9 +238,9 @@ export default function DashboardPage() {
       // Emergency might not exist, which is fine
       setActiveEmergency(null)
     }
-  }
+  }, [user, router])
 
-  const loadContactCount = async () => {
+  const loadContactCount = useCallback(async () => {
     if (!user) return
 
     try {
@@ -251,7 +251,7 @@ export default function DashboardPage() {
       // Set to 0 on error so UI doesn't break
       setContactCount(0)
     }
-  }
+  }, [user])
 
   const handleEmergencyButton = async () => {
     if (!user) return
