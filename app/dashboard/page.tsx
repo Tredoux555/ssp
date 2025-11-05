@@ -253,47 +253,6 @@ export default function DashboardPage() {
     }
   }, [user, router, loadActiveEmergency, loadContactCount])
 
-  const loadActiveEmergency = useCallback(async () => {
-    if (!user) return
-
-    try {
-      // Add a small delay to allow cancelled alerts to process
-      // This prevents race conditions where cancellation hasn't fully processed yet
-      await new Promise(resolve => setTimeout(resolve, 500))
-      
-      const emergency = await getActiveEmergency(user.id)
-      setActiveEmergency(emergency)
-      
-      // Only auto-redirect if we have a confirmed active emergency
-      // Don't redirect if we just came from cancelling an alert
-      if (emergency && emergency.status === 'active') {
-        // Check if we're already on the emergency page to prevent redirect loops
-        const currentPath = window.location.pathname
-        if (!currentPath.includes(`/emergency/active/${emergency.id}`)) {
-          router.push(`/emergency/active/${emergency.id}`)
-        }
-      }
-    } catch (error: any) {
-      console.error('Failed to load active emergency:', error)
-      // Don't show error to user - just log it
-      // Emergency might not exist, which is fine
-      setActiveEmergency(null)
-    }
-  }, [user, router])
-
-  const loadContactCount = useCallback(async () => {
-    if (!user) return
-
-    try {
-      const contacts = await getEmergencyContacts(user.id)
-      setContactCount(contacts.length || 0)
-    } catch (error: any) {
-      console.error('Failed to load contacts:', error)
-      // Set to 0 on error so UI doesn't break
-      setContactCount(0)
-    }
-  }, [user])
-
   const handleEmergencyButton = async () => {
     if (!user) return
 
