@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { getActiveEmergency, getEmergencyContacts } from '@/lib/emergency'
@@ -48,6 +48,12 @@ export default function DashboardPage() {
   const [activeEmergency, setActiveEmergency] = useState<EmergencyAlert | null>(null)
   const [emergencyLoading, setEmergencyLoading] = useState(false)
   const [contactCount, setContactCount] = useState(0)
+  const activeEmergencyRef = useRef<EmergencyAlert | null>(null)
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    activeEmergencyRef.current = activeEmergency
+  }, [activeEmergency])
 
   const loadActiveEmergency = useCallback(async () => {
     if (!user) return
@@ -122,6 +128,9 @@ export default function DashboardPage() {
       
       let subscriptionActive = false
       let pollingInterval: NodeJS.Timeout | null = null
+      let isPollingActive = false
+      let isPageVisible = true
+      let isNetworkOnline = navigator.onLine
       
       // Subscribe to emergency alerts for this contact user
       // This fires when someone in their contact list triggers an alert
@@ -139,11 +148,22 @@ export default function DashboardPage() {
         router.push(`/alert/${alert.id}`)
       })
       
-      // Fallback polling mechanism - check for active alerts every 5 seconds
-      // This ensures alerts are received even if Realtime subscription fails
+      // Adaptive polling mechanism - adjusts frequency based on app state
+      // Idle: 30 seconds (when no active emergencies)
+      // Active: 5 seconds (when there's an active emergency or recent activity)
       const startPolling = () => {
-        console.log(`[Dashboard] 📡 Starting fallback polling for user: ${user.id}`)
-        pollingInterval = setInterval(async () => {
+        if (isPollingActive) return // Already polling
+        if (!isPageVisible || !isNetworkOnline) return // Pause if tab hidden or offline
+        
+        isPollingActive = true
+        
+        const pollForAlerts = async () => {
+          // Skip if tab is hidden or offline
+          if (!isPageVisible || !isNetworkOnline) {
+            console.log(`[Dashboard] ⏸️ Polling paused (visible: ${isPageVisible}, online: ${isNetworkOnline})`)
+            return
+          }
+          
           try {
             // Check if there are any active alerts where this user is in contacts_notified
             const { createClient } = await import('@/lib/supabase')
@@ -161,7 +181,6 @@ export default function DashboardPage() {
             }
             
             // Query alerts - RLS will automatically filter to only alerts where user is in contacts_notified
-            // This is more efficient than querying all alerts and filtering client-side
             const { data: allAlerts, error: queryError } = await supabase
               .from('emergency_alerts')
               .select('*')
@@ -180,8 +199,6 @@ export default function DashboardPage() {
             }
             
             if (allAlerts && allAlerts.length > 0) {
-              console.log(`[Dashboard] 🔍 Checking ${allAlerts.length} active alerts for user ${user.id}`)
-              
               // Filter client-side: check if user.id is in contacts_notified array
               const relevantAlerts = allAlerts.filter((alert: any) => {
                 if (!alert.contacts_notified || !Array.isArray(alert.contacts_notified)) {
@@ -192,20 +209,7 @@ export default function DashboardPage() {
                 const normalizedUserId = String(user.id).trim()
                 const normalizedContacts = alert.contacts_notified.map((id: string) => String(id).trim())
                 
-                const isInContacts = normalizedContacts.includes(normalizedUserId)
-                
-                if (isInContacts) {
-                  console.log(`[Dashboard] ✅ Found alert for user ${user.id}:`, {
-                    alertId: alert.id,
-                    alertUserId: alert.user_id,
-                    contactsNotified: alert.contacts_notified,
-                    normalizedUserId,
-                    normalizedContacts,
-                    matchFound: true
-                  })
-                }
-                
-                return isInContacts
+                return normalizedContacts.includes(normalizedUserId)
               })
               
               if (relevantAlerts.length > 0) {
@@ -227,28 +231,104 @@ export default function DashboardPage() {
                   })
                   router.push(`/alert/${alert.id}`)
                 }
-              } else {
-                console.log(`[Dashboard] ℹ️ No alerts found for user ${user.id} in ${allAlerts.length} active alerts`)
               }
             }
           } catch (error) {
             console.warn(`[Dashboard] ⚠️ Polling error:`, error)
           }
-        }, 2000) // Poll every 2 seconds (more aggressive)
+        }
+        
+        // Determine polling interval based on active emergency state
+        // This function checks the current state each time (using ref to avoid closure issues)
+        const getPollingInterval = () => {
+          // Check current activeEmergency state dynamically via ref
+          // If there's an active emergency, poll more frequently
+          const currentEmergency = activeEmergencyRef.current
+          if (currentEmergency && currentEmergency.status === 'active') {
+            return 5000 // 5 seconds when active
+          }
+          return 30000 // 30 seconds when idle
+        }
+        
+        // Start polling with adaptive interval
+        const scheduleNextPoll = () => {
+          if (!isPollingActive) return
+          if (!isPageVisible || !isNetworkOnline) {
+            // Reschedule check when page becomes visible or network comes online
+            return
+          }
+          
+          // Get current interval (checks activeEmergency state each time)
+          const interval = getPollingInterval()
+          pollingInterval = setTimeout(() => {
+            pollForAlerts()
+            scheduleNextPoll() // Schedule next poll with updated interval
+          }, interval)
+        }
+        
+        // Initial poll
+        pollForAlerts()
+        scheduleNextPoll()
+        
+        console.log(`[Dashboard] 📡 Started adaptive polling (initial interval: ${getPollingInterval()}ms)`)
       }
       
-      // Start polling immediately (works alongside Realtime)
-      // This is now the PRIMARY mechanism since Realtime has been unreliable
-      console.log(`[Dashboard] 🔄 Starting aggressive polling immediately (every 2 seconds)`)
-      startPolling()
+      const stopPolling = () => {
+        isPollingActive = false
+        if (pollingInterval) {
+          clearTimeout(pollingInterval)
+          pollingInterval = null
+        }
+        console.log(`[Dashboard] ⏸️ Stopped polling`)
+      }
+      
+      // Page Visibility API - pause polling when tab is hidden
+      const handleVisibilityChange = () => {
+        isPageVisible = !document.hidden
+        if (isPageVisible && isNetworkOnline) {
+          console.log(`[Dashboard] 👁️ Page visible - resuming polling`)
+          if (!isPollingActive) {
+            startPolling()
+          }
+        } else {
+          console.log(`[Dashboard] 👁️ Page hidden - pausing polling`)
+          stopPolling()
+        }
+      }
+      
+      // Network state monitoring
+      const handleOnline = () => {
+        isNetworkOnline = true
+        console.log(`[Dashboard] ✅ Network online - resuming polling`)
+        if (!isPollingActive && isPageVisible) {
+          startPolling()
+        }
+      }
+      
+      const handleOffline = () => {
+        isNetworkOnline = false
+        console.log(`[Dashboard] ⚠️ Network offline - pausing polling`)
+        stopPolling()
+      }
+      
+      // Set up event listeners
+      document.addEventListener('visibilitychange', handleVisibilityChange)
+      window.addEventListener('online', handleOnline)
+      window.addEventListener('offline', handleOffline)
+      
+      // Start polling initially (if page is visible and online)
+      if (isPageVisible && isNetworkOnline) {
+        startPolling()
+      }
       
       return () => {
         console.log(`[Dashboard] Cleaning up subscription for user: ${user.id}`)
         unsubscribe()
         hideEmergencyAlert()
-        if (pollingInterval) {
-          clearInterval(pollingInterval)
-        }
+        stopPolling()
+        document.removeEventListener('visibilitychange', handleVisibilityChange)
+        window.removeEventListener('online', handleOnline)
+        window.removeEventListener('offline', handleOffline)
       }
     }
   }, [user, router, loadActiveEmergency, loadContactCount])

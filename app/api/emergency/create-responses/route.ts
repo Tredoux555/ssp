@@ -30,7 +30,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Verify the user owns this alert (with retry logic for timing issues)
-    let alert = null
+    let alert: { user_id: string } | null = null
     let alertError = null
     let retries = 3
     let delay = 500
@@ -59,6 +59,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         )
       }
       break // Success
+    }
+
+    // TypeScript guard: ensure alert is not null
+    if (!alert || !alert.user_id) {
+      return NextResponse.json(
+        { error: 'Alert not found' },
+        { status: 404 }
+      )
     }
 
     if (alert.user_id !== session.user.id) {

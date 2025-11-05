@@ -22,6 +22,10 @@ interface ActiveSubscription {
 class SubscriptionManager {
   private subscriptions: Map<string, ActiveSubscription> = new Map()
   private supabase = createClient()
+  private reconnectAttempts: Map<string, number> = new Map()
+  private healthCheckIntervals: Map<string, NodeJS.Timeout> = new Map()
+  private maxReconnectAttempts = 5
+  private reconnectDelays = [1000, 2000, 5000, 10000, 30000] // Exponential backoff
 
   subscribe(config: SubscriptionConfig): () => void {
     const key = `${config.channel}-${config.table}-${config.filter || ''}`
@@ -76,20 +80,27 @@ class SubscriptionManager {
         )
         .subscribe((status: any, err?: any) => {
           if (status === 'SUBSCRIBED') {
+            // Reset reconnect attempts on success
+            this.reconnectAttempts.delete(key)
             console.log(`[Realtime] ✅ Successfully subscribed to ${config.channel} (${config.table}, event: ${config.event || 'UPDATE'})`)
             console.log(`[Realtime] 🔗 Connection established - ready to receive events`)
           } else if (status === 'CHANNEL_ERROR') {
             console.error(`[Realtime] ❌ Channel error for ${config.channel}:`, err)
             console.error(`[Realtime] 🔗 Connection failed - check Supabase Realtime configuration`)
-            console.warn(`[Realtime] ⚠️ Realtime subscription failed - polling will handle alerts`)
-            // Don't throw - polling will handle alerts
+            console.warn(`[Realtime] ⚠️ Realtime subscription failed - attempting reconnection...`)
+            // Attempt reconnection
+            setTimeout(() => this.reconnectSubscription(key, config), 1000)
           } else if (status === 'TIMED_OUT') {
             console.error(`[Realtime] ⏱️ Subscription timed out for ${config.channel}`)
             console.error(`[Realtime] 🔗 Connection timeout - check network and Supabase Realtime`)
-            console.warn(`[Realtime] ⚠️ Realtime subscription timed out - polling will handle alerts`)
+            console.warn(`[Realtime] ⚠️ Realtime subscription timed out - attempting reconnection...`)
+            // Attempt reconnection
+            setTimeout(() => this.reconnectSubscription(key, config), 1000)
           } else if (status === 'CLOSED') {
             console.warn(`[Realtime] ⚠️ Subscription closed for ${config.channel}`)
-            console.warn(`[Realtime] 🔗 Connection closed - subscription may need to be re-established`)
+            console.warn(`[Realtime] 🔗 Connection closed - attempting reconnection...`)
+            // Attempt reconnection
+            setTimeout(() => this.reconnectSubscription(key, config), 1000)
           } else {
             console.log(`[Realtime] Subscription status for ${config.channel}: ${status}`, err ? `Error: ${err}` : '')
             console.log(`[Realtime] 🔗 Connection status: ${status}`)
@@ -108,6 +119,25 @@ class SubscriptionManager {
             key,
             table: config.table
           })
+          
+          // Start periodic health monitoring
+          const healthCheckInterval = setInterval(() => {
+            const currentSubscription = this.subscriptions.get(key)
+            if (currentSubscription) {
+              const currentState = (currentSubscription.channel as any).state
+              if (currentState !== 'joined' && currentState !== 'joining') {
+                console.warn(`[Realtime] ⚠️ Channel ${config.channel} is not connected (state: ${currentState}), attempting reconnection...`)
+                clearInterval(healthCheckInterval)
+                this.healthCheckIntervals.delete(key)
+                this.reconnectSubscription(key, config)
+              }
+            } else {
+              clearInterval(healthCheckInterval)
+              this.healthCheckIntervals.delete(key)
+            }
+          }, 30000) // Check every 30 seconds
+          
+          this.healthCheckIntervals.set(key, healthCheckInterval)
         }
       }, 2000)
 
@@ -128,6 +158,16 @@ class SubscriptionManager {
       }
       this.subscriptions.delete(key)
     }
+    
+    // Clean up health check interval
+    const healthCheckInterval = this.healthCheckIntervals.get(key)
+    if (healthCheckInterval) {
+      clearInterval(healthCheckInterval)
+      this.healthCheckIntervals.delete(key)
+    }
+    
+    // Clear reconnect attempts
+    this.reconnectAttempts.delete(key)
   }
 
   unsubscribeAll(): void {
@@ -142,7 +182,55 @@ class SubscriptionManager {
         console.error('Error removing channel:', error)
       }
     })
+    
+    // Clear all health check intervals
+    this.healthCheckIntervals.forEach((interval) => clearInterval(interval))
+    this.healthCheckIntervals.clear()
+    
+    // Clear all reconnect attempts
+    this.reconnectAttempts.clear()
+    
     this.subscriptions.clear()
+  }
+
+  private reconnectSubscription(key: string, config: SubscriptionConfig): void {
+    const attempts = this.reconnectAttempts.get(key) || 0
+    
+    if (attempts >= this.maxReconnectAttempts) {
+      console.error(`[Realtime] ❌ Max reconnection attempts (${this.maxReconnectAttempts}) reached for ${key} - polling will handle alerts`)
+      return
+    }
+    
+    const delay = this.reconnectDelays[attempts] || 30000
+    this.reconnectAttempts.set(key, attempts + 1)
+    
+    console.log(`[Realtime] 🔄 Attempting to reconnect ${key} (attempt ${attempts + 1}/${this.maxReconnectAttempts}) in ${delay}ms`)
+    
+    setTimeout(() => {
+      // Only reconnect if subscription still exists
+      if (this.subscriptions.has(key)) {
+        // Unsubscribe old channel
+        const oldSubscription = this.subscriptions.get(key)
+        if (oldSubscription && this.supabase) {
+          try {
+            this.supabase.removeChannel(oldSubscription.channel)
+          } catch (error) {
+            // Ignore errors during cleanup
+          }
+        }
+        this.subscriptions.delete(key)
+        
+        // Clear health check interval
+        const healthCheckInterval = this.healthCheckIntervals.get(key)
+        if (healthCheckInterval) {
+          clearInterval(healthCheckInterval)
+          this.healthCheckIntervals.delete(key)
+        }
+        
+        // Resubscribe
+        this.subscribe(config)
+      }
+    }, delay)
   }
 
   getActiveSubscriptions(): string[] {
