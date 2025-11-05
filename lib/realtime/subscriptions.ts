@@ -40,23 +40,30 @@ class SubscriptionManager {
 
     // Check if subscription already exists
     if (this.subscriptions.has(key)) {
-      console.log(`[Realtime] Subscription already exists for ${key}`)
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[Realtime] Subscription already exists for ${key}`)
+      }
+      // Return existing unsubscribe function to prevent duplicates
       return () => this.unsubscribe(key)
     }
 
     // Check if supabase client is available
     if (!this.supabase) {
-      console.warn('[Realtime] Supabase client not available for subscription')
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[Realtime] Supabase client not available for subscription')
+      }
       return () => {} // Return no-op unsubscribe function
     }
 
-    console.log(`[Realtime] Setting up subscription:`, {
-      channel: config.channel,
-      table: config.table,
-      event: config.event || 'UPDATE',
-      filter: config.filter || 'none',
-      key
-    })
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[Realtime] Setting up subscription:`, {
+        channel: config.channel,
+        table: config.table,
+        event: config.event || 'UPDATE',
+        filter: config.filter || 'none',
+        key
+      })
+    }
 
     try {
       const channel = this.supabase
@@ -143,40 +150,41 @@ class SubscriptionManager {
 
       this.subscriptions.set(key, { channel, config })
 
-      // Start periodic health monitoring (reduced frequency and less logging)
-      setTimeout(() => {
-        const subscription = this.subscriptions.get(key)
-        if (subscription) {
-          // Start periodic health monitoring (reduced from 30s to 60s)
-          const healthCheckInterval = setInterval(() => {
-            const currentSubscription = this.subscriptions.get(key)
-            if (currentSubscription) {
-              // Skip health check if reconnecting, in cooldown, or circuit open
-              if (this.reconnecting.get(key) || this.isInCooldown(key) || this.isCircuitOpen(key)) {
-                return
-              }
-              
-              const currentState = (currentSubscription.channel as any).state
-              // Only trigger reconnection for truly disconnected states, not during normal connection states
-              if (currentState === 'closed' || currentState === 'errored' || currentState === 'timedout') {
-                // Only attempt reconnection if not already reconnecting, not in cooldown, circuit not open
-                if (!this.reconnecting.get(key) && !this.isInCooldown(key) && !this.isCircuitOpen(key)) {
-                  if (process.env.NODE_ENV === 'development') {
-                    console.warn(`[Realtime] ⚠️ Channel ${config.channel} is not connected (state: ${currentState}), attempting reconnection...`)
-                  }
-                  this.reconnectSubscription(key, config)
+      // Only start health monitoring in production (disabled in development to prevent hanging)
+      // In development, rely on Supabase's built-in reconnection and the CLOSED event handler
+      if (process.env.NODE_ENV === 'production') {
+        setTimeout(() => {
+          const subscription = this.subscriptions.get(key)
+          if (subscription) {
+            // Start periodic health monitoring (only in production, every 60s)
+            const healthCheckInterval = setInterval(() => {
+              const currentSubscription = this.subscriptions.get(key)
+              if (currentSubscription) {
+                // Skip health check if reconnecting, in cooldown, or circuit open
+                if (this.reconnecting.get(key) || this.isInCooldown(key) || this.isCircuitOpen(key)) {
+                  return
                 }
+                
+                const currentState = (currentSubscription.channel as any).state
+                // Only trigger reconnection for truly disconnected states, not during normal connection states
+                if (currentState === 'closed' || currentState === 'errored' || currentState === 'timedout') {
+                  // Only attempt reconnection if not already reconnecting, not in cooldown, circuit not open
+                  if (!this.reconnecting.get(key) && !this.isInCooldown(key) && !this.isCircuitOpen(key)) {
+                    console.warn(`[Realtime] ⚠️ Channel ${config.channel} is not connected (state: ${currentState}), attempting reconnection...`)
+                    this.reconnectSubscription(key, config)
+                  }
+                }
+              } else {
+                // Subscription no longer exists, clean up
+                clearInterval(healthCheckInterval)
+                this.healthCheckIntervals.delete(key)
               }
-            } else {
-              // Subscription no longer exists, clean up
-              clearInterval(healthCheckInterval)
-              this.healthCheckIntervals.delete(key)
-            }
-          }, 60000) // Check every 60 seconds (reduced frequency)
-          
-          this.healthCheckIntervals.set(key, healthCheckInterval)
-        }
-      }, 2000)
+            }, 60000) // Check every 60 seconds
+            
+            this.healthCheckIntervals.set(key, healthCheckInterval)
+          }
+        }, 2000)
+      }
 
       return () => this.unsubscribe(key)
     } catch (error) {
@@ -304,6 +312,20 @@ class SubscriptionManager {
   }
   
   private reconnectSubscription(key: string, config: SubscriptionConfig): void {
+    // In development, add extra guard against rapid reconnection attempts
+    // This prevents Fast Refresh from causing reconnection loops
+    if (process.env.NODE_ENV === 'development') {
+      // Check if we're in a rapid reconnection loop (more than 3 attempts in 2 seconds)
+      const recentAttempts = this.reconnectHistory.get(key) || []
+      const now = Date.now()
+      const lastTwoSeconds = recentAttempts.filter(timestamp => now - timestamp < 2000)
+      if (lastTwoSeconds.length >= 3) {
+        // Too many attempts too quickly - likely Fast Refresh issue
+        // Skip this reconnection attempt
+        return
+      }
+    }
+    
     // Prevent concurrent reconnection attempts
     if (this.reconnecting.get(key)) {
       if (process.env.NODE_ENV === 'development') {
@@ -426,6 +448,26 @@ class SubscriptionManager {
 }
 
 let subscriptionManager: SubscriptionManager | null = null
+
+// Cleanup function for Fast Refresh in development
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  // Clean up subscriptions on module reload (Fast Refresh)
+  if ((window as any).__subscriptionManagerCleanup) {
+    try {
+      (window as any).__subscriptionManagerCleanup()
+    } catch (e) {
+      // Ignore cleanup errors
+    }
+  }
+  
+  // Store cleanup function for next Fast Refresh
+  (window as any).__subscriptionManagerCleanup = () => {
+    if (subscriptionManager) {
+      subscriptionManager.unsubscribeAll()
+      subscriptionManager = null
+    }
+  }
+}
 
 export function getSubscriptionManager(): SubscriptionManager {
   if (!subscriptionManager) {

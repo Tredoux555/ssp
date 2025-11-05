@@ -125,7 +125,28 @@ export default function DashboardPage() {
     
     // Only run once per user - use user.id as the key to prevent re-running
     const userId = user.id
-    console.log(`[Dashboard] Setting up subscription for user: ${userId}`)
+    
+    // In development, add guard against rapid re-setup (Fast Refresh issue)
+    if (process.env.NODE_ENV === 'development') {
+      const setupKey = `dashboard-setup-${userId}`
+      const lastSetup = (window as any).__lastDashboardSetup?.[setupKey]
+      const now = Date.now()
+      
+      // If setup happened in last 2 seconds, skip (likely Fast Refresh)
+      if (lastSetup && now - lastSetup < 2000) {
+        console.log(`[Dashboard] Skipping rapid re-setup for user ${userId} (likely Fast Refresh)`)
+        return
+      }
+      
+      if (!(window as any).__lastDashboardSetup) {
+        (window as any).__lastDashboardSetup = {}
+      }
+      (window as any).__lastDashboardSetup[setupKey] = now
+    }
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[Dashboard] Setting up subscription for user: ${userId}`)
+    }
     
     // Call these functions directly - they're stable useCallback functions
     // Use setTimeout to defer these calls and prevent blocking the effect
@@ -146,6 +167,17 @@ export default function DashboardPage() {
       // This fires when someone in their contact list triggers an alert
       const unsubscribe = subscribeToContactAlerts(userId, (alert) => {
         if (!isMounted) return // Prevent navigation if component unmounted
+        
+        // Check if we're already on this alert page to prevent redirect loops
+        const currentPath = window.location.pathname
+        if (currentPath.includes(`/alert/${alert.id}`) || currentPath.includes(`/emergency/active/${alert.id}`)) {
+          // Already on alert page, just show the alert overlay
+          showEmergencyAlert(alert.id, {
+            address: alert.address,
+            alert_type: alert.alert_type,
+          })
+          return
+        }
         
         console.log(`[Dashboard] ✅ Emergency alert received for contact user ${userId}:`, alert)
         subscriptionActive = true // Mark subscription as active when we receive an event
@@ -266,6 +298,13 @@ export default function DashboardPage() {
         
         // Don't start if tab hidden or offline
         if (!isPageVisible || !isNetworkOnline) {
+          return
+        }
+        
+        // In development, disable polling entirely to prevent hanging
+        // Realtime subscriptions should be sufficient
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[Dashboard] ⏸️ Polling disabled in development mode - using Realtime subscriptions only`)
           return
         }
         

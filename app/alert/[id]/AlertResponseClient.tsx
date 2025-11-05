@@ -29,6 +29,7 @@ export default function AlertResponsePage() {
   const [acknowledged, setAcknowledged] = useState(false)
   const [loading, setLoading] = useState(true)
   const subscriptionsSetupRef = useRef<string | null>(null) // Track which alert ID subscriptions are set up for
+  const loadAlertCalledRef = useRef<string | null>(null) // Track if loadAlert has been called for this alertId
 
   const loadAlert = useCallback(async () => {
     if (!user) return
@@ -170,8 +171,15 @@ export default function AlertResponsePage() {
       return
     }
 
-    loadAlert()
-  }, [user, alertId, router, loadAlert, authLoading])
+    // Only call loadAlert once per alertId to prevent duplicate calls
+    // Reset ref when alertId changes (user navigated to different alert)
+    if (loadAlertCalledRef.current !== alertId) {
+      loadAlertCalledRef.current = alertId
+      loadAlert()
+    }
+    // Remove router from dependencies - it's stable and causes unnecessary re-renders
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, alertId, authLoading]) // Only depend on user.id, not user object or router - ref prevents duplicate calls
 
   useEffect(() => {
     if (!alert || !user) return
@@ -237,7 +245,8 @@ export default function AlertResponsePage() {
     vibrateDevice()
 
     return () => {
-      subscriptionsSetupRef.current = null
+      // DON'T reset subscriptionsSetupRef to null - keep it set to prevent re-subscription
+      // subscriptionsSetupRef.current = null
       unsubscribeLocation()
       unsubscribeAlert?.unsubscribe()
       if (unsubscribeResponses) {
