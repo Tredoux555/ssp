@@ -107,6 +107,20 @@ export default function AlertResponsePage() {
 
       setAlert(alertData)
 
+      // Initialize location from alert data immediately (for mobile compatibility)
+      // This ensures map shows even if location_history query is slow or fails
+      if (alertData.location_lat && alertData.location_lng) {
+        setLocation({
+          id: 'initial',
+          alert_id: alertData.id,
+          user_id: alertData.user_id,
+          latitude: alertData.location_lat,
+          longitude: alertData.location_lng,
+          created_at: alertData.triggered_at || new Date().toISOString(),
+          timestamp: alertData.triggered_at || new Date().toISOString(),
+        } as LocationHistory)
+      }
+
       // DON'T show overlay on alert page - the page itself is the alert view
       // Hide any existing overlay when viewing alert page
       hideEmergencyAlert()
@@ -405,7 +419,11 @@ export default function AlertResponsePage() {
         <div className="space-y-4 mb-6">
           <div>
             <p className="text-sm text-gray-600 mb-1">Alert Type</p>
-            <p className="font-medium capitalize">{alert.alert_type.replace('_', ' ')}</p>
+            <p className="font-medium">
+              {alert.alert_type === 'life_or_death' ? 'Life or Death' :
+               alert.alert_type === 'need_a_hand' ? 'I Just Need a Hand' :
+               alert.alert_type.replace('_', ' ')}
+            </p>
           </div>
 
           {alert.address && (

@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     const { alert_type = 'other', location } = body
 
     // Validate alert_type
-    const validAlertTypes = ['robbery', 'house_breaking', 'car_jacking', 'accident', 'other']
+    const validAlertTypes = ['robbery', 'house_breaking', 'car_jacking', 'accident', 'other', 'life_or_death', 'need_a_hand']
     if (!validAlertTypes.includes(alert_type)) {
       return NextResponse.json(
         { error: `Invalid alert_type. Must be one of: ${validAlertTypes.join(', ')}` },

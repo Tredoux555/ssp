@@ -6,7 +6,7 @@ import { EmergencyAlert } from '@/types/database'
  */
 export async function createEmergencyAlert(
   userId: string,
-  alertType: 'robbery' | 'house_breaking' | 'car_jacking' | 'accident' | 'other' = 'other',
+  alertType: 'robbery' | 'house_breaking' | 'car_jacking' | 'accident' | 'other' | 'life_or_death' | 'need_a_hand' = 'other',
   location?: { lat: number; lng: number; address?: string }
 ): Promise<EmergencyAlert> {
   const supabase = createClient()

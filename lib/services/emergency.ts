@@ -10,7 +10,7 @@ const TIMEOUT_MS = 30000 // 30 seconds timeout
  * Handles rate limiting, auto-canceling old alerts, and notifying contacts
  */
 export async function createEmergencyAlert(
-  alertType: 'robbery' | 'house_breaking' | 'car_jacking' | 'accident' | 'other' = 'other',
+  alertType: 'robbery' | 'house_breaking' | 'car_jacking' | 'accident' | 'other' | 'life_or_death' | 'need_a_hand' = 'other',
   location?: { lat: number; lng: number; address?: string }
 ): Promise<EmergencyAlert> {
   // Wrap the entire operation in a timeout to prevent hanging
@@ -32,7 +32,7 @@ export async function createEmergencyAlert(
       const userId = session.user.id
 
       // Validate alert_type
-      const validAlertTypes = ['robbery', 'house_breaking', 'car_jacking', 'accident', 'other']
+      const validAlertTypes = ['robbery', 'house_breaking', 'car_jacking', 'accident', 'other', 'life_or_death', 'need_a_hand']
       if (!validAlertTypes.includes(alertType)) {
         throw new Error(`Invalid alert_type. Must be one of: ${validAlertTypes.join(', ')}`)
       }
