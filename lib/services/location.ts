@@ -224,21 +224,23 @@ export async function updateLocation(
   }
 
   try {
-    // Rate limit: max 1 update per 5 seconds per alert
+    // Rate limit: max 1 update per 5 seconds per user per alert
+    // This allows sender and receiver to update independently
     const fiveSecondsAgo = new Date(Date.now() - 5000).toISOString()
     
     if (alertId) {
-      // Check if we've updated this alert's location recently
+      // Check if THIS USER has updated this alert's location recently
       const { data: recentUpdate } = await supabase
         .from('location_history')
         .select('id')
         .eq('alert_id', alertId)
+        .eq('user_id', userId) // Check per user, not per alert
         .gte('created_at', fiveSecondsAgo)
         .limit(1)
         .maybeSingle()
 
       if (recentUpdate) {
-        // Skip update - too soon
+        // Skip update - too soon for this user
         return
       }
     }

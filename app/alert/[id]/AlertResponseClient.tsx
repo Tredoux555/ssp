@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/contexts/AuthContext'
 import { createClient } from '@/lib/supabase'
 import { subscribeToLocationHistory, subscribeToAlertResponses } from '@/lib/realtime/subscriptions'
 import { showEmergencyAlert, hideEmergencyAlert, playAlertSound, vibrateDevice } from '@/lib/notifications'
+import { startLocationTracking, getCurrentLocation } from '@/lib/location'
 import { EmergencyAlert, LocationHistory } from '@/types/database'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
@@ -26,6 +27,10 @@ export default function AlertResponsePage() {
   const [alert, setAlert] = useState<EmergencyAlert | null>(null)
   const [location, setLocation] = useState<LocationHistory | null>(null)
   const [locationHistory, setLocationHistory] = useState<LocationHistory[]>([])
+  const [receiverLocation, setReceiverLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [receiverLocationHistory, setReceiverLocationHistory] = useState<LocationHistory[]>([])
+  const [receiverTrackingActive, setReceiverTrackingActive] = useState(false)
+  const [receiverLastUpdate, setReceiverLastUpdate] = useState<Date | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
   const [loading, setLoading] = useState(true)
   const [senderName, setSenderName] = useState<string | null>(null)
@@ -236,10 +241,48 @@ export default function AlertResponsePage() {
     
     subscriptionsSetupRef.current = alert.id
 
-    // Subscribe to location updates
+    // Start tracking receiver's own location
+    const stopReceiverTracking = startLocationTracking(
+      user.id,
+      alert.id,
+      async (loc) => {
+        setReceiverLocation(loc)
+        setReceiverLastUpdate(new Date())
+        setReceiverTrackingActive(true)
+      },
+      10000 // Update every 10 seconds
+    )
+    
+    setReceiverTrackingActive(true)
+    
+    // Get initial receiver location
+    getCurrentLocation()
+      .then((loc) => {
+        if (loc) {
+          setReceiverLocation(loc)
+          setReceiverLastUpdate(new Date())
+        }
+      })
+      .catch(() => {
+        // Location unavailable - that's ok
+      })
+
+    // Subscribe to location updates (both sender and receiver)
     const unsubscribeLocation = subscribeToLocationHistory(alert.id, (newLocation) => {
-      setLocationHistory((prev) => [...prev, newLocation])
-      setLocation(newLocation)
+      // Check if this is sender's location or receiver's location
+      if (newLocation.user_id === alert.user_id) {
+        // This is sender's location
+        setLocationHistory((prev) => [...prev, newLocation])
+        setLocation(newLocation)
+      } else if (newLocation.user_id === user.id) {
+        // This is receiver's location
+        setReceiverLocationHistory((prev) => [...prev, newLocation])
+        setReceiverLocation({
+          lat: newLocation.latitude,
+          lng: newLocation.longitude,
+        })
+        setReceiverLastUpdate(new Date())
+      }
     })
 
     // Subscribe to alert updates
@@ -292,6 +335,8 @@ export default function AlertResponsePage() {
     return () => {
       // DON'T reset subscriptionsSetupRef to null - keep it set to prevent re-subscription
       // subscriptionsSetupRef.current = null
+      stopReceiverTracking()
+      setReceiverTrackingActive(false)
       unsubscribeLocation()
       unsubscribeAlert?.unsubscribe()
       if (unsubscribeResponses) {
@@ -424,6 +469,10 @@ export default function AlertResponsePage() {
               longitude={location.longitude}
               alertId={alert.id}
               user_id={alert.user_id}
+              receiverLocation={receiverLocation}
+              receiverLocationHistory={receiverLocationHistory}
+              receiverUserId={user.id}
+              senderUserId={alert.user_id}
             />
           </div>
         )}

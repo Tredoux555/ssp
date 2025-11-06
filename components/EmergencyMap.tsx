@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { GoogleMap, Marker, useLoadScript } from '@react-google-maps/api'
+import { GoogleMap, Marker, Polyline, useLoadScript } from '@react-google-maps/api'
 import { subscribeToLocationHistory } from '@/lib/realtime/subscriptions'
+import { createClient } from '@/lib/supabase'
 import { LocationHistory } from '@/types/database'
 
 interface EmergencyMapProps {
@@ -10,6 +11,10 @@ interface EmergencyMapProps {
   longitude: number
   alertId: string
   user_id: string
+  receiverLocation?: { lat: number; lng: number } | null
+  receiverLocationHistory?: LocationHistory[]
+  receiverUserId?: string
+  senderUserId?: string
 }
 
 const mapContainerStyle = {
@@ -22,6 +27,10 @@ export default function EmergencyMapComponent({
   longitude,
   alertId,
   user_id,
+  receiverLocation,
+  receiverLocationHistory = [],
+  receiverUserId,
+  senderUserId,
 }: EmergencyMapProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ''
   
@@ -33,38 +42,125 @@ export default function EmergencyMapComponent({
   })
 
   const [map, setMap] = useState<any>(null)
-  const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number }>({
+  const [senderLocation, setSenderLocation] = useState<{ lat: number; lng: number }>({
     lat: latitude,
     lng: longitude,
   })
-  const [locationHistory, setLocationHistory] = useState<LocationHistory[]>([])
+  const [senderLocationHistory, setSenderLocationHistory] = useState<LocationHistory[]>([])
+  const [receiverLoc, setReceiverLoc] = useState<{ lat: number; lng: number } | null>(receiverLocation || null)
+  const [receiverLocHistory, setReceiverLocHistory] = useState<LocationHistory[]>(receiverLocationHistory || [])
   const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null)
   const [isLiveTracking, setIsLiveTracking] = useState(false)
 
-  // Update current location when props change
+  // Update sender location when props change
   useEffect(() => {
-    setCurrentLocation({ lat: latitude, lng: longitude })
+    setSenderLocation({ lat: latitude, lng: longitude })
   }, [latitude, longitude])
+  
+  // Update receiver location when props change
+  useEffect(() => {
+    if (receiverLocation) {
+      setReceiverLoc(receiverLocation)
+    }
+  }, [receiverLocation])
+  
+  // Update receiver location history when props change
+  useEffect(() => {
+    if (receiverLocationHistory && receiverLocationHistory.length > 0) {
+      setReceiverLocHistory(receiverLocationHistory)
+    }
+  }, [receiverLocationHistory])
+  
+  // Query all existing locations for the alert on mount
+  useEffect(() => {
+    if (!alertId) return
+    
+    const loadAllLocations = async () => {
+      try {
+        const supabase = createClient()
+        if (!supabase) return
+        
+        const { data: allLocations, error } = await supabase
+          .from('location_history')
+          .select('*')
+          .eq('alert_id', alertId)
+          .order('created_at', { ascending: true })
+        
+        if (error) {
+          console.warn('Failed to load location history:', error)
+          return
+        }
+        
+        if (allLocations && allLocations.length > 0) {
+          // Separate sender and receiver locations
+          const senderLocs = allLocations.filter((loc) => loc.user_id === (senderUserId || user_id))
+          const receiverLocs = allLocations.filter((loc) => loc.user_id === receiverUserId && receiverUserId)
+          
+          if (senderLocs.length > 0) {
+            setSenderLocationHistory(senderLocs)
+            const latestSender = senderLocs[senderLocs.length - 1]
+            setSenderLocation({
+              lat: latestSender.latitude,
+              lng: latestSender.longitude,
+            })
+          }
+          
+          if (receiverLocs.length > 0) {
+            setReceiverLocHistory(receiverLocs)
+            const latestReceiver = receiverLocs[receiverLocs.length - 1]
+            setReceiverLoc({
+              lat: latestReceiver.latitude,
+              lng: latestReceiver.longitude,
+            })
+          }
+        }
+      } catch (error) {
+        console.warn('Error loading location history:', error)
+      }
+    }
+    
+    loadAllLocations()
+  }, [alertId, senderUserId, receiverUserId, user_id])
 
   // Subscribe to location history updates
   useEffect(() => {
     if (!alertId) return
 
     const unsubscribe = subscribeToLocationHistory(alertId, (newLocation) => {
-      setLocationHistory((prev) => [...prev, newLocation])
-      setCurrentLocation({
-        lat: newLocation.latitude,
-        lng: newLocation.longitude,
-      })
-      setLastUpdateTime(new Date())
-      setIsLiveTracking(true)
-
-      // Pan map to new location with smooth animation
-      if (map && typeof window !== 'undefined' && window.google?.maps) {
-        map.panTo({
+      // Determine if this is sender or receiver location
+      const isSenderLocation = newLocation.user_id === (senderUserId || user_id)
+      const isReceiverLocation = receiverUserId && newLocation.user_id === receiverUserId
+      
+      if (isSenderLocation) {
+        // Update sender location
+        setSenderLocationHistory((prev) => [...prev, newLocation])
+        setSenderLocation({
           lat: newLocation.latitude,
           lng: newLocation.longitude,
         })
+      } else if (isReceiverLocation) {
+        // Update receiver location
+        setReceiverLocHistory((prev) => [...prev, newLocation])
+        setReceiverLoc({
+          lat: newLocation.latitude,
+          lng: newLocation.longitude,
+        })
+      }
+      
+      setLastUpdateTime(new Date())
+      setIsLiveTracking(true)
+
+      // Pan map to new location with smooth animation (pan to sender if sender, receiver if receiver)
+      if (map && typeof window !== 'undefined' && window.google?.maps) {
+        if (isSenderLocation) {
+          map.panTo({
+            lat: newLocation.latitude,
+            lng: newLocation.longitude,
+          })
+        } else if (isReceiverLocation && receiverLoc) {
+          // Optionally pan to receiver location, or keep centered on sender
+          // For now, we'll keep it centered on sender (emergency location)
+        }
       }
     })
 
@@ -82,7 +178,7 @@ export default function EmergencyMapComponent({
         <div className="text-center p-4">
           <p className="text-gray-600 font-medium mb-2">Google Maps API key not configured</p>
           <p className="text-gray-500 text-sm">
-            Location: {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
+            Location: {senderLocation.lat.toFixed(6)}, {senderLocation.lng.toFixed(6)}
           </p>
         </div>
       </div>
@@ -97,7 +193,7 @@ export default function EmergencyMapComponent({
         <div className="text-center p-4">
           <p className="text-gray-600 font-medium mb-2">Map unavailable</p>
           <p className="text-gray-500 text-sm">
-            Location: {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
+            Location: {senderLocation.lat.toFixed(6)}, {senderLocation.lng.toFixed(6)}
           </p>
           <p className="text-gray-400 text-xs mt-2">
             Coordinates available - map display unavailable
@@ -137,7 +233,7 @@ export default function EmergencyMapComponent({
       
       <GoogleMap
         mapContainerStyle={mapContainerStyle}
-        center={currentLocation}
+        center={senderLocation}
         zoom={15}
         onLoad={onLoad}
         options={{
@@ -148,16 +244,61 @@ export default function EmergencyMapComponent({
           fullscreenControl: true,
         }}
       >
-        {/* Current location marker */}
+        {/* Sender location marker (Emergency Location - Red) */}
         <Marker
-          position={currentLocation}
-          title="Emergency Location"
+          position={senderLocation}
+          title="Emergency Location (Sender)"
+          icon={
+            googleMaps
+              ? {
+                  path: googleMaps.SymbolPath.CIRCLE,
+                  scale: 8,
+                  fillColor: '#DE3831',
+                  fillOpacity: 1,
+                  strokeColor: '#FFFFFF',
+                  strokeWeight: 3,
+                }
+              : undefined
+          }
         />
 
-        {/* Location history trail */}
-        {locationHistory.map((loc, index) => (
+        {/* Receiver location marker (Responder Location - Blue) */}
+        {receiverLoc && (
           <Marker
-            key={`${loc.id}-${index}`}
+            position={receiverLoc}
+            title="Your Location (Responder)"
+            icon={
+              googleMaps
+                ? {
+                    path: googleMaps.SymbolPath.CIRCLE,
+                    scale: 8,
+                    fillColor: '#2563EB',
+                    fillOpacity: 1,
+                    strokeColor: '#FFFFFF',
+                    strokeWeight: 3,
+                  }
+                : undefined
+            }
+          />
+        )}
+
+        {/* Polyline connecting sender and receiver (if both available) */}
+        {receiverLoc && googleMaps && (
+          <Polyline
+            path={[senderLocation, receiverLoc]}
+            options={{
+              strokeColor: '#6B7280',
+              strokeOpacity: 0.6,
+              strokeWeight: 2,
+              geodesic: true,
+            }}
+          />
+        )}
+
+        {/* Sender location history trail (Red) */}
+        {senderLocationHistory.map((loc, index) => (
+          <Marker
+            key={`sender-${loc.id}-${index}`}
             position={{
               lat: loc.latitude,
               lng: loc.longitude,
@@ -168,6 +309,29 @@ export default function EmergencyMapComponent({
                     path: googleMaps.SymbolPath.CIRCLE,
                     scale: 4,
                     fillColor: '#DE3831',
+                    fillOpacity: 0.6,
+                    strokeColor: '#FFFFFF',
+                    strokeWeight: 2,
+                  }
+                : undefined
+            }
+          />
+        ))}
+
+        {/* Receiver location history trail (Blue) */}
+        {receiverLocHistory.map((loc, index) => (
+          <Marker
+            key={`receiver-${loc.id}-${index}`}
+            position={{
+              lat: loc.latitude,
+              lng: loc.longitude,
+            }}
+            icon={
+              googleMaps
+                ? {
+                    path: googleMaps.SymbolPath.CIRCLE,
+                    scale: 4,
+                    fillColor: '#2563EB',
                     fillOpacity: 0.6,
                     strokeColor: '#FFFFFF',
                     strokeWeight: 2,
