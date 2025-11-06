@@ -683,11 +683,11 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2">
             {/* Push Notification Status */}
             {pushEnabled !== null && (
-              <div className="flex items-center gap-2 text-white/80 text-sm">
+              <div className="flex items-center gap-2 text-white/80 text-sm" title={pushEnabled ? "Push notifications enabled" : "Push notifications not enabled"}>
                 {pushEnabled ? (
-                  <Bell className="w-4 h-4 text-green-400" title="Push notifications enabled" />
+                  <Bell className="w-4 h-4 text-green-400" />
                 ) : (
-                  <BellOff className="w-4 h-4 text-yellow-400" title="Push notifications not enabled" />
+                  <BellOff className="w-4 h-4 text-yellow-400" />
                 )}
               </div>
             )}
