@@ -52,12 +52,16 @@ export function useLocationPermission() {
         (error) => {
           if (error.code === error.PERMISSION_DENIED) {
             setPermissionStatus('denied')
+          } else if (error.code === error.TIMEOUT) {
+            // Timeout doesn't mean permission is denied - user might need to allow in browser settings
+            setPermissionStatus('prompt')
           } else {
+            // POSITION_UNAVAILABLE or other errors - treat as prompt
             setPermissionStatus('prompt')
           }
           setIsChecking(false)
         },
-        { timeout: 100, maximumAge: 0 }
+        { timeout: 5000, maximumAge: 0 }
       )
     } catch (error) {
       console.warn('Error checking location permission:', error)
@@ -84,7 +88,13 @@ export function useLocationPermission() {
           if (error.code === error.PERMISSION_DENIED) {
             setPermissionStatus('denied')
             resolve('denied')
+          } else if (error.code === error.TIMEOUT) {
+            // Timeout - location request took too long
+            // This could mean permission is pending or GPS is unavailable
+            setPermissionStatus('prompt')
+            resolve('prompt')
           } else {
+            // POSITION_UNAVAILABLE or other errors
             setPermissionStatus('prompt')
             resolve('prompt')
           }

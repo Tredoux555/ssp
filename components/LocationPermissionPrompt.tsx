@@ -20,13 +20,19 @@ export default function LocationPermissionPrompt({
 
   const handleRequestPermission = async () => {
     setIsRequesting(true)
-    const status = await requestPermission()
-    setIsRequesting(false)
-    
-    if (status === 'granted' && onPermissionGranted) {
-      onPermissionGranted()
-    } else {
-      // Re-check permission status
+    try {
+      const status = await requestPermission()
+      setIsRequesting(false)
+      
+      if (status === 'granted' && onPermissionGranted) {
+        onPermissionGranted()
+      } else {
+        // Re-check permission status
+        checkPermission()
+      }
+    } catch (error) {
+      setIsRequesting(false)
+      // Error handled by requestPermission - just re-check
       checkPermission()
     }
   }
@@ -102,6 +108,18 @@ export default function LocationPermissionPrompt({
                 <li>Find "Location" in the permissions list</li>
                 <li>Change it to "Allow"</li>
                 <li>Refresh this page</li>
+              </ol>
+            </div>
+          )}
+          
+          {permissionStatus === 'prompt' && (
+            <div className="mt-3 p-2 bg-orange-100 rounded text-xs text-orange-800">
+              <p className="font-medium mb-1">Location permission needed</p>
+              <p className="mb-2">If the request times out or doesn't work:</p>
+              <ol className="list-decimal list-inside space-y-1 ml-2">
+                <li>Make sure your device's location/GPS is enabled</li>
+                <li>Check your browser's location permissions in settings</li>
+                <li>Try refreshing the page and clicking "Enable Location" again</li>
               </ol>
             </div>
           )}
