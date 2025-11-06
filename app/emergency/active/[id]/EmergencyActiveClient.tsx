@@ -36,6 +36,7 @@ export default function EmergencyActivePage() {
   const [lastLocationUpdate, setLastLocationUpdate] = useState<Date | null>(null)
   const [receiverLocations, setReceiverLocations] = useState<Map<string, LocationHistory[]>>(new Map())
   const [receiverUserIds, setReceiverUserIds] = useState<string[]>([])
+  const [acceptedResponderCount, setAcceptedResponderCount] = useState(0)
   const { permissionStatus, requestPermission } = useLocationPermission()
   const [showPermissionPrompt, setShowPermissionPrompt] = useState(false)
 
@@ -55,18 +56,43 @@ export default function EmergencyActivePage() {
       setShowPermissionPrompt(false)
     }
 
-    // Query all receiver locations from location_history
+    // Query all receiver locations from location_history (only from accepted responders)
     const loadReceiverLocations = async () => {
       try {
         const supabase = createClient()
         if (!supabase) return
 
-        // Get all locations for this alert where user_id != sender.user_id
+        // First, get all accepted responders for this alert
+        const { data: acceptedResponses, error: responsesError } = await supabase
+          .from('alert_responses')
+          .select('contact_user_id')
+          .eq('alert_id', alert.id)
+          .not('acknowledged_at', 'is', null)
+
+        if (responsesError) {
+          console.warn('[Sender] Failed to load accepted responses:', responsesError)
+          return
+        }
+
+        // Update accepted responder count
+        setAcceptedResponderCount(acceptedResponses?.length || 0)
+
+        // If no accepted responders, clear the map
+        if (!acceptedResponses || acceptedResponses.length === 0) {
+          setReceiverLocations(new Map())
+          setReceiverUserIds([])
+          return
+        }
+
+        const acceptedUserIds = acceptedResponses.map(r => r.contact_user_id)
+
+        // Get all locations for this alert where user_id != sender.user_id AND user has accepted
         const { data: allLocations, error } = await supabase
           .from('location_history')
           .select('*')
           .eq('alert_id', alert.id)
           .neq('user_id', user.id)
+          .in('user_id', acceptedUserIds)
           .order('created_at', { ascending: false })
           .limit(50)
 
@@ -92,6 +118,9 @@ export default function EmergencyActivePage() {
 
           setReceiverLocations(receiverMap)
           setReceiverUserIds(Array.from(userIds))
+        } else {
+          setReceiverLocations(new Map())
+          setReceiverUserIds([])
         }
       } catch (error) {
         console.warn('[Sender] Error loading receiver locations:', error)
@@ -100,27 +129,64 @@ export default function EmergencyActivePage() {
 
     loadReceiverLocations()
 
-    // Subscribe to receiver location updates
-    const unsubscribeReceiverLocations = subscribeToLocationHistory(alert.id, (newLocation) => {
+    // Subscribe to alert_responses updates to detect when responders accept
+    const unsubscribeAcceptance = createClient()
+      ?.channel(`alert-responses-${alert.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'alert_responses',
+          filter: `alert_id=eq.${alert.id}`,
+        },
+        (payload: any) => {
+          // When someone accepts, reload receiver locations and update count
+          if (payload.new.acknowledged_at) {
+            // Update count immediately
+            setAcceptedResponderCount((prev) => prev + 1)
+            // Reload receiver locations
+            loadReceiverLocations()
+          }
+        }
+      )
+      .subscribe()
+
+    // Subscribe to receiver location updates (only from accepted responders)
+    const unsubscribeReceiverLocations = subscribeToLocationHistory(alert.id, async (newLocation) => {
       // Only process receiver locations (not sender's own location)
       if (newLocation.user_id !== user.id) {
-        setReceiverLocations((prev) => {
-          const updated = new Map(prev)
-          const receiverId = newLocation.user_id
+        // Check if this user has accepted to respond
+        const supabase = createClient()
+        if (supabase) {
+          const { data: response } = await supabase
+            .from('alert_responses')
+            .select('acknowledged_at')
+            .eq('alert_id', alert.id)
+            .eq('contact_user_id', newLocation.user_id)
+            .maybeSingle()
           
-          if (!updated.has(receiverId)) {
-            updated.set(receiverId, [])
-            setReceiverUserIds((prevIds) => {
-              if (!prevIds.includes(receiverId)) {
-                return [...prevIds, receiverId]
+          // Only add location if user has accepted
+          if (response && response.acknowledged_at) {
+            setReceiverLocations((prev) => {
+              const updated = new Map(prev)
+              const receiverId = newLocation.user_id
+              
+              if (!updated.has(receiverId)) {
+                updated.set(receiverId, [])
+                setReceiverUserIds((prevIds) => {
+                  if (!prevIds.includes(receiverId)) {
+                    return [...prevIds, receiverId]
+                  }
+                  return prevIds
+                })
               }
-              return prevIds
+              
+              updated.get(receiverId)!.push(newLocation)
+              return updated
             })
           }
-          
-          updated.get(receiverId)!.push(newLocation)
-          return updated
-        })
+        }
       }
     })
 
@@ -254,6 +320,10 @@ export default function EmergencyActivePage() {
     }
     
     return () => {
+      // Cleanup subscriptions
+      unsubscribeReceiverLocations()
+      unsubscribeAcceptance?.unsubscribe()
+      
       // Cleanup audio
       if (audio) {
         audio.pause()
@@ -401,6 +471,11 @@ export default function EmergencyActivePage() {
 
             {/* Alert Message */}
             <h1 className="text-3xl font-bold mb-2">EMERGENCY ALERT</h1>
+            {acceptedResponderCount > 0 && (
+              <p className="text-green-600 font-medium">
+                {acceptedResponderCount} responder{acceptedResponderCount !== 1 ? 's' : ''} accepted
+              </p>
+            )}
             <p className="text-xl mb-1">Your alert has been sent</p>
             <p className="text-lg opacity-90 mb-4">
               Your contacts are being notified with your location
@@ -409,7 +484,11 @@ export default function EmergencyActivePage() {
             {/* Alert Type */}
             <div className="bg-white/20 rounded-lg p-3 inline-block">
               <p className="text-sm opacity-75">Alert Type</p>
-              <p className="text-lg font-semibold capitalize">{alert.alert_type.replace('_', ' ')}</p>
+              <p className="text-lg font-semibold">
+                {alert.alert_type === 'life_or_death' ? 'Life or Death' :
+                 alert.alert_type === 'need_a_hand' ? 'I Just Need a Hand' :
+                 alert.alert_type.replace('_', ' ')}
+              </p>
             </div>
           </div>
         </Card>

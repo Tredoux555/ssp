@@ -38,6 +38,8 @@ export default function AlertResponsePage() {
   const [loading, setLoading] = useState(true)
   const [senderName, setSenderName] = useState<string | null>(null)
   const [senderEmail, setSenderEmail] = useState<string | null>(null)
+  const [hasAccepted, setHasAccepted] = useState(false)
+  const [accepting, setAccepting] = useState(false)
   const subscriptionsSetupRef = useRef<string | null>(null) // Track which alert ID subscriptions are set up for
   const loadAlertCalledRef = useRef<string | null>(null) // Track if loadAlert has been called for this alertId
 
@@ -124,6 +126,20 @@ export default function AlertResponsePage() {
       // DON'T show overlay on alert page - the page itself is the alert view
       // Hide any existing overlay when viewing alert page
       hideEmergencyAlert()
+      
+      // Check if user has already accepted to respond
+      const { data: alertResponse, error: responseError } = await supabase
+        .from('alert_responses')
+        .select('acknowledged_at')
+        .eq('alert_id', alertId)
+        .eq('contact_user_id', user.id)
+        .maybeSingle()
+      
+      if (alertResponse && alertResponse.acknowledged_at) {
+        setHasAccepted(true)
+      } else {
+        setHasAccepted(false)
+      }
       
       // Fetch sender information (with 30-second cache)
       const fetchSenderInfo = async () => {
@@ -254,6 +270,36 @@ export default function AlertResponsePage() {
     }
   }, [user, alertId, router])
 
+  const handleAcceptResponse = useCallback(async () => {
+    if (!user || !alert || accepting) return
+
+    setAccepting(true)
+    const supabase = createClient()
+
+    try {
+      const { error } = await supabase
+        .from('alert_responses')
+        .update({ acknowledged_at: new Date().toISOString() })
+        .eq('alert_id', alert.id)
+        .eq('contact_user_id', user.id)
+
+      if (error) {
+        console.error('[Alert] Failed to accept response:', error)
+        alert('Failed to accept response. Please try again.')
+        setAccepting(false)
+        return
+      }
+
+      setHasAccepted(true)
+      setAccepting(false)
+      console.log('[Alert] ✅ User accepted to respond')
+    } catch (error: any) {
+      console.error('[Alert] Error accepting response:', error)
+      alert('An error occurred. Please try again.')
+      setAccepting(false)
+    }
+  }, [user, alert, accepting])
+
   useEffect(() => {
     // Wait for auth to finish loading before checking user
     if (authLoading) {
@@ -286,31 +332,38 @@ export default function AlertResponsePage() {
     
     subscriptionsSetupRef.current = alert.id
 
-    // Start tracking receiver's own location
-    const stopReceiverTracking = startLocationTracking(
-      user.id,
-      alert.id,
-      async (loc) => {
-        setReceiverLocation(loc)
-        setReceiverLastUpdate(new Date())
-        setReceiverTrackingActive(true)
-      },
-      20000 // Update every 20 seconds
-    )
+    // Only start location tracking if user has accepted to respond
+    let stopReceiverTracking: (() => void) | null = null
     
-    setReceiverTrackingActive(true)
-    
-    // Get initial receiver location
-    getCurrentLocation()
-      .then((loc) => {
-        if (loc) {
+    if (hasAccepted) {
+      // Start tracking receiver's own location
+      stopReceiverTracking = startLocationTracking(
+        user.id,
+        alert.id,
+        async (loc) => {
           setReceiverLocation(loc)
           setReceiverLastUpdate(new Date())
-        }
-      })
-      .catch(() => {
-        // Location unavailable - that's ok
-      })
+          setReceiverTrackingActive(true)
+        },
+        20000 // Update every 20 seconds
+      )
+      
+      setReceiverTrackingActive(true)
+      
+      // Get initial receiver location
+      getCurrentLocation()
+        .then((loc) => {
+          if (loc) {
+            setReceiverLocation(loc)
+            setReceiverLastUpdate(new Date())
+          }
+        })
+        .catch(() => {
+          // Location unavailable - that's ok
+        })
+    } else {
+      setReceiverTrackingActive(false)
+    }
 
     // Subscribe to location updates (both sender and receiver)
     const unsubscribeLocation = subscribeToLocationHistory(alert.id, (newLocation) => {
@@ -360,7 +413,9 @@ export default function AlertResponsePage() {
     return () => {
       // DON'T reset subscriptionsSetupRef to null - keep it set to prevent re-subscription
       // subscriptionsSetupRef.current = null
-      stopReceiverTracking()
+      if (stopReceiverTracking) {
+        stopReceiverTracking()
+      }
       setReceiverTrackingActive(false)
       unsubscribeLocation()
       unsubscribeAlert?.unsubscribe()
@@ -368,7 +423,7 @@ export default function AlertResponsePage() {
     }
     // Only depend on alert.id and user.id, not the full alert object
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alert?.id, user?.id, router, permissionStatus])
+  }, [alert?.id, user?.id, router, permissionStatus, hasAccepted])
 
   if (loading) {
     return (
@@ -425,6 +480,31 @@ export default function AlertResponsePage() {
                alert.alert_type.replace('_', ' ')}
             </p>
           </div>
+
+          {!hasAccepted && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <p className="text-sm text-gray-700 mb-3">
+                Accept to start sharing your location and help respond to this emergency.
+              </p>
+              <Button
+                onClick={handleAcceptResponse}
+                disabled={accepting}
+                variant="primary"
+                size="lg"
+                className="w-full"
+              >
+                {accepting ? 'Accepting...' : 'Accept to Respond'}
+              </Button>
+            </div>
+          )}
+
+          {hasAccepted && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <p className="text-sm text-green-700 font-medium">
+                ✓ You're responding - Your location is being shared
+              </p>
+            </div>
+          )}
 
           {alert.address && (
             <div>
