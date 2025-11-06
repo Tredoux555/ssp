@@ -93,8 +93,8 @@ export default function EmergencyMapComponent({
         
         if (allLocations && allLocations.length > 0) {
           // Separate sender and receiver locations
-          const senderLocs = allLocations.filter((loc) => loc.user_id === (senderUserId || user_id))
-          const receiverLocs = allLocations.filter((loc) => loc.user_id === receiverUserId && receiverUserId)
+          const senderLocs = allLocations.filter((loc: LocationHistory) => loc.user_id === (senderUserId || user_id))
+          const receiverLocs = allLocations.filter((loc: LocationHistory) => loc.user_id === receiverUserId && receiverUserId)
           
           if (senderLocs.length > 0) {
             setSenderLocationHistory(senderLocs)
