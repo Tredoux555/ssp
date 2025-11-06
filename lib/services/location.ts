@@ -16,7 +16,7 @@ export async function getCurrentLocation(): Promise<{ lat: number; lng: number; 
       // Use Capacitor Geolocation on native platforms
       const position = await Geolocation.getCurrentPosition({
         enableHighAccuracy: true,
-        timeout: 10000,
+        timeout: 15000,
       })
       
       return {
@@ -34,7 +34,7 @@ export async function getCurrentLocation(): Promise<{ lat: number; lng: number; 
       return new Promise((resolve) => {
         const timeout = setTimeout(() => {
           resolve(null)
-        }, 10000)
+        }, 15000)
 
         navigator.geolocation.getCurrentPosition(
           (position) => {
@@ -52,7 +52,7 @@ export async function getCurrentLocation(): Promise<{ lat: number; lng: number; 
           },
           {
             enableHighAccuracy: true,
-            timeout: 10000,
+            timeout: 15000,
             maximumAge: 0,
           }
         )
