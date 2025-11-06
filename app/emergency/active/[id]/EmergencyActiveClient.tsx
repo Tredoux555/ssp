@@ -487,7 +487,7 @@ export default function EmergencyActivePage() {
         )}
 
         {/* Location Map */}
-        {location && alert && (
+        {location && alert && user && (
           <Card className="mb-6 bg-white border-white/20">
             <div className="flex items-center gap-2 mb-4">
               <MapPin className="w-5 h-5 text-sa-red" />
