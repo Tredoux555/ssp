@@ -53,6 +53,8 @@ export default function EmergencyMapComponent({
   const [senderLocationHistory, setSenderLocationHistory] = useState<LocationHistory[]>([])
   const [receiverLoc, setReceiverLoc] = useState<{ lat: number; lng: number } | null>(receiverLocation || null)
   const [receiverLocHistory, setReceiverLocHistory] = useState<LocationHistory[]>(receiverLocationHistory || [])
+  const [allReceiverLocations, setAllReceiverLocations] = useState<Map<string, LocationHistory[]>>(receiverLocations || new Map())
+  const [allReceiverUserIds, setAllReceiverUserIds] = useState<string[]>(receiverUserIds || [])
   const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null)
   const [isLiveTracking, setIsLiveTracking] = useState(false)
 
@@ -161,11 +163,30 @@ export default function EmergencyMapComponent({
           lng: newLocation.longitude,
         })
       } else if (isReceiverLocation) {
-        // Update receiver location
+        // Update receiver location (for receiver's own map)
         setReceiverLocHistory((prev) => [...prev, newLocation])
         setReceiverLoc({
           lat: newLocation.latitude,
           lng: newLocation.longitude,
+        })
+      } else if (senderUserId && newLocation.user_id !== senderUserId) {
+        // This is a receiver location update (for sender's map showing all receivers)
+        setAllReceiverLocations((prev) => {
+          const updated = new Map(prev)
+          const receiverId = newLocation.user_id
+          
+          if (!updated.has(receiverId)) {
+            updated.set(receiverId, [])
+            setAllReceiverUserIds((prevIds) => {
+              if (!prevIds.includes(receiverId)) {
+                return [...prevIds, receiverId]
+              }
+              return prevIds
+            })
+          }
+          
+          updated.get(receiverId)!.push(newLocation)
+          return updated
         })
       }
       
