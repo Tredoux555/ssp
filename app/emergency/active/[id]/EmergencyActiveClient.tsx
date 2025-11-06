@@ -84,7 +84,7 @@ export default function EmergencyActivePage() {
           return
         }
 
-        const acceptedUserIds = acceptedResponses.map(r => r.contact_user_id)
+        const acceptedUserIds = acceptedResponses.map((r: { contact_user_id: string }) => r.contact_user_id)
 
         // Get all locations for this alert where user_id != sender.user_id AND user has accepted
         const { data: allLocations, error } = await supabase
