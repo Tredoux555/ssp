@@ -146,17 +146,24 @@ export default function AlertResponsePage() {
       vibrateDevice()
 
       // Get initial location - prefer location_history over alert location
+      // Add timeout to prevent hanging
       try {
-        const { data: latestLocation } = await supabase
+        const locationPromise = supabase
           .from('location_history')
           .select('*')
           .eq('alert_id', alertId)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle()
-
-        if (latestLocation) {
-          setLocation(latestLocation)
+        
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Location query timeout')), 3000)
+        )
+        
+        const latestLocation = await Promise.race([locationPromise, timeoutPromise]).catch(() => null)
+        
+        if (latestLocation && latestLocation.data) {
+          setLocation(latestLocation.data)
         } else if (alertData.location_lat && alertData.location_lng) {
           // Fallback to alert location if no history yet
           setLocation({
