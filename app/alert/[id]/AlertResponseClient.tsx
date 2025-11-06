@@ -156,14 +156,14 @@ export default function AlertResponsePage() {
           .limit(1)
           .maybeSingle()
         
-        const timeoutPromise = new Promise((_, reject) => 
+        const timeoutPromise = new Promise<{ data: null; error: Error }>((_, reject) => 
           setTimeout(() => reject(new Error('Location query timeout')), 3000)
         )
         
-        const latestLocation = await Promise.race([locationPromise, timeoutPromise]).catch(() => null)
+        const result = await Promise.race([locationPromise, timeoutPromise]).catch(() => ({ data: null, error: null }))
         
-        if (latestLocation && latestLocation.data) {
-          setLocation(latestLocation.data)
+        if (result && result.data) {
+          setLocation(result.data)
         } else if (alertData.location_lat && alertData.location_lng) {
           // Fallback to alert location if no history yet
           setLocation({
