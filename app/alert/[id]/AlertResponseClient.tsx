@@ -285,7 +285,7 @@ export default function AlertResponsePage() {
 
       if (error) {
         console.error('[Alert] Failed to accept response:', error)
-        alert('Failed to accept response. Please try again.')
+        window.alert('Failed to accept response. Please try again.')
         setAccepting(false)
         return
       }
@@ -295,7 +295,7 @@ export default function AlertResponsePage() {
       console.log('[Alert] ✅ User accepted to respond')
     } catch (error: any) {
       console.error('[Alert] Error accepting response:', error)
-      alert('An error occurred. Please try again.')
+      window.alert('An error occurred. Please try again.')
       setAccepting(false)
     }
   }, [user, alert, accepting])
