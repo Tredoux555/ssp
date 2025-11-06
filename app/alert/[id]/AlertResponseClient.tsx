@@ -111,9 +111,25 @@ export default function AlertResponsePage() {
       // Hide any existing overlay when viewing alert page
       hideEmergencyAlert()
       
-      // Fetch sender information
+      // Fetch sender information (with 30-second cache)
       const fetchSenderInfo = async () => {
         if (!alertData.user_id || !user) return
+        
+        const cacheKey = `${alertData.user_id}-${user.id}`
+        const now = Date.now()
+        const cached = (window as any).__senderInfoCache?.get(cacheKey)
+        
+        if (cached && (now - cached.timestamp) < 30000) {
+          // Use cached data
+          setSenderName(cached.data.name)
+          setSenderEmail(cached.data.email)
+          return
+        }
+        
+        // Initialize cache if needed
+        if (!(window as any).__senderInfoCache) {
+          (window as any).__senderInfoCache = new Map()
+        }
         
         try {
           const supabase = createClient()
@@ -126,9 +142,12 @@ export default function AlertResponsePage() {
             .eq('user_id', user.id)
             .maybeSingle()
           
+          let senderName: string | null = null
+          let senderEmail: string | null = null
+          
           if (senderContact) {
-            setSenderName(senderContact.name || null)
-            setSenderEmail(senderContact.email || null)
+            senderName = senderContact.name || null
+            senderEmail = senderContact.email || null
           } else {
             // Fallback to user_profiles
             const { data: senderProfile } = await supabase
@@ -138,10 +157,19 @@ export default function AlertResponsePage() {
               .maybeSingle()
             
             if (senderProfile) {
-              setSenderName(senderProfile.full_name || null)
-              setSenderEmail(senderProfile.email || null)
+              senderName = senderProfile.full_name || null
+              senderEmail = senderProfile.email || null
             }
           }
+          
+          // Cache the result
+          ;(window as any).__senderInfoCache.set(cacheKey, {
+            data: { name: senderName, email: senderEmail },
+            timestamp: now,
+          })
+          
+          setSenderName(senderName)
+          setSenderEmail(senderEmail)
         } catch (err) {
           console.warn('[Alert] Could not fetch sender info:', err)
         }
@@ -253,7 +281,7 @@ export default function AlertResponsePage() {
         setReceiverLastUpdate(new Date())
         setReceiverTrackingActive(true)
       },
-      10000 // Update every 10 seconds
+      20000 // Update every 20 seconds
     )
     
     setReceiverTrackingActive(true)

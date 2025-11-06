@@ -77,7 +77,7 @@ export function startLocationTracking(
   userId: string,
   alertId: string,
   onLocationUpdate?: (location: LocationCoordinates) => void,
-  interval: number = 10000 // 10 seconds default
+  interval: number = 20000 // 20 seconds default
 ): () => void {
   let trackingInterval: NodeJS.Timeout | null = null
   let watchId: string | null = null

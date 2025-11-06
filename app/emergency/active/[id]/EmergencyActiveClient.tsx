@@ -67,7 +67,8 @@ export default function EmergencyActivePage() {
           .select('*')
           .eq('alert_id', alert.id)
           .neq('user_id', user.id)
-          .order('created_at', { ascending: true })
+          .order('created_at', { ascending: false })
+          .limit(50)
 
         if (error) {
           console.warn('[Sender] Failed to load receiver locations:', error)
@@ -141,7 +142,7 @@ export default function EmergencyActivePage() {
           }
         }
       },
-      10000 // Update every 10 seconds
+      20000 // Update every 20 seconds
     )
     
     setLocationTrackingActive(true)

@@ -52,6 +52,8 @@ export default function DashboardPage() {
   const [contactCount, setContactCount] = useState(0)
   const [pushEnabled, setPushEnabled] = useState<boolean | null>(null)
   const activeEmergencyRef = useRef<EmergencyAlert | null>(null)
+  const senderInfoCacheRef = useRef<Map<string, { data: { name: string | null; email: string | null }; timestamp: number }>>(new Map())
+  const contactCountCacheRef = useRef<{ count: number; timestamp: number } | null>(null)
   
   // Keep ref in sync with state
   useEffect(() => {
@@ -180,40 +182,57 @@ export default function DashboardPage() {
         // Fetch sender information (email/name) from the alert
         let senderName: string | null = null
         let senderEmail: string | null = null
-        try {
-          const supabase = createClient()
-          
-          // First try to get sender info from emergency_contacts (contact's view of sender)
-          const { data: senderContact } = await supabase
-            .from('emergency_contacts')
-            .select('name, email')
-            .eq('contact_user_id', alert.user_id)
-            .eq('user_id', userId)
-            .maybeSingle()
-          
-          if (senderContact) {
-            senderName = senderContact.name || null
-            senderEmail = senderContact.email || null
-          }
-          
-          // If not found in contacts, try to get from user_profiles table
-          if (!senderName && !senderEmail) {
-            const { data: senderProfile } = await supabase
-              .from('user_profiles')
-              .select('full_name, email')
-              .eq('id', alert.user_id)
+        const cacheKey = `${alert.user_id}-${userId}`
+        const now = Date.now()
+        const cached = senderInfoCacheRef.current.get(cacheKey)
+        
+        if (cached && (now - cached.timestamp) < 30000) {
+          // Use cached data
+          senderName = cached.data.name
+          senderEmail = cached.data.email
+        } else {
+          // Fetch fresh data
+          try {
+            const supabase = createClient()
+            
+            // First try to get sender info from emergency_contacts (contact's view of sender)
+            const { data: senderContact } = await supabase
+              .from('emergency_contacts')
+              .select('name, email')
+              .eq('contact_user_id', alert.user_id)
+              .eq('user_id', userId)
               .maybeSingle()
             
-            if (senderProfile) {
-              senderName = senderProfile.full_name || null
-              senderEmail = senderProfile.email || null
+            if (senderContact) {
+              senderName = senderContact.name || null
+              senderEmail = senderContact.email || null
             }
+            
+            // If not found in contacts, try to get from user_profiles table
+            if (!senderName && !senderEmail) {
+              const { data: senderProfile } = await supabase
+                .from('user_profiles')
+                .select('full_name, email')
+                .eq('id', alert.user_id)
+                .maybeSingle()
+              
+              if (senderProfile) {
+                senderName = senderProfile.full_name || null
+                senderEmail = senderProfile.email || null
+              }
+            }
+            
+            // Cache the result
+            senderInfoCacheRef.current.set(cacheKey, {
+              data: { name: senderName, email: senderEmail },
+              timestamp: now,
+            })
+            
+            // Log for debugging
+            console.log('[Dashboard] Sender info fetched:', { senderName, senderEmail, alertUserId: alert.user_id })
+          } catch (err) {
+            console.warn('[Dashboard] Could not fetch sender info:', err)
           }
-          
-          // Log for debugging
-          console.log('[Dashboard] Sender info fetched:', { senderName, senderEmail, alertUserId: alert.user_id })
-        } catch (err) {
-          console.warn('[Dashboard] Could not fetch sender info:', err)
         }
         
         // Check if we're already on this alert page to prevent redirect loops
@@ -259,9 +278,9 @@ export default function DashboardPage() {
         // If there's an active emergency, poll more frequently
         const currentEmergency = activeEmergencyRef.current
         if (currentEmergency && currentEmergency.status === 'active') {
-          return 5000 // 5 seconds when active
+          return 10000 // 10 seconds when active
         }
-        return 30000 // 30 seconds when idle
+        return 60000 // 60 seconds when idle
       }
       
       const pollForAlerts = async () => {
@@ -292,7 +311,7 @@ export default function DashboardPage() {
             .select('*')
             .eq('status', 'active')
             .order('triggered_at', { ascending: false })
-            .limit(20)
+            .limit(5)
           
           // If error is RLS-related (42501) or CORS-related, it means RLS is blocking
           // This is expected if the user has no alerts - don't spam the console

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo, memo } from 'react'
 import { GoogleMap, Marker, Polyline, useLoadScript, DirectionsService, DirectionsRenderer } from '@react-google-maps/api'
 import { subscribeToLocationHistory } from '@/lib/realtime/subscriptions'
 import { createClient } from '@/lib/supabase'
@@ -24,7 +24,7 @@ const mapContainerStyle = {
   height: '100%',
 }
 
-export default function EmergencyMapComponent({
+function EmergencyMapComponent({
   latitude,
   longitude,
   alertId,
@@ -110,7 +110,8 @@ export default function EmergencyMapComponent({
           .from('location_history')
           .select('*')
           .eq('alert_id', alertId)
-          .order('created_at', { ascending: true })
+          .order('created_at', { ascending: false })
+          .limit(50)
         
         if (error) {
           console.warn('Failed to load location history:', error)
@@ -218,13 +219,13 @@ export default function EmergencyMapComponent({
 
   // Calculate directions from receiver to sender
   const calculateDirections = useCallback((origin: { lat: number; lng: number }, destination: { lat: number; lng: number }) => {
-    // Check if locations have changed significantly (>50m) to avoid unnecessary recalculations
+    // Check if locations have changed significantly (>100m) to avoid unnecessary recalculations
     const lastUpdate = lastDirectionsUpdateRef.current
     if (lastUpdate) {
-      const originChanged = Math.abs(origin.lat - lastUpdate.origin.lat) > 0.0005 || 
-                           Math.abs(origin.lng - lastUpdate.origin.lng) > 0.0005
-      const destChanged = Math.abs(destination.lat - lastUpdate.destination.lat) > 0.0005 || 
-                         Math.abs(destination.lng - lastUpdate.destination.lng) > 0.0005
+      const originChanged = Math.abs(origin.lat - lastUpdate.origin.lat) > 0.001 || 
+                           Math.abs(origin.lng - lastUpdate.origin.lng) > 0.001
+      const destChanged = Math.abs(destination.lat - lastUpdate.destination.lat) > 0.001 || 
+                         Math.abs(destination.lng - lastUpdate.destination.lng) > 0.001
       
       if (!originChanged && !destChanged) {
         return // Locations haven't changed significantly, skip recalculation
@@ -236,7 +237,7 @@ export default function EmergencyMapComponent({
       clearTimeout(directionsTimeoutRef.current)
     }
 
-    // Debounce directions calculation (2 seconds)
+    // Debounce directions calculation (5 seconds)
     directionsTimeoutRef.current = setTimeout(() => {
       if (typeof window === 'undefined' || !window.google?.maps) {
         console.warn('Google Maps API not available')
@@ -277,7 +278,7 @@ export default function EmergencyMapComponent({
           }
         }
       )
-    }, 2000) // 2 second debounce
+    }, 5000) // 5 second debounce
   }, [])
 
   // Calculate directions when both receiver and sender locations are available
@@ -309,9 +310,9 @@ export default function EmergencyMapComponent({
     }
   }, [directionsResult, map, receiverLoc, senderLocation])
 
-  const onLoad = (mapInstance: any) => {
+  const onLoad = useCallback((mapInstance: any) => {
     setMap(mapInstance)
-  }
+  }, [])
 
   // Handle loading states
   if (!apiKey) {
@@ -357,6 +358,130 @@ export default function EmergencyMapComponent({
 
   // Get Google Maps API - check if it's available
   const googleMaps = typeof window !== 'undefined' ? window.google?.maps : null
+
+  // Memoize map options to prevent re-renders
+  const mapOptions = useMemo(() => ({
+    disableDefaultUI: false,
+    zoomControl: true,
+    streetViewControl: false,
+    mapTypeControl: false,
+    fullscreenControl: true,
+  }), [])
+
+  // Memoize sender marker icon
+  const senderMarkerIcon = useMemo(() => {
+    if (!googleMaps) return undefined
+    return {
+      path: googleMaps.SymbolPath.CIRCLE,
+      scale: 8,
+      fillColor: '#DE3831',
+      fillOpacity: 1,
+      strokeColor: '#FFFFFF',
+      strokeWeight: 3,
+    }
+  }, [googleMaps])
+
+  // Memoize receiver marker icon
+  const receiverMarkerIcon = useMemo(() => {
+    if (!googleMaps) return undefined
+    return {
+      path: googleMaps.SymbolPath.CIRCLE,
+      scale: 8,
+      fillColor: '#2563EB',
+      fillOpacity: 1,
+      strokeColor: '#FFFFFF',
+      strokeWeight: 3,
+    }
+  }, [googleMaps])
+
+  // Memoize sender location history markers
+  const senderHistoryMarkers = useMemo(() => {
+    if (!googleMaps) return []
+    return senderLocationHistory.map((loc, index) => ({
+      key: `sender-${loc.id}-${index}`,
+      position: { lat: loc.latitude, lng: loc.longitude },
+      icon: {
+        path: googleMaps.SymbolPath.CIRCLE,
+        scale: 4,
+        fillColor: '#DE3831',
+        fillOpacity: 0.6,
+        strokeColor: '#FFFFFF',
+        strokeWeight: 2,
+      },
+    }))
+  }, [senderLocationHistory, googleMaps])
+
+  // Memoize receiver location history markers
+  const receiverHistoryMarkers = useMemo(() => {
+    if (!googleMaps) return []
+    return receiverLocHistory.map((loc, index) => ({
+      key: `receiver-${loc.id}-${index}`,
+      position: { lat: loc.latitude, lng: loc.longitude },
+      icon: {
+        path: googleMaps.SymbolPath.CIRCLE,
+        scale: 4,
+        fillColor: '#2563EB',
+        fillOpacity: 0.6,
+        strokeColor: '#FFFFFF',
+        strokeWeight: 2,
+      },
+    }))
+  }, [receiverLocHistory, googleMaps])
+
+  // Memoize multiple receiver markers
+  const multipleReceiverMarkers = useMemo(() => {
+    if (!googleMaps) return []
+    const markers: Array<{
+      receiverId: string
+      currentMarker: { position: { lat: number; lng: number }; title: string; icon: any }
+      polyline: { path: Array<{ lat: number; lng: number }>; options: any }
+      historyMarkers: Array<{ key: string; position: { lat: number; lng: number }; icon: any }>
+    }> = []
+    
+    Array.from(allReceiverLocations.entries()).forEach(([receiverId, locations]) => {
+      if (locations.length === 0) return
+      const latestLocation = locations[locations.length - 1]
+      
+      markers.push({
+        receiverId,
+        currentMarker: {
+          position: { lat: latestLocation.latitude, lng: latestLocation.longitude },
+          title: `Responder Location (${receiverId.slice(0, 8)}...)`,
+          icon: {
+            path: googleMaps.SymbolPath.CIRCLE,
+            scale: 8,
+            fillColor: '#2563EB',
+            fillOpacity: 1,
+            strokeColor: '#FFFFFF',
+            strokeWeight: 3,
+          },
+        },
+        polyline: {
+          path: [senderLocation, { lat: latestLocation.latitude, lng: latestLocation.longitude }],
+          options: {
+            strokeColor: '#2563EB',
+            strokeOpacity: 0.4,
+            strokeWeight: 2,
+            geodesic: true,
+          },
+        },
+        historyMarkers: locations.map((loc, index) => ({
+          key: `receiver-${receiverId}-${loc.id}-${index}`,
+          position: { lat: loc.latitude, lng: loc.longitude },
+          icon: {
+            path: googleMaps.SymbolPath.CIRCLE,
+            scale: 4,
+            fillColor: '#2563EB',
+            fillOpacity: 0.6,
+            strokeColor: '#FFFFFF',
+            strokeWeight: 2,
+          },
+        })),
+      })
+    })
+    
+    return markers
+  }, [allReceiverLocations, senderLocation, googleMaps])
 
   return (
     <div className="w-full h-full relative">
@@ -406,30 +531,13 @@ export default function EmergencyMapComponent({
         center={senderLocation}
         zoom={directionsResult && receiverLoc ? undefined : 15}
         onLoad={onLoad}
-        options={{
-          disableDefaultUI: false,
-          zoomControl: true,
-          streetViewControl: false,
-          mapTypeControl: false,
-          fullscreenControl: true,
-        }}
+        options={mapOptions}
       >
         {/* Sender location marker (Emergency Location - Red) */}
         <Marker
           position={senderLocation}
           title="Emergency Location (Sender)"
-          icon={
-            googleMaps
-              ? {
-                  path: googleMaps.SymbolPath.CIRCLE,
-                  scale: 8,
-                  fillColor: '#DE3831',
-                  fillOpacity: 1,
-                  strokeColor: '#FFFFFF',
-                  strokeWeight: 3,
-                }
-              : undefined
-          }
+          icon={senderMarkerIcon}
         />
 
         {/* Receiver location marker (Responder Location - Blue) */}
@@ -437,18 +545,7 @@ export default function EmergencyMapComponent({
           <Marker
             position={receiverLoc}
             title="Your Location (Responder)"
-            icon={
-              googleMaps
-                ? {
-                    path: googleMaps.SymbolPath.CIRCLE,
-                    scale: 8,
-                    fillColor: '#2563EB',
-                    fillOpacity: 1,
-                    strokeColor: '#FFFFFF',
-                    strokeWeight: 3,
-                  }
-                : undefined
-            }
+            icon={receiverMarkerIcon}
           />
         )}
 
@@ -481,120 +578,72 @@ export default function EmergencyMapComponent({
         )}
 
         {/* Sender location history trail (Red) */}
-        {senderLocationHistory.map((loc, index) => (
+        {senderHistoryMarkers.map((marker) => (
           <Marker
-            key={`sender-${loc.id}-${index}`}
-            position={{
-              lat: loc.latitude,
-              lng: loc.longitude,
-            }}
-            icon={
-              googleMaps
-                ? {
-                    path: googleMaps.SymbolPath.CIRCLE,
-                    scale: 4,
-                    fillColor: '#DE3831',
-                    fillOpacity: 0.6,
-                    strokeColor: '#FFFFFF',
-                    strokeWeight: 2,
-                  }
-                : undefined
-            }
+            key={marker.key}
+            position={marker.position}
+            icon={marker.icon}
           />
         ))}
 
         {/* Receiver location history trail (Blue) - for single receiver view */}
-        {receiverLocHistory.map((loc, index) => (
+        {receiverHistoryMarkers.map((marker) => (
           <Marker
-            key={`receiver-${loc.id}-${index}`}
-            position={{
-              lat: loc.latitude,
-              lng: loc.longitude,
-            }}
-            icon={
-              googleMaps
-                ? {
-                    path: googleMaps.SymbolPath.CIRCLE,
-                    scale: 4,
-                    fillColor: '#2563EB',
-                    fillOpacity: 0.6,
-                    strokeColor: '#FFFFFF',
-                    strokeWeight: 2,
-                  }
-                : undefined
-            }
+            key={marker.key}
+            position={marker.position}
+            icon={marker.icon}
           />
         ))}
 
         {/* Multiple receiver locations (for sender's map) */}
-        {Array.from(allReceiverLocations.entries()).map(([receiverId, locations]) => {
-          if (locations.length === 0) return null
-          const latestLocation = locations[locations.length - 1]
-          
-          return (
-            <div key={`receiver-${receiverId}`}>
-              {/* Receiver current location marker */}
-              <Marker
-                position={{
-                  lat: latestLocation.latitude,
-                  lng: latestLocation.longitude,
-                }}
-                title={`Responder Location (${receiverId.slice(0, 8)}...)`}
-                icon={
-                  googleMaps
-                    ? {
-                        path: googleMaps.SymbolPath.CIRCLE,
-                        scale: 8,
-                        fillColor: '#2563EB',
-                        fillOpacity: 1,
-                        strokeColor: '#FFFFFF',
-                        strokeWeight: 3,
-                      }
-                    : undefined
-                }
+        {multipleReceiverMarkers.map((markerData) => (
+          <div key={`receiver-${markerData.receiverId}`}>
+            {/* Receiver current location marker */}
+            <Marker
+              position={markerData.currentMarker.position}
+              title={markerData.currentMarker.title}
+              icon={markerData.currentMarker.icon}
+            />
+            
+            {/* Polyline from sender to this receiver */}
+            {googleMaps && (
+              <Polyline
+                key={`polyline-${markerData.receiverId}`}
+                path={markerData.polyline.path}
+                options={markerData.polyline.options}
               />
-              
-              {/* Polyline from sender to this receiver */}
-              {googleMaps && (
-                <Polyline
-                  key={`polyline-${receiverId}`}
-                  path={[senderLocation, { lat: latestLocation.latitude, lng: latestLocation.longitude }]}
-                  options={{
-                    strokeColor: '#2563EB',
-                    strokeOpacity: 0.4,
-                    strokeWeight: 2,
-                    geodesic: true,
-                  }}
-                />
-              )}
-              
-              {/* Receiver location history trail */}
-              {locations.map((loc, index) => (
-                <Marker
-                  key={`receiver-${receiverId}-${loc.id}-${index}`}
-                  position={{
-                    lat: loc.latitude,
-                    lng: loc.longitude,
-                  }}
-                  icon={
-                    googleMaps
-                      ? {
-                          path: googleMaps.SymbolPath.CIRCLE,
-                          scale: 4,
-                          fillColor: '#2563EB',
-                          fillOpacity: 0.6,
-                          strokeColor: '#FFFFFF',
-                          strokeWeight: 2,
-                        }
-                      : undefined
-                  }
-                />
-              ))}
-            </div>
-          )
-        })}
+            )}
+            
+            {/* Receiver location history trail */}
+            {markerData.historyMarkers.map((marker) => (
+              <Marker
+                key={marker.key}
+                position={marker.position}
+                icon={marker.icon}
+              />
+            ))}
+          </div>
+        ))}
       </GoogleMap>
     </div>
   )
 }
+
+// Memoize component to prevent unnecessary re-renders
+export default memo(EmergencyMapComponent, (prevProps, nextProps) => {
+  // Custom comparison function - only re-render if meaningful props change
+  return (
+    prevProps.latitude === nextProps.latitude &&
+    prevProps.longitude === nextProps.longitude &&
+    prevProps.alertId === nextProps.alertId &&
+    prevProps.user_id === nextProps.user_id &&
+    prevProps.receiverUserId === nextProps.receiverUserId &&
+    prevProps.senderUserId === nextProps.senderUserId &&
+    prevProps.receiverLocation?.lat === nextProps.receiverLocation?.lat &&
+    prevProps.receiverLocation?.lng === nextProps.receiverLocation?.lng &&
+    prevProps.receiverLocationHistory?.length === nextProps.receiverLocationHistory?.length &&
+    prevProps.receiverUserIds?.length === nextProps.receiverUserIds?.length &&
+    prevProps.receiverLocations?.size === nextProps.receiverLocations?.size
+  )
+})
 
