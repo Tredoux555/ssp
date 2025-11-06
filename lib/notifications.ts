@@ -89,10 +89,17 @@ export function vibrateDevice(pattern: number[] = [200, 100, 200]): void {
 /**
  * Show full-screen emergency alert
  * This creates a red flashing overlay that covers the entire screen
+ * Only shows for receivers (contacts), not for the sender
  */
 export function showEmergencyAlert(alertId: string, alertData: any): void {
   // Prevent duplicate alerts
   if (isAlertActive && currentAlertId === alertId) {
+    return
+  }
+
+  // Don't show alert if user is the sender (this should be checked before calling, but double-check)
+  if (alertData.user_id && alertData.currentUserId && alertData.user_id === alertData.currentUserId) {
+    console.log('[Alert] Skipping alert overlay - user is the sender')
     return
   }
 
@@ -141,8 +148,15 @@ export function showEmergencyAlert(alertId: string, alertData: any): void {
   title.textContent = '🚨 EMERGENCY ALERT 🚨'
   title.style.cssText = 'font-size: 2rem; font-weight: bold; margin-bottom: 1rem; text-transform: uppercase;'
 
+  // Build message with sender info if available
+  let messageText = 'Someone in your contact list needs help!'
+  if (alertData.senderName || alertData.senderEmail) {
+    const senderDisplay = alertData.senderName || alertData.senderEmail || 'a contact'
+    messageText = `Emergency alert from ${senderDisplay}!`
+  }
+  
   const message = document.createElement('p')
-  message.textContent = 'Someone in your contact list needs help!'
+  message.textContent = messageText
   message.style.cssText = 'font-size: 1.2rem; margin-bottom: 1rem;'
 
   const details = document.createElement('p')

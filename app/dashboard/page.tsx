@@ -7,9 +7,11 @@ import { getActiveEmergency, getEmergencyContacts } from '@/lib/emergency'
 import { getCurrentLocation, reverseGeocode } from '@/lib/location'
 import { subscribeToContactAlerts } from '@/lib/realtime/subscriptions'
 import { showEmergencyAlert, hideEmergencyAlert } from '@/lib/notifications'
+import { registerDeviceForPush } from '@/lib/services/push'
+import { createClient } from '@/lib/supabase'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
-import { AlertTriangle, Users, Phone, MapPin, LogOut } from 'lucide-react'
+import { AlertTriangle, Users, Phone, MapPin, LogOut, Bell, BellOff } from 'lucide-react'
 import { EmergencyAlert } from '@/types/database'
 
 // Helper function to properly serialize errors for logging
@@ -48,6 +50,7 @@ export default function DashboardPage() {
   const [activeEmergency, setActiveEmergency] = useState<EmergencyAlert | null>(null)
   const [emergencyLoading, setEmergencyLoading] = useState(false)
   const [contactCount, setContactCount] = useState(0)
+  const [pushEnabled, setPushEnabled] = useState<boolean | null>(null)
   const activeEmergencyRef = useRef<EmergencyAlert | null>(null)
   
   // Keep ref in sync with state
@@ -165,8 +168,53 @@ export default function DashboardPage() {
       
       // Subscribe to emergency alerts for this contact user
       // This fires when someone in their contact list triggers an alert
-      const unsubscribe = subscribeToContactAlerts(userId, (alert) => {
+      const unsubscribe = subscribeToContactAlerts(userId, async (alert) => {
         if (!isMounted) return // Prevent navigation if component unmounted
+        
+        // Skip if user is the sender (shouldn't happen due to subscription filter, but double-check)
+        if (alert.user_id === userId) {
+          console.log(`[Dashboard] ⏭️ Skipping alert - user is the sender`)
+          return
+        }
+        
+        // Fetch sender information (email/name) from the alert
+        let senderName: string | null = null
+        let senderEmail: string | null = null
+        try {
+          const supabase = createClient()
+          
+          // First try to get sender info from emergency_contacts (contact's view of sender)
+          const { data: senderContact } = await supabase
+            .from('emergency_contacts')
+            .select('name, email')
+            .eq('contact_user_id', alert.user_id)
+            .eq('user_id', userId)
+            .maybeSingle()
+          
+          if (senderContact) {
+            senderName = senderContact.name || null
+            senderEmail = senderContact.email || null
+          }
+          
+          // If not found in contacts, try to get from user_profiles table
+          if (!senderName && !senderEmail) {
+            const { data: senderProfile } = await supabase
+              .from('user_profiles')
+              .select('full_name, email')
+              .eq('id', alert.user_id)
+              .maybeSingle()
+            
+            if (senderProfile) {
+              senderName = senderProfile.full_name || null
+              senderEmail = senderProfile.email || null
+            }
+          }
+          
+          // Log for debugging
+          console.log('[Dashboard] Sender info fetched:', { senderName, senderEmail, alertUserId: alert.user_id })
+        } catch (err) {
+          console.warn('[Dashboard] Could not fetch sender info:', err)
+        }
         
         // Check if we're already on this alert page to prevent redirect loops
         const currentPath = window.location.pathname
@@ -175,6 +223,10 @@ export default function DashboardPage() {
           showEmergencyAlert(alert.id, {
             address: alert.address,
             alert_type: alert.alert_type,
+            senderName,
+            senderEmail,
+            user_id: alert.user_id,
+            currentUserId: userId,
           })
           return
         }
@@ -182,10 +234,14 @@ export default function DashboardPage() {
         console.log(`[Dashboard] ✅ Emergency alert received for contact user ${userId}:`, alert)
         subscriptionActive = true // Mark subscription as active when we receive an event
         
-        // Show full-screen alert notification
+        // Show full-screen alert notification with sender info
         showEmergencyAlert(alert.id, {
           address: alert.address,
           alert_type: alert.alert_type,
+          senderName,
+          senderEmail,
+          user_id: alert.user_id,
+          currentUserId: userId,
         })
         
         // Navigate to alert page
@@ -266,12 +322,51 @@ export default function DashboardPage() {
               const alert = relevantAlerts[0]
               if (!isMounted) return // Prevent navigation if component unmounted
               
+              // Skip if user is the sender
+              if (alert.user_id === userId) {
+                return
+              }
+              
               console.log(`[Dashboard] 🚨 POLLING FOUND ALERT FOR USER ${userId}:`, {
                 alertId: alert.id,
                 alertUserId: alert.user_id,
                 contactsNotified: alert.contacts_notified,
                 userIsInContacts: true
               })
+              
+              // Fetch sender info
+              let senderName: string | null = null
+              let senderEmail: string | null = null
+              try {
+                const supabase = createClient()
+                
+                // First try from emergency_contacts
+                const { data: senderContact } = await supabase
+                  .from('emergency_contacts')
+                  .select('name, email')
+                  .eq('contact_user_id', alert.user_id)
+                  .eq('user_id', userId)
+                  .maybeSingle()
+                
+                if (senderContact) {
+                  senderName = senderContact.name || null
+                  senderEmail = senderContact.email || null
+                } else {
+                  // Fallback to user_profiles
+                  const { data: senderProfile } = await supabase
+                    .from('user_profiles')
+                    .select('full_name, email')
+                    .eq('id', alert.user_id)
+                    .maybeSingle()
+                  
+                  if (senderProfile) {
+                    senderName = senderProfile.full_name || null
+                    senderEmail = senderProfile.email || null
+                  }
+                }
+              } catch (err) {
+                console.warn('[Dashboard] Could not fetch sender info in polling:', err)
+              }
               
               // Check if we're already on this alert page
               const currentPath = window.location.pathname
@@ -280,6 +375,10 @@ export default function DashboardPage() {
                 showEmergencyAlert(alert.id, {
                   address: alert.address,
                   alert_type: alert.alert_type,
+                  senderName,
+                  senderEmail,
+                  user_id: alert.user_id,
+                  currentUserId: userId,
                 })
                 router.push(`/alert/${alert.id}`)
               }
@@ -433,6 +532,40 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id])
 
+  // Auto-register push notifications when user logs in
+  useEffect(() => {
+    if (!user) return
+
+    // Check if push notifications are already enabled
+    const checkPushStatus = async () => {
+      try {
+        if ('serviceWorker' in navigator) {
+          const registration = await navigator.serviceWorker.ready
+          const subscription = await registration.pushManager.getSubscription()
+          setPushEnabled(!!subscription)
+          
+          // If not enabled, try to register automatically
+          if (!subscription) {
+            try {
+              const enabled = await registerDeviceForPush()
+              setPushEnabled(enabled)
+            } catch (err) {
+              console.warn('[Push] Auto-registration failed (user may need to grant permission):', err)
+              setPushEnabled(false)
+            }
+          }
+        } else {
+          setPushEnabled(false)
+        }
+      } catch (err) {
+        console.warn('[Push] Could not check push status:', err)
+        setPushEnabled(false)
+      }
+    }
+
+    checkPushStatus()
+  }, [user?.id])
+
   const handleEmergencyButton = async () => {
     if (!user) return
 
@@ -547,15 +680,27 @@ export default function DashboardPage() {
             <h1 className="text-3xl font-bold text-white mb-1">PSP</h1>
             <p className="text-white/90">Welcome, {profile?.full_name || user.email}</p>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleSignOut}
-            className="flex items-center gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            <span className="hidden sm:inline">Sign Out</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Push Notification Status */}
+            {pushEnabled !== null && (
+              <div className="flex items-center gap-2 text-white/80 text-sm">
+                {pushEnabled ? (
+                  <Bell className="w-4 h-4 text-green-400" title="Push notifications enabled" />
+                ) : (
+                  <BellOff className="w-4 h-4 text-yellow-400" title="Push notifications not enabled" />
+                )}
+              </div>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleSignOut}
+              className="flex items-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Sign Out</span>
+            </Button>
+          </div>
         </div>
 
         {/* Emergency Button */}

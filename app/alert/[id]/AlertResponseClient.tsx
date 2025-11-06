@@ -28,6 +28,8 @@ export default function AlertResponsePage() {
   const [locationHistory, setLocationHistory] = useState<LocationHistory[]>([])
   const [acknowledged, setAcknowledged] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [senderName, setSenderName] = useState<string | null>(null)
+  const [senderEmail, setSenderEmail] = useState<string | null>(null)
   const subscriptionsSetupRef = useRef<string | null>(null) // Track which alert ID subscriptions are set up for
   const loadAlertCalledRef = useRef<string | null>(null) // Track if loadAlert has been called for this alertId
 
@@ -101,48 +103,86 @@ export default function AlertResponsePage() {
       // Hide any existing overlay when viewing alert page
       hideEmergencyAlert()
       
+      // Fetch sender information
+      const fetchSenderInfo = async () => {
+        if (!alertData.user_id || !user) return
+        
+        try {
+          const supabase = createClient()
+          
+          // Try from emergency_contacts first
+          const { data: senderContact } = await supabase
+            .from('emergency_contacts')
+            .select('name, email')
+            .eq('contact_user_id', alertData.user_id)
+            .eq('user_id', user.id)
+            .maybeSingle()
+          
+          if (senderContact) {
+            setSenderName(senderContact.name || null)
+            setSenderEmail(senderContact.email || null)
+          } else {
+            // Fallback to user_profiles
+            const { data: senderProfile } = await supabase
+              .from('user_profiles')
+              .select('full_name, email')
+              .eq('id', alertData.user_id)
+              .maybeSingle()
+            
+            if (senderProfile) {
+              setSenderName(senderProfile.full_name || null)
+              setSenderEmail(senderProfile.email || null)
+            }
+          }
+        } catch (err) {
+          console.warn('[Alert] Could not fetch sender info:', err)
+        }
+      }
+      
+      fetchSenderInfo()
+
       // Play sound and vibrate (keep these for alert notification)
       playAlertSound()
       vibrateDevice()
 
-      // Check if user has acknowledged
-      // Note: This query should work because RLS allows contacts to see their own responses
+      // Get initial location - prefer location_history over alert location
       try {
-        const { data: response, error: responseError } = await supabase
-          .from('alert_responses')
+        const { data: latestLocation } = await supabase
+          .from('location_history')
           .select('*')
           .eq('alert_id', alertId)
-          .eq('contact_user_id', user.id)
-          .maybeSingle() // Use maybeSingle instead of single to handle null case
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
 
-        if (responseError) {
-          // If error is RLS-related (406), alert_responses might not exist yet or RLS is blocking
-          // This is OK - the contact hasn't acknowledged yet, or the response record doesn't exist yet
-          if (responseError.code === '42501' || responseError.message?.includes('row-level security')) {
-            console.log('[Alert] RLS blocking alert_responses query (non-critical, response may not exist yet):', responseError.message)
-          } else {
-            console.log('[Alert] No response record found yet (normal if not acknowledged):', responseError.message)
-          }
-        } else if (response?.acknowledged_at) {
-          setAcknowledged(true)
-          console.log('[Alert] ✅ User has already acknowledged this alert')
+        if (latestLocation) {
+          setLocation(latestLocation)
+        } else if (alertData.location_lat && alertData.location_lng) {
+          // Fallback to alert location if no history yet
+          setLocation({
+            id: 'initial',
+            user_id: alertData.user_id,
+            alert_id: alertId,
+            latitude: alertData.location_lat,
+            longitude: alertData.location_lng,
+            timestamp: alertData.triggered_at,
+            created_at: alertData.triggered_at,
+          } as LocationHistory)
         }
-      } catch (err: any) {
-        // Non-critical - response might not exist yet
-        console.log('[Alert] Could not check acknowledgment status (non-critical):', err?.message || err)
-      }
-
-      // Get initial location
-      if (alertData.location_lat && alertData.location_lng) {
-        setLocation({
-          id: 'initial',
-          user_id: alertData.user_id,
-          alert_id: alertId,
-          latitude: alertData.location_lat,
-          longitude: alertData.location_lng,
-          timestamp: alertData.triggered_at,
-          created_at: alertData.triggered_at,
-        })
+      } catch (locationErr) {
+        console.warn('[Alert] Could not fetch initial location:', locationErr)
+        // Fallback to alert location
+        if (alertData.location_lat && alertData.location_lng) {
+          setLocation({
+            id: 'initial',
+            user_id: alertData.user_id,
+            alert_id: alertId,
+            latitude: alertData.location_lat,
+            longitude: alertData.location_lng,
+            timestamp: alertData.triggered_at,
+            created_at: alertData.triggered_at,
+          } as LocationHistory)
+        }
       }
     } catch (error: any) {
       console.error('[Alert] ❌ Failed to load alert:', {
@@ -332,7 +372,12 @@ export default function AlertResponsePage() {
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <AlertTriangle className="w-8 h-8 text-red-500" />
-            <h1 className="text-2xl font-bold">Emergency Alert</h1>
+            <div>
+              <h1 className="text-2xl font-bold">Emergency Alert</h1>
+              {senderName || senderEmail ? (
+                <p className="text-sm text-gray-600">From: {senderName || senderEmail}</p>
+              ) : null}
+            </div>
           </div>
           <Button onClick={() => router.push('/dashboard')} variant="secondary" size="sm">
             <X className="w-4 h-4" />
