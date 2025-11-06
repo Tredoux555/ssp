@@ -165,7 +165,6 @@ export default function AlertResponsePage() {
             alert_id: alertId,
             latitude: alertData.location_lat,
             longitude: alertData.location_lng,
-            accuracy: undefined,
             timestamp: alertData.triggered_at,
             created_at: alertData.triggered_at,
           } as LocationHistory)
@@ -180,7 +179,6 @@ export default function AlertResponsePage() {
             alert_id: alertId,
             latitude: alertData.location_lat,
             longitude: alertData.location_lng,
-            accuracy: undefined,
             timestamp: alertData.triggered_at,
             created_at: alertData.triggered_at,
           } as LocationHistory)
