@@ -462,7 +462,7 @@ export default function AlertResponsePage() {
           )}
         </div>
 
-        {location && (
+        {location && user && (
           <div className="mb-6" style={{ height: '400px', width: '100%' }}>
             <GoogleMapComponent
               latitude={location.latitude}
