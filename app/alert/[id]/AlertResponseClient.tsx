@@ -10,7 +10,7 @@ import { startLocationTracking, getCurrentLocation } from '@/lib/location'
 import { EmergencyAlert, LocationHistory } from '@/types/database'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
-import { AlertTriangle, MapPin, Navigation, X } from 'lucide-react'
+import { AlertTriangle, MapPin, X } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import LocationPermissionPrompt from '@/components/LocationPermissionPrompt'
 import { useLocationPermission } from '@/lib/hooks/useLocationPermission'
@@ -414,33 +414,6 @@ export default function AlertResponsePage() {
             />
           </div>
         )}
-
-        <div className="flex gap-4">
-          <Button
-            onClick={() => {
-              // Use location state if available, otherwise use alert location
-              const coords = location 
-                ? { lat: location.latitude, lng: location.longitude }
-                : (alert.location_lat && alert.location_lng 
-                    ? { lat: alert.location_lat, lng: alert.location_lng }
-                    : null)
-              
-              if (!coords) {
-                window.alert('Location not available for this alert')
-                return
-              }
-              
-              const url = `https://www.google.com/maps/dir/?api=1&destination=${coords.lat},${coords.lng}`
-              window.open(url, '_blank')
-            }}
-            variant="primary"
-            className="w-full"
-            disabled={!location && (!alert.location_lat || !alert.location_lng)}
-          >
-            <Navigation className="w-4 h-4 mr-2" />
-            Get Directions
-          </Button>
-        </div>
       </Card>
     </div>
   )

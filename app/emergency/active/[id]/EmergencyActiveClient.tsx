@@ -5,13 +5,12 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { getActiveEmergency } from '@/lib/emergency'
 import { startLocationTracking, getCurrentLocation, reverseGeocode } from '@/lib/location'
-import { confirmLocation } from '@/lib/services/location'
 import { createClient } from '@/lib/supabase'
 import { subscribeToLocationHistory } from '@/lib/realtime/subscriptions'
 import { EmergencyAlert, LocationHistory } from '@/types/database'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
-import { AlertTriangle, X, MapPin, CheckCircle } from 'lucide-react'
+import { AlertTriangle, X, MapPin } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import LocationPermissionPrompt from '@/components/LocationPermissionPrompt'
 import { useLocationPermission } from '@/lib/hooks/useLocationPermission'
@@ -33,10 +32,8 @@ export default function EmergencyActivePage() {
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null)
   const [address, setAddress] = useState<string>('')
   const [loading, setLoading] = useState(true)
-  const [locationConfirmed, setLocationConfirmed] = useState(false)
   const [locationTrackingActive, setLocationTrackingActive] = useState(false)
   const [lastLocationUpdate, setLastLocationUpdate] = useState<Date | null>(null)
-  const [confirmingLocation, setConfirmingLocation] = useState(false)
   const [receiverLocations, setReceiverLocations] = useState<Map<string, LocationHistory[]>>(new Map())
   const [receiverUserIds, setReceiverUserIds] = useState<string[]>([])
   const { permissionStatus, requestPermission } = useLocationPermission()
@@ -312,49 +309,6 @@ export default function EmergencyActivePage() {
     }
   }
 
-  const handleConfirmLocation = async () => {
-    if (!user || !alert) return
-    
-    setConfirmingLocation(true)
-    
-    try {
-      // Get current location
-      const currentLoc = await getCurrentLocation()
-      
-      if (!currentLoc) {
-        window.alert('Unable to get your current location. Please check location permissions in your browser settings.')
-        setConfirmingLocation(false)
-        return
-      }
-      
-      // Explicitly confirm location (bypasses rate limit)
-      await confirmLocation(user.id, alert.id, currentLoc)
-      
-      // Update local state
-      setLocation(currentLoc)
-      setLocationConfirmed(true)
-      setLastLocationUpdate(new Date())
-      
-      // Try to get address if we don't have it
-      if (!address) {
-        try {
-          const addr = await reverseGeocode(currentLoc.lat, currentLoc.lng)
-          if (addr) setAddress(addr)
-        } catch (error) {
-          // Address lookup failed - that's ok
-        }
-      }
-      
-      // Show success feedback
-      console.log('[Alert] ✅ Location confirmed and sent to contacts')
-    } catch (error: any) {
-      console.error('Failed to confirm location:', error)
-      window.alert(`Failed to confirm location: ${error?.message || 'Unknown error'}. Please try again.`)
-    } finally {
-      setConfirmingLocation(false)
-    }
-  }
-
   const handleCancel = async () => {
     if (!user || !alert) return
 
@@ -434,13 +388,13 @@ export default function EmergencyActivePage() {
   }
 
   return (
-    <div className="min-h-screen bg-sa-red emergency-flash p-4 text-white">
+    <div className="min-h-screen bg-sa-red p-4 text-white">
       <div className="max-w-4xl mx-auto">
         {/* Alert Banner */}
-        <Card className="mb-6 border-4 border-white emergency-pulse bg-sa-red text-white">
+        <Card className="mb-6 border-4 border-white bg-sa-red text-white">
           <div className="text-center">
             {/* Alert Icon */}
-            <div className="mb-4 emergency-pulse">
+            <div className="mb-4">
               <AlertTriangle className="w-16 h-16 mx-auto text-white" />
             </div>
 
@@ -504,29 +458,6 @@ export default function EmergencyActivePage() {
                 senderUserId={user.id}
               />
             </div>
-            
-            {/* Location Confirmation Button */}
-            <Button
-              variant="emergency"
-              size="lg"
-              onClick={handleConfirmLocation}
-              disabled={confirmingLocation || !location}
-              className="w-full mt-4 flex items-center justify-center gap-2"
-            >
-              {confirmingLocation ? (
-                'Confirming Location...'
-              ) : locationConfirmed ? (
-                <>
-                  <CheckCircle className="w-5 h-5" />
-                  Location Confirmed
-                </>
-              ) : (
-                <>
-                  <MapPin className="w-5 h-5" />
-                  Confirm Location
-                </>
-              )}
-            </Button>
             
             {/* Location Tracking Status */}
             <div className="mt-4 p-3 bg-gray-50 rounded-lg">

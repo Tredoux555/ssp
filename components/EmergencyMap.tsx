@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { GoogleMap, Marker, Polyline, useLoadScript } from '@react-google-maps/api'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { GoogleMap, Marker, Polyline, useLoadScript, DirectionsService, DirectionsRenderer } from '@react-google-maps/api'
 import { subscribeToLocationHistory } from '@/lib/realtime/subscriptions'
 import { createClient } from '@/lib/supabase'
 import { LocationHistory } from '@/types/database'
@@ -57,6 +57,12 @@ export default function EmergencyMapComponent({
   const [allReceiverUserIds, setAllReceiverUserIds] = useState<string[]>(receiverUserIds || [])
   const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null)
   const [isLiveTracking, setIsLiveTracking] = useState(false)
+  const [directionsResult, setDirectionsResult] = useState<google.maps.DirectionsResult | null>(null)
+  const [directionsError, setDirectionsError] = useState<string | null>(null)
+  const [directionsLoading, setDirectionsLoading] = useState(false)
+  const directionsServiceRef = useRef<google.maps.DirectionsService | null>(null)
+  const lastDirectionsUpdateRef = useRef<{ origin: { lat: number; lng: number }; destination: { lat: number; lng: number } } | null>(null)
+  const directionsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Update sender location when props change
   useEffect(() => {
@@ -208,7 +214,100 @@ export default function EmergencyMapComponent({
     })
 
     return unsubscribe
-  }, [alertId, map])
+  }, [alertId, map, senderUserId, receiverUserId, user_id, receiverLoc])
+
+  // Calculate directions from receiver to sender
+  const calculateDirections = useCallback((origin: { lat: number; lng: number }, destination: { lat: number; lng: number }) => {
+    // Check if locations have changed significantly (>50m) to avoid unnecessary recalculations
+    const lastUpdate = lastDirectionsUpdateRef.current
+    if (lastUpdate) {
+      const originChanged = Math.abs(origin.lat - lastUpdate.origin.lat) > 0.0005 || 
+                           Math.abs(origin.lng - lastUpdate.origin.lng) > 0.0005
+      const destChanged = Math.abs(destination.lat - lastUpdate.destination.lat) > 0.0005 || 
+                         Math.abs(destination.lng - lastUpdate.destination.lng) > 0.0005
+      
+      if (!originChanged && !destChanged) {
+        return // Locations haven't changed significantly, skip recalculation
+      }
+    }
+
+    // Clear any existing timeout
+    if (directionsTimeoutRef.current) {
+      clearTimeout(directionsTimeoutRef.current)
+    }
+
+    // Debounce directions calculation (2 seconds)
+    directionsTimeoutRef.current = setTimeout(() => {
+      if (typeof window === 'undefined' || !window.google?.maps) {
+        console.warn('Google Maps API not available')
+        return
+      }
+
+      if (!directionsServiceRef.current) {
+        directionsServiceRef.current = new window.google.maps.DirectionsService()
+      }
+
+      setDirectionsLoading(true)
+      setDirectionsError(null)
+
+      directionsServiceRef.current.route(
+        {
+          origin: new window.google.maps.LatLng(origin.lat, origin.lng),
+          destination: new window.google.maps.LatLng(destination.lat, destination.lng),
+          travelMode: window.google.maps.TravelMode.DRIVING,
+        },
+        (result, status) => {
+          setDirectionsLoading(false)
+          
+          if (status === window.google.maps.DirectionsStatus.OK && result) {
+            setDirectionsResult(result)
+            setDirectionsError(null)
+            lastDirectionsUpdateRef.current = { origin, destination }
+          } else {
+            setDirectionsResult(null)
+            if (status === window.google.maps.DirectionsStatus.ZERO_RESULTS) {
+              setDirectionsError('No route found')
+            } else if (status === window.google.maps.DirectionsStatus.REQUEST_DENIED) {
+              setDirectionsError('Directions request denied')
+            } else if (status === window.google.maps.DirectionsStatus.OVER_QUERY_LIMIT) {
+              setDirectionsError('Directions API quota exceeded')
+            } else {
+              setDirectionsError(`Directions error: ${status}`)
+            }
+          }
+        }
+      )
+    }, 2000) // 2 second debounce
+  }, [])
+
+  // Calculate directions when both receiver and sender locations are available
+  useEffect(() => {
+    if (!receiverLoc || !senderLocation) {
+      setDirectionsResult(null)
+      return
+    }
+
+    // Only calculate directions for receiver's view (when receiverUserId is set and different from sender)
+    if (receiverUserId && receiverUserId !== (senderUserId || user_id)) {
+      calculateDirections(receiverLoc, senderLocation)
+    }
+
+    return () => {
+      if (directionsTimeoutRef.current) {
+        clearTimeout(directionsTimeoutRef.current)
+      }
+    }
+  }, [receiverLoc, senderLocation, receiverUserId, senderUserId, user_id, calculateDirections])
+
+  // Adjust map bounds when directions are available
+  useEffect(() => {
+    if (directionsResult && map && receiverLoc && typeof window !== 'undefined' && window.google?.maps) {
+      const bounds = new window.google.maps.LatLngBounds()
+      bounds.extend(senderLocation)
+      bounds.extend(receiverLoc)
+      map.fitBounds(bounds)
+    }
+  }, [directionsResult, map, receiverLoc, senderLocation])
 
   const onLoad = (mapInstance: any) => {
     setMap(mapInstance)
@@ -273,11 +372,39 @@ export default function EmergencyMapComponent({
           )}
         </div>
       )}
+
+      {/* Directions Route Info */}
+      {directionsResult && directionsResult.routes[0] && (
+        <div className="absolute top-2 right-2 z-10 bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium shadow-lg max-w-xs">
+          <div className="font-semibold mb-1">Route to Emergency</div>
+          {directionsResult.routes[0].legs[0] && (
+            <>
+              <div className="text-xs opacity-90">
+                {directionsResult.routes[0].legs[0].distance?.text} • {directionsResult.routes[0].legs[0].duration?.text}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Directions Loading Indicator */}
+      {directionsLoading && (
+        <div className="absolute top-2 right-2 z-10 bg-blue-500 text-white px-3 py-1 rounded-lg text-xs font-medium shadow-lg">
+          Calculating route...
+        </div>
+      )}
+
+      {/* Directions Error */}
+      {directionsError && !directionsLoading && (
+        <div className="absolute top-2 right-2 z-10 bg-orange-500 text-white px-3 py-1 rounded-lg text-xs font-medium shadow-lg max-w-xs">
+          {directionsError}
+        </div>
+      )}
       
       <GoogleMap
         mapContainerStyle={mapContainerStyle}
         center={senderLocation}
-        zoom={15}
+        zoom={directionsResult && receiverLoc ? undefined : 15}
         onLoad={onLoad}
         options={{
           disableDefaultUI: false,
@@ -325,8 +452,23 @@ export default function EmergencyMapComponent({
           />
         )}
 
-        {/* Polyline connecting sender and receiver (if both available) */}
-        {receiverLoc && googleMaps && (
+        {/* Directions route (replaces simple polyline when available) */}
+        {directionsResult && googleMaps && (
+          <DirectionsRenderer
+            directions={directionsResult}
+            options={{
+              suppressMarkers: true, // Keep our custom markers
+              polylineOptions: {
+                strokeColor: '#2563EB',
+                strokeOpacity: 0.8,
+                strokeWeight: 4,
+              },
+            }}
+          />
+        )}
+
+        {/* Fallback polyline if no directions available */}
+        {!directionsResult && receiverLoc && googleMaps && (
           <Polyline
             path={[senderLocation, receiverLoc]}
             options={{
