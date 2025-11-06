@@ -5,10 +5,12 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { getActiveEmergency } from '@/lib/emergency'
 import { startLocationTracking, getCurrentLocation, reverseGeocode } from '@/lib/location'
+import { confirmLocation } from '@/lib/services/location'
+import { createClient } from '@/lib/supabase'
 import { EmergencyAlert } from '@/types/database'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
-import { AlertTriangle, X, MapPin, Navigation } from 'lucide-react'
+import { AlertTriangle, X, MapPin, CheckCircle } from 'lucide-react'
 import dynamic from 'next/dynamic'
 
 // Dynamically import Google Maps to avoid SSR issues
@@ -28,6 +30,10 @@ export default function EmergencyActivePage() {
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null)
   const [address, setAddress] = useState<string>('')
   const [loading, setLoading] = useState(true)
+  const [locationConfirmed, setLocationConfirmed] = useState(false)
+  const [locationTrackingActive, setLocationTrackingActive] = useState(false)
+  const [lastLocationUpdate, setLastLocationUpdate] = useState<Date | null>(null)
+  const [confirmingLocation, setConfirmingLocation] = useState(false)
 
   useEffect(() => {
     if (!user) return
@@ -44,6 +50,8 @@ export default function EmergencyActivePage() {
       alert.id,
       async (loc) => {
         setLocation(loc)
+        setLastLocationUpdate(new Date())
+        setLocationTrackingActive(true)
         if (!address && loc) {
           try {
             const addr = await reverseGeocode(loc.lat, loc.lng)
@@ -56,6 +64,8 @@ export default function EmergencyActivePage() {
       },
       10000 // Update every 10 seconds
     )
+    
+    setLocationTrackingActive(true)
 
     // Get initial location - use alert location as fallback
     getCurrentLocation()
@@ -182,6 +192,7 @@ export default function EmergencyActivePage() {
       
       // Stop location tracking
       stopTracking()
+      setLocationTrackingActive(false)
     }
   }, [alert, user, address])
 
@@ -215,6 +226,49 @@ export default function EmergencyActivePage() {
       router.push('/dashboard')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleConfirmLocation = async () => {
+    if (!user || !alert) return
+    
+    setConfirmingLocation(true)
+    
+    try {
+      // Get current location
+      const currentLoc = await getCurrentLocation()
+      
+      if (!currentLoc) {
+        window.alert('Unable to get your current location. Please check location permissions in your browser settings.')
+        setConfirmingLocation(false)
+        return
+      }
+      
+      // Explicitly confirm location (bypasses rate limit)
+      await confirmLocation(user.id, alert.id, currentLoc)
+      
+      // Update local state
+      setLocation(currentLoc)
+      setLocationConfirmed(true)
+      setLastLocationUpdate(new Date())
+      
+      // Try to get address if we don't have it
+      if (!address) {
+        try {
+          const addr = await reverseGeocode(currentLoc.lat, currentLoc.lng)
+          if (addr) setAddress(addr)
+        } catch (error) {
+          // Address lookup failed - that's ok
+        }
+      }
+      
+      // Show success feedback
+      console.log('[Alert] ✅ Location confirmed and sent to contacts')
+    } catch (error: any) {
+      console.error('Failed to confirm location:', error)
+      window.alert(`Failed to confirm location: ${error?.message || 'Unknown error'}. Please try again.`)
+    } finally {
+      setConfirmingLocation(false)
     }
   }
 
@@ -353,19 +407,56 @@ export default function EmergencyActivePage() {
                 user_id={alert.user_id}
               />
             </div>
+            
+            {/* Location Confirmation Button */}
             <Button
               variant="emergency"
               size="lg"
-              onClick={() => {
-                if (!location) return
-                const url = `https://www.google.com/maps/dir/?api=1&destination=${location.lat},${location.lng}`
-                window.open(url, '_blank')
-              }}
+              onClick={handleConfirmLocation}
+              disabled={confirmingLocation || !location}
               className="w-full mt-4 flex items-center justify-center gap-2"
             >
-              <Navigation className="w-5 h-5" />
-              Open in Google Maps
+              {confirmingLocation ? (
+                'Confirming Location...'
+              ) : locationConfirmed ? (
+                <>
+                  <CheckCircle className="w-5 h-5" />
+                  Location Confirmed
+                </>
+              ) : (
+                <>
+                  <MapPin className="w-5 h-5" />
+                  Confirm Location
+                </>
+              )}
             </Button>
+            
+            {/* Location Tracking Status */}
+            <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  {locationTrackingActive ? (
+                    <>
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                      <span className="text-gray-700">Live tracking active</span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                      <span className="text-gray-500">Tracking paused</span>
+                    </>
+                  )}
+                </div>
+                {lastLocationUpdate && (
+                  <span className="text-gray-500">
+                    Updated {Math.floor((Date.now() - lastLocationUpdate.getTime()) / 1000)}s ago
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Your location updates automatically every 10 seconds. Contacts can track your movement in real-time.
+              </p>
+            </div>
           </Card>
         )}
 

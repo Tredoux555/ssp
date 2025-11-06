@@ -149,7 +149,67 @@ export async function clearWatch(watchId: string): Promise<void> {
 }
 
 /**
+ * Confirm location explicitly (manual confirmation - bypasses rate limit)
+ * This is used when the user explicitly clicks "Confirm Location" button
+ */
+export async function confirmLocation(
+  userId: string,
+  alertId: string,
+  location: { lat: number; lng: number; accuracy?: number }
+): Promise<void> {
+  const supabase = createClient()
+  
+  if (!supabase) {
+    console.error('Supabase client not available for location confirmation')
+    return
+  }
+
+  try {
+    // Insert location update immediately (no rate limit check for manual confirmations)
+    const locationData: any = {
+      user_id: userId,
+      alert_id: alertId,
+      latitude: location.lat,
+      longitude: location.lng,
+      created_at: new Date().toISOString(),
+    }
+
+    if (location.accuracy) {
+      locationData.accuracy = location.accuracy
+    }
+
+    const { error } = await supabase
+      .from('location_history')
+      .insert(locationData)
+
+    if (error) {
+      console.error('Failed to confirm location:', error)
+      throw error // Throw for manual confirmations so UI can show error
+    }
+    
+    // Also update the alert's initial location for reference
+    const { error: updateError } = await supabase
+      .from('emergency_alerts')
+      .update({
+        location_lat: location.lat,
+        location_lng: location.lng,
+      })
+      .eq('id', alertId)
+      .eq('user_id', userId) // Ensure user owns the alert
+    
+    if (updateError) {
+      console.warn('Failed to update alert location (non-critical):', updateError)
+      // Don't throw - location_history update succeeded
+    }
+  } catch (error) {
+    console.error('Failed to confirm location:', error)
+    throw error // Re-throw so caller can handle
+  }
+}
+
+/**
  * Update location in database (client-side replacement for /api/location/update)
+ * Rate limited for automatic updates
  */
 export async function updateLocation(
   userId: string,

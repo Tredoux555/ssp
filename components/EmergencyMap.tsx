@@ -38,6 +38,8 @@ export default function EmergencyMapComponent({
     lng: longitude,
   })
   const [locationHistory, setLocationHistory] = useState<LocationHistory[]>([])
+  const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null)
+  const [isLiveTracking, setIsLiveTracking] = useState(false)
 
   // Update current location when props change
   useEffect(() => {
@@ -54,8 +56,10 @@ export default function EmergencyMapComponent({
         lat: newLocation.latitude,
         lng: newLocation.longitude,
       })
+      setLastUpdateTime(new Date())
+      setIsLiveTracking(true)
 
-      // Pan map to new location
+      // Pan map to new location with smooth animation
       if (map && typeof window !== 'undefined' && window.google?.maps) {
         map.panTo({
           lat: newLocation.latitude,
@@ -117,48 +121,63 @@ export default function EmergencyMapComponent({
   const googleMaps = typeof window !== 'undefined' ? window.google?.maps : null
 
   return (
-    <GoogleMap
-      mapContainerStyle={mapContainerStyle}
-      center={currentLocation}
-      zoom={15}
-      onLoad={onLoad}
-      options={{
-        disableDefaultUI: false,
-        zoomControl: true,
-        streetViewControl: false,
-        mapTypeControl: false,
-        fullscreenControl: true,
-      }}
-    >
-      {/* Current location marker */}
-      <Marker
-        position={currentLocation}
-        title="Emergency Location"
-      />
-
-      {/* Location history trail */}
-      {locationHistory.map((loc, index) => (
+    <div className="w-full h-full relative">
+      {/* Live Tracking Indicator */}
+      {isLiveTracking && (
+        <div className="absolute top-2 left-2 z-10 bg-green-500 text-white px-3 py-1 rounded-full text-xs font-medium flex items-center gap-2 shadow-lg">
+          <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+          Live Tracking
+          {lastUpdateTime && (
+            <span className="text-xs opacity-90">
+              ({Math.floor((Date.now() - lastUpdateTime.getTime()) / 1000)}s ago)
+            </span>
+          )}
+        </div>
+      )}
+      
+      <GoogleMap
+        mapContainerStyle={mapContainerStyle}
+        center={currentLocation}
+        zoom={15}
+        onLoad={onLoad}
+        options={{
+          disableDefaultUI: false,
+          zoomControl: true,
+          streetViewControl: false,
+          mapTypeControl: false,
+          fullscreenControl: true,
+        }}
+      >
+        {/* Current location marker */}
         <Marker
-          key={`${loc.id}-${index}`}
-          position={{
-            lat: loc.latitude,
-            lng: loc.longitude,
-          }}
-          icon={
-            googleMaps
-              ? {
-                  path: googleMaps.SymbolPath.CIRCLE,
-                  scale: 4,
-                  fillColor: '#DE3831',
-                  fillOpacity: 0.6,
-                  strokeColor: '#FFFFFF',
-                  strokeWeight: 2,
-                }
-              : undefined
-          }
+          position={currentLocation}
+          title="Emergency Location"
         />
-      ))}
-    </GoogleMap>
+
+        {/* Location history trail */}
+        {locationHistory.map((loc, index) => (
+          <Marker
+            key={`${loc.id}-${index}`}
+            position={{
+              lat: loc.latitude,
+              lng: loc.longitude,
+            }}
+            icon={
+              googleMaps
+                ? {
+                    path: googleMaps.SymbolPath.CIRCLE,
+                    scale: 4,
+                    fillColor: '#DE3831',
+                    fillOpacity: 0.6,
+                    strokeColor: '#FFFFFF',
+                    strokeWeight: 2,
+                  }
+                : undefined
+            }
+          />
+        ))}
+      </GoogleMap>
+    </div>
   )
 }
 
