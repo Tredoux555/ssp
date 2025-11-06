@@ -14,7 +14,7 @@ export interface EmergencyAlert {
   id: string
   user_id: string
   status: 'active' | 'resolved' | 'cancelled'
-  alert_type: 'robbery' | 'house_breaking' | 'car_jacking' | 'accident' | 'other' | 'life_or_death' | 'need_a_hand'
+  alert_type: 'robbery' | 'house_breaking' | 'car_jacking' | 'accident' | 'other'
   location_lat?: number
   location_lng?: number
   address?: string

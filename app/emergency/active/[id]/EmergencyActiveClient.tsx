@@ -484,11 +484,7 @@ export default function EmergencyActivePage() {
             {/* Alert Type */}
             <div className="bg-white/20 rounded-lg p-3 inline-block">
               <p className="text-sm opacity-75">Alert Type</p>
-              <p className="text-lg font-semibold">
-                {alert.alert_type === 'life_or_death' ? 'Life or Death' :
-                 alert.alert_type === 'need_a_hand' ? 'I Just Need a Hand' :
-                 alert.alert_type.replace('_', ' ')}
-              </p>
+              <p className="text-lg font-semibold capitalize">{alert.alert_type.replace('_', ' ')}</p>
             </div>
           </div>
         </Card>

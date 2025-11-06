@@ -51,8 +51,6 @@ export default function DashboardPage() {
   const [emergencyLoading, setEmergencyLoading] = useState(false)
   const [contactCount, setContactCount] = useState(0)
   const [pushEnabled, setPushEnabled] = useState<boolean | null>(null)
-  const [showAlertTypeModal, setShowAlertTypeModal] = useState(false)
-  const [selectedAlertType, setSelectedAlertType] = useState<'life_or_death' | 'need_a_hand' | null>(null)
   const activeEmergencyRef = useRef<EmergencyAlert | null>(null)
   const senderInfoCacheRef = useRef<Map<string, { data: { name: string | null; email: string | null }; timestamp: number }>>(new Map())
   const contactCountCacheRef = useRef<{ count: number; timestamp: number } | null>(null)
@@ -587,17 +585,9 @@ export default function DashboardPage() {
     checkPushStatus()
   }, [user?.id])
 
-  const handleEmergencyButton = () => {
-    if (!user) return
-    // Show alert type selection modal
-    setShowAlertTypeModal(true)
-  }
-
-  const handleAlertTypeSelected = async (alertType: 'life_or_death' | 'need_a_hand') => {
+  const handleEmergencyButton = async () => {
     if (!user) return
 
-    setSelectedAlertType(alertType)
-    setShowAlertTypeModal(false)
     setEmergencyLoading(true)
 
     try {
@@ -620,13 +610,13 @@ export default function DashboardPage() {
         // Continue without location - alert can still be created
       }
 
-      // Create emergency alert using client-side service
+      // Create emergency alert using client-side service with default type 'other'
       let emergencyAlert
       try {
         const { createEmergencyAlert } = await import('@/lib/services/emergency')
         
         emergencyAlert = await createEmergencyAlert(
-          alertType,
+          'other',
           location || undefined
         )
       } catch (alertError: any) {
@@ -758,44 +748,6 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        {/* Alert Type Selection Modal */}
-        {showAlertTypeModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <Card className="max-w-md w-full">
-              <div className="text-center mb-6">
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">Select Alert Type</h3>
-                <p className="text-gray-600">Choose the type of emergency</p>
-              </div>
-              <div className="space-y-3">
-                <Button
-                  variant="emergency"
-                  size="lg"
-                  onClick={() => handleAlertTypeSelected('life_or_death')}
-                  className="w-full py-6 text-lg font-bold"
-                >
-                  <AlertTriangle className="w-6 h-6 mr-2 inline" />
-                  Life or Death
-                </Button>
-                <Button
-                  variant="primary"
-                  size="lg"
-                  onClick={() => handleAlertTypeSelected('need_a_hand')}
-                  className="w-full py-6 text-lg font-bold"
-                >
-                  I Just Need a Hand
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="lg"
-                  onClick={() => setShowAlertTypeModal(false)}
-                  className="w-full py-3"
-                >
-                  Cancel
-                </Button>
-              </div>
-            </Card>
-          </div>
-        )}
 
         {/* Quick Stats */}
         <div className="grid grid-cols-2 gap-4 mb-6">

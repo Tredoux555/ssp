@@ -21,7 +21,7 @@ CREATE TABLE emergency_alerts (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   status VARCHAR(50) DEFAULT 'active' CHECK (status IN ('active', 'resolved', 'cancelled')),
-  alert_type VARCHAR(50) DEFAULT 'other' CHECK (alert_type IN ('robbery', 'house_breaking', 'car_jacking', 'accident', 'other', 'life_or_death', 'need_a_hand')),
+  alert_type VARCHAR(50) DEFAULT 'other' CHECK (alert_type IN ('robbery', 'house_breaking', 'car_jacking', 'accident', 'other')),
   location_lat DECIMAL(10, 8),
   location_lng DECIMAL(11, 8),
   address TEXT,

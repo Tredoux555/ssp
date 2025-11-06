@@ -475,9 +475,7 @@ export default function AlertResponsePage() {
           <div>
             <p className="text-sm text-gray-600 mb-1">Alert Type</p>
             <p className="font-medium">
-              {alert.alert_type === 'life_or_death' ? 'Life or Death' :
-               alert.alert_type === 'need_a_hand' ? 'I Just Need a Hand' :
-               alert.alert_type.replace('_', ' ')}
+              {alert.alert_type.replace('_', ' ')}
             </p>
           </div>
 
