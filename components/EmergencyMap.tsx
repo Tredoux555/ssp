@@ -107,11 +107,15 @@ export default function EmergencyMapComponent({
           
           if (receiverLocs.length > 0) {
             setReceiverLocHistory(receiverLocs)
-            const latestReceiver = receiverLocs[receiverLocs.length - 1]
-            setReceiverLoc({
-              lat: latestReceiver.latitude,
-              lng: latestReceiver.longitude,
-            })
+            // Only use location_history if receiverLocation prop is not available
+            // This ensures we use the current location from the parent component
+            if (!receiverLocation) {
+              const latestReceiver = receiverLocs[receiverLocs.length - 1]
+              setReceiverLoc({
+                lat: latestReceiver.latitude,
+                lng: latestReceiver.longitude,
+              })
+            }
           }
         }
       } catch (error) {
