@@ -4,14 +4,16 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { createClient } from '@/lib/supabase'
-import { subscribeToLocationHistory, subscribeToAlertResponses } from '@/lib/realtime/subscriptions'
+import { subscribeToLocationHistory } from '@/lib/realtime/subscriptions'
 import { showEmergencyAlert, hideEmergencyAlert, playAlertSound, vibrateDevice } from '@/lib/notifications'
 import { startLocationTracking, getCurrentLocation } from '@/lib/location'
 import { EmergencyAlert, LocationHistory } from '@/types/database'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
-import { AlertTriangle, MapPin, Navigation, CheckCircle, X } from 'lucide-react'
+import { AlertTriangle, MapPin, Navigation, X } from 'lucide-react'
 import dynamic from 'next/dynamic'
+import LocationPermissionPrompt from '@/components/LocationPermissionPrompt'
+import { useLocationPermission } from '@/lib/hooks/useLocationPermission'
 
 // Dynamically import Google Maps to avoid SSR issues
 const GoogleMapComponent = dynamic(
@@ -31,7 +33,8 @@ export default function AlertResponsePage() {
   const [receiverLocationHistory, setReceiverLocationHistory] = useState<LocationHistory[]>([])
   const [receiverTrackingActive, setReceiverTrackingActive] = useState(false)
   const [receiverLastUpdate, setReceiverLastUpdate] = useState<Date | null>(null)
-  const [acknowledged, setAcknowledged] = useState(false)
+  const { permissionStatus, requestPermission } = useLocationPermission()
+  const [showPermissionPrompt, setShowPermissionPrompt] = useState(false)
   const [loading, setLoading] = useState(true)
   const [senderName, setSenderName] = useState<string | null>(null)
   const [senderEmail, setSenderEmail] = useState<string | null>(null)
@@ -307,26 +310,6 @@ export default function AlertResponsePage() {
       )
       .subscribe()
 
-    // Subscribe to alert responses (only if user has access)
-    // Note: This subscription might fail if RLS blocks access, which is OK
-    let unsubscribeResponses: (() => void) | null = null
-    try {
-      unsubscribeResponses = subscribeToAlertResponses(alert.id, (response) => {
-        // Handle new responses (e.g., update UI to show who acknowledged)
-        if (process.env.NODE_ENV === 'development') {
-          console.log('New alert response:', response)
-        }
-        // If this is the current user's response, update acknowledged state
-        if (response.contact_user_id === user.id && response.acknowledged_at) {
-          setAcknowledged(true)
-        }
-      })
-    } catch (err) {
-      // Subscription might fail if RLS blocks - that's OK, we'll still show the alert
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[Alert] Could not subscribe to alert responses (non-critical)')
-      }
-    }
 
     // Play alert sound and vibrate device
     playAlertSound()
@@ -339,56 +322,11 @@ export default function AlertResponsePage() {
       setReceiverTrackingActive(false)
       unsubscribeLocation()
       unsubscribeAlert?.unsubscribe()
-      if (unsubscribeResponses) {
-        unsubscribeResponses()
-      }
       hideEmergencyAlert()
     }
     // Only depend on alert.id and user.id, not the full alert object
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alert?.id, user?.id, router])
-
-  const loadLocationHistory = async () => {
-    if (!alert || !user) return
-
-    try {
-      const supabase = createClient()
-      const { data, error } = await supabase
-        .from('location_history')
-        .select('*')
-        .eq('alert_id', alert.id)
-        .order('created_at', { ascending: true })
-
-      if (error) throw error
-
-      if (data && data.length > 0) {
-        setLocationHistory(data)
-        setLocation(data[data.length - 1])
-      }
-    } catch (error) {
-      console.error('Failed to load location history:', error)
-    }
-  }
-
-  const handleAcknowledge = async () => {
-    if (!user || !alert) return
-
-    try {
-      const supabase = createClient()
-      const { error } = await supabase
-        .from('alert_responses')
-        .update({ acknowledged_at: new Date().toISOString() })
-        .eq('alert_id', alert.id)
-        .eq('contact_user_id', user.id)
-
-      if (error) throw error
-
-      setAcknowledged(true)
-    } catch (error) {
-      console.error('Failed to acknowledge alert:', error)
-      window.alert('Failed to acknowledge alert. Please try again.')
-    }
-  }
+  }, [alert?.id, user?.id, router, permissionStatus])
 
   if (loading) {
     return (
@@ -479,21 +417,6 @@ export default function AlertResponsePage() {
 
         <div className="flex gap-4">
           <Button
-            onClick={handleAcknowledge}
-            variant="primary"
-            disabled={acknowledged}
-            className="flex-1"
-          >
-            {acknowledged ? (
-              <>
-                <CheckCircle className="w-4 h-4 mr-2" />
-                Acknowledged
-              </>
-            ) : (
-              'Acknowledge Alert'
-            )}
-          </Button>
-          <Button
             onClick={() => {
               // Use location state if available, otherwise use alert location
               const coords = location 
@@ -510,8 +433,8 @@ export default function AlertResponsePage() {
               const url = `https://www.google.com/maps/dir/?api=1&destination=${coords.lat},${coords.lng}`
               window.open(url, '_blank')
             }}
-            variant="secondary"
-            className="flex-1"
+            variant="primary"
+            className="w-full"
             disabled={!location && (!alert.location_lat || !alert.location_lng)}
           >
             <Navigation className="w-4 h-4 mr-2" />

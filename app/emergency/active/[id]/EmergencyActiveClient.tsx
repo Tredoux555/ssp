@@ -7,11 +7,14 @@ import { getActiveEmergency } from '@/lib/emergency'
 import { startLocationTracking, getCurrentLocation, reverseGeocode } from '@/lib/location'
 import { confirmLocation } from '@/lib/services/location'
 import { createClient } from '@/lib/supabase'
-import { EmergencyAlert } from '@/types/database'
+import { subscribeToLocationHistory } from '@/lib/realtime/subscriptions'
+import { EmergencyAlert, LocationHistory } from '@/types/database'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
 import { AlertTriangle, X, MapPin, CheckCircle } from 'lucide-react'
 import dynamic from 'next/dynamic'
+import LocationPermissionPrompt from '@/components/LocationPermissionPrompt'
+import { useLocationPermission } from '@/lib/hooks/useLocationPermission'
 
 // Dynamically import Google Maps to avoid SSR issues
 const GoogleMapComponent = dynamic(
@@ -34,6 +37,10 @@ export default function EmergencyActivePage() {
   const [locationTrackingActive, setLocationTrackingActive] = useState(false)
   const [lastLocationUpdate, setLastLocationUpdate] = useState<Date | null>(null)
   const [confirmingLocation, setConfirmingLocation] = useState(false)
+  const [receiverLocations, setReceiverLocations] = useState<Map<string, LocationHistory[]>>(new Map())
+  const [receiverUserIds, setReceiverUserIds] = useState<string[]>([])
+  const { permissionStatus, requestPermission } = useLocationPermission()
+  const [showPermissionPrompt, setShowPermissionPrompt] = useState(false)
 
   useEffect(() => {
     if (!user) return
@@ -43,6 +50,81 @@ export default function EmergencyActivePage() {
 
   useEffect(() => {
     if (!alert || !user) return
+
+    // Check location permission before starting tracking
+    if (permissionStatus === 'denied' || permissionStatus === 'prompt') {
+      setShowPermissionPrompt(true)
+    } else if (permissionStatus === 'granted') {
+      setShowPermissionPrompt(false)
+    }
+
+    // Query all receiver locations from location_history
+    const loadReceiverLocations = async () => {
+      try {
+        const supabase = createClient()
+        if (!supabase) return
+
+        // Get all locations for this alert where user_id != sender.user_id
+        const { data: allLocations, error } = await supabase
+          .from('location_history')
+          .select('*')
+          .eq('alert_id', alert.id)
+          .neq('user_id', user.id)
+          .order('created_at', { ascending: true })
+
+        if (error) {
+          console.warn('[Sender] Failed to load receiver locations:', error)
+          return
+        }
+
+        if (allLocations && allLocations.length > 0) {
+          // Group locations by receiver user_id
+          const receiverMap = new Map<string, LocationHistory[]>()
+          const userIds = new Set<string>()
+
+          allLocations.forEach((loc: LocationHistory) => {
+            const receiverId = loc.user_id
+            userIds.add(receiverId)
+            
+            if (!receiverMap.has(receiverId)) {
+              receiverMap.set(receiverId, [])
+            }
+            receiverMap.get(receiverId)!.push(loc)
+          })
+
+          setReceiverLocations(receiverMap)
+          setReceiverUserIds(Array.from(userIds))
+        }
+      } catch (error) {
+        console.warn('[Sender] Error loading receiver locations:', error)
+      }
+    }
+
+    loadReceiverLocations()
+
+    // Subscribe to receiver location updates
+    const unsubscribeReceiverLocations = subscribeToLocationHistory(alert.id, (newLocation) => {
+      // Only process receiver locations (not sender's own location)
+      if (newLocation.user_id !== user.id) {
+        setReceiverLocations((prev) => {
+          const updated = new Map(prev)
+          const receiverId = newLocation.user_id
+          
+          if (!updated.has(receiverId)) {
+            updated.set(receiverId, [])
+            setReceiverUserIds((prevIds) => {
+              if (!prevIds.includes(receiverId)) {
+                return [...prevIds, receiverId]
+              }
+              return prevIds
+            })
+          }
+          
+          updated.get(receiverId)!.push(newLocation)
+          return updated
+        })
+      }
+    })
 
     // Start location tracking
     const stopTracking = startLocationTracking(
@@ -193,8 +275,9 @@ export default function EmergencyActivePage() {
       // Stop location tracking
       stopTracking()
       setLocationTrackingActive(false)
+      unsubscribeReceiverLocations()
     }
-  }, [alert, user, address])
+  }, [alert, user, address, permissionStatus])
 
   const loadAlert = async () => {
     if (!user) {
@@ -376,6 +459,17 @@ export default function EmergencyActivePage() {
           </div>
         </Card>
 
+        {/* Location Permission Prompt */}
+        {showPermissionPrompt && (
+          <LocationPermissionPrompt
+            onPermissionGranted={() => {
+              setShowPermissionPrompt(false)
+              // Permission granted, location tracking will start automatically
+            }}
+            onDismiss={() => setShowPermissionPrompt(false)}
+          />
+        )}
+
         {/* Location Info */}
         {location && (
           <Card className="mb-6 bg-white/10 backdrop-blur-sm border-white/20">
@@ -405,6 +499,9 @@ export default function EmergencyActivePage() {
                 longitude={location.lng}
                 alertId={alert.id}
                 user_id={alert.user_id}
+                receiverLocations={receiverLocations}
+                receiverUserIds={receiverUserIds}
+                senderUserId={user.id}
               />
             </div>
             

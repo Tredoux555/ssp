@@ -15,6 +15,8 @@ interface EmergencyMapProps {
   receiverLocationHistory?: LocationHistory[]
   receiverUserId?: string
   senderUserId?: string
+  receiverLocations?: Map<string, LocationHistory[]>
+  receiverUserIds?: string[]
 }
 
 const mapContainerStyle = {
@@ -31,6 +33,8 @@ export default function EmergencyMapComponent({
   receiverLocationHistory = [],
   receiverUserId,
   senderUserId,
+  receiverLocations,
+  receiverUserIds = [],
 }: EmergencyMapProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ''
   
@@ -70,6 +74,20 @@ export default function EmergencyMapComponent({
       setReceiverLocHistory(receiverLocationHistory)
     }
   }, [receiverLocationHistory])
+  
+  // Update all receiver locations when props change (for sender's map)
+  useEffect(() => {
+    if (receiverLocations) {
+      setAllReceiverLocations(receiverLocations)
+    }
+  }, [receiverLocations])
+  
+  // Update receiver user IDs when props change
+  useEffect(() => {
+    if (receiverUserIds) {
+      setAllReceiverUserIds(receiverUserIds)
+    }
+  }, [receiverUserIds])
   
   // Query all existing locations for the alert on mount
   useEffect(() => {
@@ -322,7 +340,7 @@ export default function EmergencyMapComponent({
           />
         ))}
 
-        {/* Receiver location history trail (Blue) */}
+        {/* Receiver location history trail (Blue) - for single receiver view */}
         {receiverLocHistory.map((loc, index) => (
           <Marker
             key={`receiver-${loc.id}-${index}`}
@@ -344,6 +362,74 @@ export default function EmergencyMapComponent({
             }
           />
         ))}
+
+        {/* Multiple receiver locations (for sender's map) */}
+        {Array.from(allReceiverLocations.entries()).map(([receiverId, locations]) => {
+          if (locations.length === 0) return null
+          const latestLocation = locations[locations.length - 1]
+          
+          return (
+            <div key={`receiver-${receiverId}`}>
+              {/* Receiver current location marker */}
+              <Marker
+                position={{
+                  lat: latestLocation.latitude,
+                  lng: latestLocation.longitude,
+                }}
+                title={`Responder Location (${receiverId.slice(0, 8)}...)`}
+                icon={
+                  googleMaps
+                    ? {
+                        path: googleMaps.SymbolPath.CIRCLE,
+                        scale: 8,
+                        fillColor: '#2563EB',
+                        fillOpacity: 1,
+                        strokeColor: '#FFFFFF',
+                        strokeWeight: 3,
+                      }
+                    : undefined
+                }
+              />
+              
+              {/* Polyline from sender to this receiver */}
+              {googleMaps && (
+                <Polyline
+                  key={`polyline-${receiverId}`}
+                  path={[senderLocation, { lat: latestLocation.latitude, lng: latestLocation.longitude }]}
+                  options={{
+                    strokeColor: '#2563EB',
+                    strokeOpacity: 0.4,
+                    strokeWeight: 2,
+                    geodesic: true,
+                  }}
+                />
+              )}
+              
+              {/* Receiver location history trail */}
+              {locations.map((loc, index) => (
+                <Marker
+                  key={`receiver-${receiverId}-${loc.id}-${index}`}
+                  position={{
+                    lat: loc.latitude,
+                    lng: loc.longitude,
+                  }}
+                  icon={
+                    googleMaps
+                      ? {
+                          path: googleMaps.SymbolPath.CIRCLE,
+                          scale: 4,
+                          fillColor: '#2563EB',
+                          fillOpacity: 0.6,
+                          strokeColor: '#FFFFFF',
+                          strokeWeight: 2,
+                        }
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
+          )
+        })}
       </GoogleMap>
     </div>
   )
