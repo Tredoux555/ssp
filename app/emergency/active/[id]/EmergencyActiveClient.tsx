@@ -37,6 +37,7 @@ export default function EmergencyActivePage() {
   const [receiverLocations, setReceiverLocations] = useState<Map<string, LocationHistory[]>>(new Map())
   const [receiverUserIds, setReceiverUserIds] = useState<string[]>([])
   const [acceptedResponderCount, setAcceptedResponderCount] = useState(0)
+  const [rlsErrorShown, setRlsErrorShown] = useState(false) // Track if RLS error message has been shown
   const { permissionStatus, requestPermission } = useLocationPermission()
   const [showPermissionPrompt, setShowPermissionPrompt] = useState(false)
 
@@ -101,7 +102,10 @@ export default function EmergencyActivePage() {
 
         // If no accepted responders, clear the map
         if (!acceptedResponses || acceptedResponses.length === 0) {
-          console.log('[Sender] No accepted responders yet')
+          // Only log in development to reduce noise in production
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[Sender] No accepted responders yet')
+          }
           setReceiverLocations(new Map())
           setReceiverUserIds([])
           return
@@ -271,19 +275,39 @@ export default function EmergencyActivePage() {
       .subscribe((status: any, err?: any) => {
         if (status === 'SUBSCRIBED') {
           console.log('[Sender] ✅ Successfully subscribed to alert_responses updates')
+          setRlsErrorShown(false) // Reset error state on successful subscription
         } else if (status === 'CHANNEL_ERROR' || status === 'CLOSED' || status === 'TIMED_OUT') {
-          console.error('[Sender] ❌ Subscription failed/closed - RLS may be blocking:', {
-            status,
-            error: err,
-            note: 'Migration fix-alert-responses-sender-view.sql must be run in Supabase. Using polling fallback.'
-          })
+          // Check if this is likely an RLS error (subscription closes immediately without network error)
+          const isRLSError = status === 'CLOSED' && !err
+          
+          if (isRLSError && !rlsErrorShown) {
+            // Only show RLS error once to avoid spam
+            console.error('[Sender] ❌ Subscription blocked by RLS policy:', {
+              status,
+              note: 'Migration fix-alert-responses-sender-view.sql must be run in Supabase. Using polling fallback.'
+            })
+            setRlsErrorShown(true)
+          } else if (!isRLSError) {
+            // Network or other error - log in development only
+            if (process.env.NODE_ENV === 'development') {
+              console.warn('[Sender] ⚠️ Subscription error (network/other):', {
+                status,
+                error: err
+              })
+            }
+          }
           // Immediately trigger polling fallback when subscription fails
           loadReceiverLocations()
         } else {
-          console.log('[Sender] Alert responses subscription status:', status)
+          // Only log non-critical statuses in development
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[Sender] Alert responses subscription status:', status)
+          }
           // If subscription closes for any reason, trigger polling
           if (status === 'CLOSED') {
-            console.warn('[Sender] ⚠️ Subscription closed - triggering immediate polling check')
+            if (process.env.NODE_ENV === 'development') {
+              console.warn('[Sender] ⚠️ Subscription closed - triggering immediate polling check')
+            }
             loadReceiverLocations()
           }
         }
@@ -305,22 +329,29 @@ export default function EmergencyActivePage() {
         if (pollError) {
           // Check if it's an RLS error
           if (pollError.code === '42501' || pollError.message?.includes('row-level security') || pollError.message?.includes('RLS')) {
-            console.error('[Sender] ⚠️ RLS policy blocking alert_responses query in polling:', {
-              code: pollError.code,
-              message: pollError.message,
-              hint: pollError.hint,
-              alertId: alert.id,
-              userId: user.id,
-              note: 'CRITICAL: Migration fix-alert-responses-sender-view.sql MUST be run in Supabase SQL Editor for location sharing to work'
-            })
+            // Only show RLS error once to avoid spam
+            if (!rlsErrorShown) {
+              console.error('[Sender] ⚠️ RLS policy blocking alert_responses query:', {
+                code: pollError.code,
+                message: pollError.message,
+                hint: pollError.hint,
+                alertId: alert.id,
+                userId: user.id,
+                note: 'CRITICAL: Migration fix-alert-responses-sender-view.sql MUST be run in Supabase SQL Editor for location sharing to work'
+              })
+              setRlsErrorShown(true)
+            }
             // Don't return - continue to check count even if query failed
             // This allows the UI to show an error state if needed
           } else {
-            console.warn('[Sender] ⚠️ Polling query error (non-RLS):', {
-              code: pollError.code,
-              message: pollError.message,
-              alertId: alert.id
-            })
+            // Non-RLS errors - only log in development
+            if (process.env.NODE_ENV === 'development') {
+              console.warn('[Sender] ⚠️ Polling query error (non-RLS):', {
+                code: pollError.code,
+                message: pollError.message,
+                alertId: alert.id
+              })
+            }
           }
           // Still try to reload locations even if query failed (might work on retry)
           return
@@ -722,6 +753,14 @@ export default function EmergencyActivePage() {
               <p className="text-green-600 font-medium">
                 {acceptedResponderCount} responder{acceptedResponderCount !== 1 ? 's' : ''} accepted
               </p>
+            )}
+            {rlsErrorShown && (
+              <div className="mt-4 p-3 bg-yellow-600/80 rounded-lg border border-yellow-400">
+                <p className="text-sm font-semibold mb-1">⚠️ Location Sharing Unavailable</p>
+                <p className="text-xs opacity-90">
+                  Database permissions need to be configured. Please contact support or check the console for details.
+                </p>
+              </div>
             )}
             <p className="text-xl mb-1">Your alert has been sent</p>
             <p className="text-lg opacity-90 mb-4">
