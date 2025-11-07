@@ -11,16 +11,10 @@ Location sharing between sender and receiver requires two RLS (Row Level Securit
 **Purpose**: Allows alert creators (senders) to query the `alert_responses` table to see which contacts have accepted to respond to their alerts.
 
 **SQL to Run in Supabase SQL Editor**:
-```sql
--- ============================================================================
--- FIX ALERT_RESPONSES RLS POLICY - Allow senders to view responses
--- ============================================================================
--- This migration allows alert creators (senders) to query alert_responses
--- to see which contacts have accepted to respond to their alerts.
--- Without this policy, senders cannot see who has accepted, preventing
--- location sharing from working properly.
 
--- Add policy that allows alert creators to view responses for their alerts
+**IMPORTANT**: Copy ONLY the SQL code below (not the markdown formatting). The file `migrations/fix-alert-responses-sender-view-clean.sql` contains the clean SQL.
+
+```sql
 CREATE POLICY "Alert creators can view responses for their alerts" ON alert_responses
   FOR SELECT USING (
     EXISTS (
@@ -35,8 +29,11 @@ CREATE POLICY "Alert creators can view responses for their alerts" ON alert_resp
 1. Go to your Supabase Dashboard
 2. Navigate to SQL Editor
 3. Create a new query
-4. Copy and paste the SQL above
-5. Click "Run" or press Cmd/Ctrl + Enter
+4. Copy ONLY the SQL code above (starting with `CREATE POLICY`)
+5. Paste it into the SQL Editor
+6. Click "Run" or press Cmd/Ctrl + Enter
+
+**OR** open the file `migrations/fix-alert-responses-sender-view-clean.sql` and copy its contents
 
 ### 2. Allow Bidirectional Location Viewing
 **File**: `migrations/fix-location-sharing-rls.sql`
@@ -46,26 +43,16 @@ CREATE POLICY "Alert creators can view responses for their alerts" ON alert_resp
 - Sender can see receiver's location (if receiver has accepted to respond)
 
 **SQL to Run in Supabase SQL Editor**:
-```sql
--- ============================================================================
--- FIX LOCATION SHARING RLS POLICY
--- Allow bidirectional location viewing during active emergencies
--- ============================================================================
 
--- Drop existing restrictive policy
+**IMPORTANT**: Copy ONLY the SQL code below (not the markdown formatting). The file `migrations/fix-location-sharing-rls-clean.sql` contains the clean SQL.
+
+```sql
 DROP POLICY IF EXISTS "Contacts can view location during emergency" ON location_history;
 
--- Create new policy that allows bidirectional location viewing
--- This policy allows:
--- 1. Users to see their own locations (always)
--- 2. Receivers to see sender's location (if they're notified about the alert)
--- 3. Sender to see receiver's location (if receiver has accepted to respond)
 CREATE POLICY "Contacts can view location during emergency" ON location_history
   FOR SELECT USING (
-    -- Always allow users to see their own locations
     auth.uid() = user_id
     OR
-    -- Allow viewing locations for active alerts
     (
       alert_id IS NOT NULL
       AND EXISTS (
@@ -74,8 +61,6 @@ CREATE POLICY "Contacts can view location during emergency" ON location_history
         AND ea.status = 'active'
       )
       AND (
-        -- Case 1: Receiver viewing sender's location
-        -- Location belongs to alert creator AND receiver is in contacts_notified
         (
           location_history.user_id = (
             SELECT user_id FROM emergency_alerts WHERE id = location_history.alert_id
@@ -87,8 +72,6 @@ CREATE POLICY "Contacts can view location during emergency" ON location_history
           )
         )
         OR
-        -- Case 2: Sender viewing receiver's location
-        -- Location belongs to a receiver AND receiver has accepted AND sender is alert creator
         (
           location_history.user_id != (
             SELECT user_id FROM emergency_alerts WHERE id = location_history.alert_id
@@ -114,8 +97,11 @@ CREATE POLICY "Contacts can view location during emergency" ON location_history
 1. Go to your Supabase Dashboard
 2. Navigate to SQL Editor
 3. Create a new query
-4. Copy and paste the SQL above
-5. Click "Run" or press Cmd/Ctrl + Enter
+4. Copy ONLY the SQL code above (starting with `DROP POLICY`)
+5. Paste it into the SQL Editor
+6. Click "Run" or press Cmd/Ctrl + Enter
+
+**OR** open the file `migrations/fix-location-sharing-rls-clean.sql` and copy its contents
 
 ## Verification
 
