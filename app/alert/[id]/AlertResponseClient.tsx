@@ -685,11 +685,12 @@ export default function AlertResponsePage() {
             onClick={() => {
               // Hide alert overlay when closing
               hideEmergencyAlert()
-              // Navigate to dashboard
-              router.push('/dashboard')
+              // Use replace to prevent back navigation to alert page
+              router.replace('/dashboard')
             }} 
             variant="secondary" 
             size="sm"
+            className="flex-shrink-0"
           >
             <X className="w-4 h-4" />
           </Button>
