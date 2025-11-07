@@ -284,7 +284,7 @@ export default function EmergencyActivePage() {
             // Only show RLS error once to avoid spam
             console.error('[Sender] ❌ Subscription blocked by RLS policy:', {
               status,
-              note: 'Migration fix-alert-responses-sender-view.sql must be run in Supabase. Using polling fallback.'
+              note: 'CRITICAL: Run migration fix-alert-responses-sender-view-clean.sql in Supabase SQL Editor. File location: migrations/fix-alert-responses-sender-view-clean.sql. Using polling fallback for now.'
             })
             setRlsErrorShown(true)
           } else if (!isRLSError) {
