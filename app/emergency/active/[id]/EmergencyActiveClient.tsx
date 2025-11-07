@@ -529,11 +529,11 @@ export default function EmergencyActivePage() {
       const { cancelEmergencyAlert } = await import('@/lib/services/emergency')
       await cancelEmergencyAlert(alert.id)
       
-      // Successfully cancelled - redirect to dashboard
-      // Add a small delay to ensure cancellation is processed before redirect
-      setTimeout(() => {
-        router.push('/dashboard')
-      }, 300)
+      console.log('[Sender] ✅ Alert cancelled successfully - redirecting to dashboard')
+      
+      // Successfully cancelled - redirect to dashboard immediately
+      // Use replace instead of push to prevent back navigation to cancelled alert
+      router.replace('/dashboard')
     } catch (error: any) {
       console.error('Cancel alert error:', error)
       const errorMessage = error?.message || 'Failed to cancel alert. Please try again.'

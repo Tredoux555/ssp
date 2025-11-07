@@ -527,14 +527,50 @@ export default function AlertResponsePage() {
         },
         (payload: any) => {
           const updatedAlert = payload.new as EmergencyAlert
+          console.log('[Receiver] ✅ Alert status update received:', {
+            alertId: alert.id,
+            oldStatus: alert.status,
+            newStatus: updatedAlert.status
+          })
           setAlert(updatedAlert)
           if (updatedAlert.status !== 'active') {
+            console.log('[Receiver] ✅ Alert cancelled/resolved - redirecting to dashboard')
             hideEmergencyAlert()
-            router.push('/dashboard')
+            // Use replace instead of push to prevent back navigation
+            router.replace('/dashboard')
           }
         }
       )
       .subscribe()
+    
+    // Add polling fallback to check alert status (in case subscription fails)
+    // Poll every 5 seconds to check if alert was cancelled
+    const statusPollInterval = setInterval(async () => {
+      if (!alert || !user) return
+      
+      try {
+        const supabase = createClient()
+        const { data: currentAlert, error: pollError } = await supabase
+          .from('emergency_alerts')
+          .select('id, status')
+          .eq('id', alert.id)
+          .single()
+        
+        if (pollError) {
+          // Silently ignore polling errors (subscription should handle updates)
+          return
+        }
+        
+        if (currentAlert && currentAlert.status !== 'active') {
+          console.log('[Receiver] ✅ Polling detected alert cancelled/resolved - redirecting to dashboard')
+          hideEmergencyAlert()
+          router.replace('/dashboard')
+        }
+      } catch (pollErr) {
+        // Silently ignore polling errors
+        console.warn('[Receiver] Polling error (non-critical):', pollErr)
+      }
+    }, 5000) // Poll every 5 seconds
 
 
     // Play alert sound and vibrate device
@@ -552,6 +588,9 @@ export default function AlertResponsePage() {
       unsubscribeAlert?.unsubscribe()
       if (pollInterval) {
         clearInterval(pollInterval)
+      }
+      if (statusPollInterval) {
+        clearInterval(statusPollInterval)
       }
       hideEmergencyAlert()
     }
@@ -600,7 +639,16 @@ export default function AlertResponsePage() {
               ) : null}
             </div>
           </div>
-          <Button onClick={() => router.push('/dashboard')} variant="secondary" size="sm">
+          <Button 
+            onClick={() => {
+              // Hide alert overlay when closing
+              hideEmergencyAlert()
+              // Navigate to dashboard
+              router.push('/dashboard')
+            }} 
+            variant="secondary" 
+            size="sm"
+          >
             <X className="w-4 h-4" />
           </Button>
         </div>
