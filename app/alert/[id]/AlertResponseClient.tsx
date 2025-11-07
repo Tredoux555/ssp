@@ -350,7 +350,7 @@ export default function AlertResponsePage() {
           
           // Start continuous location tracking immediately after acceptance
           // This ensures the sender gets live location updates
-          const stopTracking = startLocationTracking(
+          startLocationTracking(
             user.id,
             alert.id,
             async (loc) => {
@@ -360,12 +360,8 @@ export default function AlertResponsePage() {
             },
             20000 // Update every 20 seconds
           )
-          // Store stop function for cleanup
-          if (stopTracking) {
-            // Store in a ref or state for cleanup later
-            console.log('[Receiver] ✅ Started continuous location tracking after acceptance')
-            setReceiverTrackingActive(true)
-          }
+          console.log('[Receiver] ✅ Started continuous location tracking after acceptance')
+          setReceiverTrackingActive(true)
         } else {
           console.warn('[Receiver] ⚠️ Could not get current location to save after acceptance')
           // Still start tracking even if initial location failed
