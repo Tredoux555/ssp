@@ -268,7 +268,7 @@ export default function EmergencyActivePage() {
           }
         }
       )
-      .subscribe((status) => {
+      .subscribe((status: any) => {
         if (status === 'SUBSCRIBED') {
           console.log('[Sender] ✅ Successfully subscribed to alert_responses updates')
         } else if (status === 'CHANNEL_ERROR') {
