@@ -347,12 +347,58 @@ export default function AlertResponsePage() {
           // Also update local state so map shows immediately
           setReceiverLocation(currentLoc)
           setReceiverLastUpdate(new Date())
+          
+          // Start continuous location tracking immediately after acceptance
+          // This ensures the sender gets live location updates
+          const stopTracking = startLocationTracking(
+            user.id,
+            alert.id,
+            async (loc) => {
+              setReceiverLocation(loc)
+              setReceiverLastUpdate(new Date())
+              setReceiverTrackingActive(true)
+            },
+            20000 // Update every 20 seconds
+          )
+          // Store stop function for cleanup
+          if (stopTracking) {
+            // Store in a ref or state for cleanup later
+            console.log('[Receiver] ✅ Started continuous location tracking after acceptance')
+            setReceiverTrackingActive(true)
+          }
         } else {
           console.warn('[Receiver] ⚠️ Could not get current location to save after acceptance')
+          // Still start tracking even if initial location failed
+          startLocationTracking(
+            user.id,
+            alert.id,
+            async (loc) => {
+              setReceiverLocation(loc)
+              setReceiverLastUpdate(new Date())
+              setReceiverTrackingActive(true)
+            },
+            20000
+          )
+          setReceiverTrackingActive(true)
         }
       } catch (locError) {
         console.warn('[Receiver] ⚠️ Could not save initial location after acceptance:', locError)
-        // Don't block acceptance if location save fails
+        // Don't block acceptance if location save fails, but still try to start tracking
+        try {
+          startLocationTracking(
+            user.id,
+            alert.id,
+            async (loc) => {
+              setReceiverLocation(loc)
+              setReceiverLastUpdate(new Date())
+              setReceiverTrackingActive(true)
+            },
+            20000
+          )
+          setReceiverTrackingActive(true)
+        } catch (trackError) {
+          console.warn('[Receiver] ⚠️ Could not start location tracking:', trackError)
+        }
       }
     } catch (error: any) {
       console.error('[Alert] Error accepting response:', error)

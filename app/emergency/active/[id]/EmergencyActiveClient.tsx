@@ -268,18 +268,29 @@ export default function EmergencyActivePage() {
           }
         }
       )
-      .subscribe((status: any) => {
+      .subscribe((status: any, err?: any) => {
         if (status === 'SUBSCRIBED') {
           console.log('[Sender] ✅ Successfully subscribed to alert_responses updates')
-        } else if (status === 'CHANNEL_ERROR') {
-          console.error('[Sender] ❌ Failed to subscribe to alert_responses updates - will use polling fallback')
+        } else if (status === 'CHANNEL_ERROR' || status === 'CLOSED' || status === 'TIMED_OUT') {
+          console.error('[Sender] ❌ Subscription failed/closed - RLS may be blocking:', {
+            status,
+            error: err,
+            note: 'Migration fix-alert-responses-sender-view.sql must be run in Supabase. Using polling fallback.'
+          })
+          // Immediately trigger polling fallback when subscription fails
+          loadReceiverLocations()
         } else {
           console.log('[Sender] Alert responses subscription status:', status)
+          // If subscription closes for any reason, trigger polling
+          if (status === 'CLOSED') {
+            console.warn('[Sender] ⚠️ Subscription closed - triggering immediate polling check')
+            loadReceiverLocations()
+          }
         }
       })
     
     // Add polling fallback to check for accepted responders (in case subscription fails)
-    // Poll every 5 seconds to check if anyone has accepted
+    // Poll every 3 seconds to check if anyone has accepted (more frequent for better responsiveness)
     const acceptancePollInterval = setInterval(async () => {
       if (!alert || !user) return
       
@@ -293,14 +304,25 @@ export default function EmergencyActivePage() {
         
         if (pollError) {
           // Check if it's an RLS error
-          if (pollError.code === '42501' || pollError.message?.includes('row-level security')) {
+          if (pollError.code === '42501' || pollError.message?.includes('row-level security') || pollError.message?.includes('RLS')) {
             console.error('[Sender] ⚠️ RLS policy blocking alert_responses query in polling:', {
               code: pollError.code,
               message: pollError.message,
               hint: pollError.hint,
-              note: 'Migration fix-alert-responses-sender-view.sql may need to be run in Supabase'
+              alertId: alert.id,
+              userId: user.id,
+              note: 'CRITICAL: Migration fix-alert-responses-sender-view.sql MUST be run in Supabase SQL Editor for location sharing to work'
+            })
+            // Don't return - continue to check count even if query failed
+            // This allows the UI to show an error state if needed
+          } else {
+            console.warn('[Sender] ⚠️ Polling query error (non-RLS):', {
+              code: pollError.code,
+              message: pollError.message,
+              alertId: alert.id
             })
           }
+          // Still try to reload locations even if query failed (might work on retry)
           return
         }
         
@@ -309,15 +331,25 @@ export default function EmergencyActivePage() {
           console.log('[Sender] ✅ Polling detected acceptance change:', {
             oldCount: acceptedResponderCount,
             newCount: currentCount,
+            acceptedUserIds: acceptedResponses?.map((r: { contact_user_id: string }) => r.contact_user_id),
             alertId: alert.id
           })
           setAcceptedResponderCount(currentCount)
+          // Immediately reload receiver locations when acceptance is detected
+          loadReceiverLocations()
+        } else if (currentCount > 0) {
+          // Even if count hasn't changed, periodically reload locations to get latest updates
+          // This ensures we get location updates even if subscription is working
+          console.log('[Sender] 🔄 Periodic location refresh (polling fallback):', {
+            acceptedCount: currentCount,
+            alertId: alert.id
+          })
           loadReceiverLocations()
         }
       } catch (pollErr) {
         console.warn('[Sender] Polling error (non-critical):', pollErr)
       }
-    }, 5000) // Poll every 5 seconds
+    }, 3000) // Poll every 3 seconds for better responsiveness
 
     // Subscribe to receiver location updates (only from accepted responders)
     const unsubscribeReceiverLocations = subscribeToLocationHistory(alert.id, async (newLocation) => {
@@ -340,11 +372,22 @@ export default function EmergencyActivePage() {
             .maybeSingle()
           
           if (responseError) {
-            console.error('[Sender] Error checking acceptance status:', {
-              error: responseError,
-              receiverUserId: newLocation.user_id,
-              alertId: alert.id
-            })
+            // Check if it's an RLS error
+            if (responseError.code === '42501' || responseError.message?.includes('row-level security') || responseError.message?.includes('RLS')) {
+              console.error('[Sender] ❌ RLS error checking acceptance status in subscription:', {
+                code: responseError.code,
+                message: responseError.message,
+                receiverUserId: newLocation.user_id,
+                alertId: alert.id,
+                note: 'Migration fix-alert-responses-sender-view.sql must be run in Supabase'
+              })
+            } else {
+              console.error('[Sender] Error checking acceptance status:', {
+                error: responseError,
+                receiverUserId: newLocation.user_id,
+                alertId: alert.id
+              })
+            }
           }
           
           // Only add location if user has accepted
