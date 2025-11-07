@@ -98,26 +98,67 @@ export default function EmergencyActivePage() {
         console.log('[Sender] Querying locations for accepted responders:', acceptedUserIds)
 
         // Get all locations for this alert where user_id != sender.user_id AND user has accepted
-        const { data: allLocations, error } = await supabase
-          .from('location_history')
-          .select('*')
-          .eq('alert_id', alert.id)
-          .neq('user_id', user.id)
-          .in('user_id', acceptedUserIds)
-          .order('created_at', { ascending: false })
-          .limit(50)
+        // Add retry logic for RLS errors
+        let allLocations: LocationHistory[] | null = null
+        let error: any = null
+        let retries = 2
+        let delay = 500
+        
+        while (retries >= 0) {
+          const result = await supabase
+            .from('location_history')
+            .select('*')
+            .eq('alert_id', alert.id)
+            .neq('user_id', user.id)
+            .in('user_id', acceptedUserIds)
+            .order('created_at', { ascending: false })
+            .limit(50)
+          
+          if (result.error) {
+            error = result.error
+            // Check if it's an RLS error and we have retries left
+            if ((error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('RLS')) && retries > 0) {
+              console.warn(`[Sender] RLS error, retrying in ${delay}ms (${retries} retries left):`, {
+                code: error.code,
+                message: error.message
+              })
+              await new Promise(resolve => setTimeout(resolve, delay))
+              delay *= 2
+              retries--
+              continue
+            }
+            break
+          } else {
+            allLocations = result.data
+            error = null
+            break
+          }
+        }
 
         if (error) {
-          console.error('[Sender] Failed to load receiver locations:', {
-            error: error,
-            code: error.code,
-            message: error.message,
-            details: error.details,
-            hint: error.hint,
-            alertId: alert.id,
-            userId: user.id,
-            acceptedUserIds: acceptedUserIds
-          })
+          // Check if it's an RLS error
+          if (error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('RLS')) {
+            console.error('[Sender] RLS policy blocked receiver location query after retries:', {
+              code: error.code,
+              message: error.message,
+              hint: error.hint,
+              alertId: alert.id,
+              userId: user.id,
+              acceptedUserIds: acceptedUserIds,
+              note: 'RLS migration may need to be run in Supabase'
+            })
+          } else {
+            console.error('[Sender] Failed to load receiver locations:', {
+              error: error,
+              code: error.code,
+              message: error.message,
+              details: error.details,
+              hint: error.hint,
+              alertId: alert.id,
+              userId: user.id,
+              acceptedUserIds: acceptedUserIds
+            })
+          }
           // Don't return - try to continue with empty locations
           setReceiverLocations(new Map())
           setReceiverUserIds([])

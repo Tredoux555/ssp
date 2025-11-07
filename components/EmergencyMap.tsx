@@ -289,7 +289,12 @@ function EmergencyMapComponent({
     }
 
     // Only calculate directions for receiver's view (when receiverUserId is set and different from sender)
+    // Directions show route from receiver's current location to sender's location
     if (receiverUserId && receiverUserId !== (senderUserId || user_id)) {
+      console.log('[Map] Calculating directions from receiver to sender:', {
+        receiver: receiverLoc,
+        sender: senderLocation
+      })
       calculateDirections(receiverLoc, senderLocation)
     }
 

@@ -214,6 +214,8 @@ export default function AlertResponsePage() {
       // Get initial location - prefer location_history over alert location
       // Query sender's location (where user_id = alert.user_id)
       // Add timeout to prevent hanging
+      // Note: Location is already initialized from alert data above, so map will show immediately
+      // This query is just to get the latest location from history
       try {
         const locationPromise = supabase
           .from('location_history')
@@ -225,7 +227,7 @@ export default function AlertResponsePage() {
           .maybeSingle()
         
         const timeoutPromise = new Promise<{ data: null; error: Error }>((_, reject) => 
-          setTimeout(() => reject(new Error('Location query timeout')), 3000)
+          setTimeout(() => reject(new Error('Location query timeout')), 2000) // Reduced timeout
         )
         
         const result = await Promise.race([locationPromise, timeoutPromise]).catch(() => ({ data: null, error: null }))
@@ -234,19 +236,30 @@ export default function AlertResponsePage() {
           console.log('[Receiver] Loaded sender location from history:', result.data)
           setLocation(result.data)
         } else if (result && (result as any).error) {
-          console.error('[Receiver] Failed to load sender location:', {
-            error: (result as any).error,
-            code: (result as any).error?.code,
-            message: (result as any).error?.message,
-            details: (result as any).error?.details,
-            hint: (result as any).error?.hint,
-            alertId: alertId,
-            senderUserId: alertData.user_id,
-            receiverUserId: user.id
-          })
-          // Fallback to alert location
-          if (alertData.location_lat && alertData.location_lng) {
-            console.log('[Receiver] Using fallback alert location')
+          const error = (result as any).error
+          // Check if it's an RLS error
+          if (error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('RLS')) {
+            console.warn('[Receiver] RLS policy blocked location_history query (using alert location):', {
+              code: error.code,
+              message: error.message,
+              hint: error.hint,
+              alertId: alertId
+            })
+          } else {
+            console.error('[Receiver] Failed to load sender location:', {
+              error: error,
+              code: error?.code,
+              message: error?.message,
+              details: error?.details,
+              hint: error?.hint,
+              alertId: alertId,
+              senderUserId: alertData.user_id,
+              receiverUserId: user.id
+            })
+          }
+          // Fallback to alert location (already set above, but ensure it's set)
+          if (alertData.location_lat && alertData.location_lng && !location) {
+            console.log('[Receiver] Using fallback alert location due to query error')
             setLocation({
               id: 'initial',
               user_id: alertData.user_id,
@@ -257,19 +270,8 @@ export default function AlertResponsePage() {
               created_at: alertData.triggered_at,
             } as LocationHistory)
           }
-        } else if (alertData.location_lat && alertData.location_lng) {
-          // Fallback to alert location if no history yet
-          console.log('[Receiver] No location history, using alert location')
-          setLocation({
-            id: 'initial',
-            user_id: alertData.user_id,
-            alert_id: alertId,
-            latitude: alertData.location_lat,
-            longitude: alertData.location_lng,
-            timestamp: alertData.triggered_at,
-            created_at: alertData.triggered_at,
-          } as LocationHistory)
         }
+        // If no result and no error, location is already set from alert data above
       } catch (locationErr: any) {
         console.error('[Receiver] Error fetching initial location:', {
           error: locationErr,
@@ -279,9 +281,9 @@ export default function AlertResponsePage() {
           senderUserId: alertData.user_id,
           receiverUserId: user.id
         })
-        // Fallback to alert location
-        if (alertData.location_lat && alertData.location_lng) {
-          console.log('[Receiver] Using fallback alert location after error')
+        // Fallback to alert location (already set above, but ensure it's set)
+        if (alertData.location_lat && alertData.location_lng && !location) {
+          console.log('[Receiver] Using fallback alert location after exception')
           setLocation({
             id: 'initial',
             user_id: alertData.user_id,
@@ -368,11 +370,26 @@ export default function AlertResponsePage() {
     
     subscriptionsSetupRef.current = alert.id
 
+    // Get receiver's current location for directions (even if not accepted yet)
+    // This allows directions to be shown from receiver to sender
+    getCurrentLocation()
+      .then((loc) => {
+        if (loc) {
+          setReceiverLocation(loc)
+          setReceiverLastUpdate(new Date())
+          console.log('[Receiver] Got current location for directions:', loc)
+        }
+      })
+      .catch((error) => {
+        console.warn('[Receiver] Could not get current location for directions:', error)
+        // Location unavailable - that's ok, directions won't show
+      })
+
     // Only start location tracking if user has accepted to respond
     let stopReceiverTracking: (() => void) | null = null
     
     if (hasAccepted) {
-      // Start tracking receiver's own location
+      // Start tracking receiver's own location (for sharing with sender)
       stopReceiverTracking = startLocationTracking(
         user.id,
         alert.id,
@@ -385,41 +402,30 @@ export default function AlertResponsePage() {
       )
       
       setReceiverTrackingActive(true)
-      
-      // Get initial receiver location
-      getCurrentLocation()
-        .then((loc) => {
-          if (loc) {
-            setReceiverLocation(loc)
-            setReceiverLastUpdate(new Date())
-          }
-        })
-        .catch(() => {
-          // Location unavailable - that's ok
-        })
     } else {
       setReceiverTrackingActive(false)
     }
 
     // Subscribe to location updates (both sender and receiver)
     const unsubscribeLocation = subscribeToLocationHistory(alert.id, (newLocation) => {
-      console.log('[Receiver] Location update received:', {
+      console.log('[Receiver] Location update received via subscription:', {
         userId: newLocation.user_id,
         alertUserId: alert.user_id,
         receiverUserId: user.id,
         isSender: newLocation.user_id === alert.user_id,
-        isReceiver: newLocation.user_id === user.id
+        isReceiver: newLocation.user_id === user.id,
+        location: { lat: newLocation.latitude, lng: newLocation.longitude }
       })
       
       // Check if this is sender's location or receiver's location
       if (newLocation.user_id === alert.user_id) {
         // This is sender's location
-        console.log('[Receiver] Updating sender location')
+        console.log('[Receiver] Updating sender location from subscription')
         setLocationHistory((prev) => [...prev, newLocation])
         setLocation(newLocation)
       } else if (newLocation.user_id === user.id) {
         // This is receiver's location
-        console.log('[Receiver] Updating own location')
+        console.log('[Receiver] Updating own location from subscription')
         setReceiverLocationHistory((prev) => [...prev, newLocation])
         setReceiverLocation({
           lat: newLocation.latitude,
@@ -430,6 +436,45 @@ export default function AlertResponsePage() {
         console.warn('[Receiver] Received location update for unknown user:', newLocation.user_id)
       }
     })
+
+    // Add polling fallback for location updates (in case subscription fails)
+    // Poll every 10 seconds for sender's location updates
+    const pollInterval = setInterval(async () => {
+      if (!alert || !user) return
+      
+      try {
+        const supabase = createClient()
+        const { data: latestLocation, error: pollError } = await supabase
+          .from('location_history')
+          .select('*')
+          .eq('alert_id', alert.id)
+          .eq('user_id', alert.user_id) // Get sender's latest location
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        
+        if (pollError) {
+          // Silently ignore polling errors (subscription should handle updates)
+          return
+        }
+        
+        if (latestLocation) {
+          // Check if this is a new location (not already in history)
+          setLocationHistory((prev) => {
+            const exists = prev.some(loc => loc.id === latestLocation.id)
+            if (!exists) {
+              console.log('[Receiver] Polling found new sender location')
+              setLocation(latestLocation)
+              return [...prev, latestLocation]
+            }
+            return prev
+          })
+        }
+      } catch (pollErr) {
+        // Silently ignore polling errors
+        console.warn('[Receiver] Polling error (non-critical):', pollErr)
+      }
+    }, 10000) // Poll every 10 seconds
 
     // Subscribe to alert updates
     const unsubscribeAlert = createClient()
@@ -467,6 +512,9 @@ export default function AlertResponsePage() {
       setReceiverTrackingActive(false)
       unsubscribeLocation()
       unsubscribeAlert?.unsubscribe()
+      if (pollInterval) {
+        clearInterval(pollInterval)
+      }
       hideEmergencyAlert()
     }
     // Only depend on alert.id and user.id, not the full alert object

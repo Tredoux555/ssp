@@ -634,8 +634,12 @@ export default function DashboardPage() {
       // Note: Contact notification is handled server-side in the API route
       // No need to call notifyEmergencyContacts() here - it's already done
 
-      // Navigate to emergency screen
-      router.push(`/emergency/active/${emergencyAlert.id}`)
+      // Navigate to emergency screen immediately (post-creation steps run in background)
+      if (emergencyAlert && emergencyAlert.id) {
+        router.push(`/emergency/active/${emergencyAlert.id}`)
+        // Clear loading state immediately after navigation
+        setEmergencyLoading(false)
+      }
     } catch (error: any) {
       // Properly serialize error for logging
       const serializedError = serializeError(error)
