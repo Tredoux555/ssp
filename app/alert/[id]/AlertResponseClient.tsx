@@ -212,12 +212,14 @@ export default function AlertResponsePage() {
       vibrateDevice()
 
       // Get initial location - prefer location_history over alert location
+      // Query sender's location (where user_id = alert.user_id)
       // Add timeout to prevent hanging
       try {
         const locationPromise = supabase
           .from('location_history')
           .select('*')
           .eq('alert_id', alertId)
+          .eq('user_id', alertData.user_id) // Get sender's location
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle()
@@ -229,9 +231,35 @@ export default function AlertResponsePage() {
         const result = await Promise.race([locationPromise, timeoutPromise]).catch(() => ({ data: null, error: null }))
         
         if (result && result.data) {
+          console.log('[Receiver] Loaded sender location from history:', result.data)
           setLocation(result.data)
+        } else if (result && (result as any).error) {
+          console.error('[Receiver] Failed to load sender location:', {
+            error: (result as any).error,
+            code: (result as any).error?.code,
+            message: (result as any).error?.message,
+            details: (result as any).error?.details,
+            hint: (result as any).error?.hint,
+            alertId: alertId,
+            senderUserId: alertData.user_id,
+            receiverUserId: user.id
+          })
+          // Fallback to alert location
+          if (alertData.location_lat && alertData.location_lng) {
+            console.log('[Receiver] Using fallback alert location')
+            setLocation({
+              id: 'initial',
+              user_id: alertData.user_id,
+              alert_id: alertId,
+              latitude: alertData.location_lat,
+              longitude: alertData.location_lng,
+              timestamp: alertData.triggered_at,
+              created_at: alertData.triggered_at,
+            } as LocationHistory)
+          }
         } else if (alertData.location_lat && alertData.location_lng) {
           // Fallback to alert location if no history yet
+          console.log('[Receiver] No location history, using alert location')
           setLocation({
             id: 'initial',
             user_id: alertData.user_id,
@@ -242,10 +270,18 @@ export default function AlertResponsePage() {
             created_at: alertData.triggered_at,
           } as LocationHistory)
         }
-      } catch (locationErr) {
-        console.warn('[Alert] Could not fetch initial location:', locationErr)
+      } catch (locationErr: any) {
+        console.error('[Receiver] Error fetching initial location:', {
+          error: locationErr,
+          message: locationErr?.message,
+          stack: locationErr?.stack,
+          alertId: alertId,
+          senderUserId: alertData.user_id,
+          receiverUserId: user.id
+        })
         // Fallback to alert location
         if (alertData.location_lat && alertData.location_lng) {
+          console.log('[Receiver] Using fallback alert location after error')
           setLocation({
             id: 'initial',
             user_id: alertData.user_id,
@@ -367,19 +403,31 @@ export default function AlertResponsePage() {
 
     // Subscribe to location updates (both sender and receiver)
     const unsubscribeLocation = subscribeToLocationHistory(alert.id, (newLocation) => {
+      console.log('[Receiver] Location update received:', {
+        userId: newLocation.user_id,
+        alertUserId: alert.user_id,
+        receiverUserId: user.id,
+        isSender: newLocation.user_id === alert.user_id,
+        isReceiver: newLocation.user_id === user.id
+      })
+      
       // Check if this is sender's location or receiver's location
       if (newLocation.user_id === alert.user_id) {
         // This is sender's location
+        console.log('[Receiver] Updating sender location')
         setLocationHistory((prev) => [...prev, newLocation])
         setLocation(newLocation)
       } else if (newLocation.user_id === user.id) {
         // This is receiver's location
+        console.log('[Receiver] Updating own location')
         setReceiverLocationHistory((prev) => [...prev, newLocation])
         setReceiverLocation({
           lat: newLocation.latitude,
           lng: newLocation.longitude,
         })
         setReceiverLastUpdate(new Date())
+      } else {
+        console.warn('[Receiver] Received location update for unknown user:', newLocation.user_id)
       }
     })
 

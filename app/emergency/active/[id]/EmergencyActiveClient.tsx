@@ -60,7 +60,10 @@ export default function EmergencyActivePage() {
     const loadReceiverLocations = async () => {
       try {
         const supabase = createClient()
-        if (!supabase) return
+        if (!supabase) {
+          console.error('[Sender] Supabase client not available')
+          return
+        }
 
         // First, get all accepted responders for this alert
         const { data: acceptedResponses, error: responsesError } = await supabase
@@ -70,7 +73,13 @@ export default function EmergencyActivePage() {
           .not('acknowledged_at', 'is', null)
 
         if (responsesError) {
-          console.warn('[Sender] Failed to load accepted responses:', responsesError)
+          console.error('[Sender] Failed to load accepted responses:', {
+            error: responsesError,
+            code: responsesError.code,
+            message: responsesError.message,
+            alertId: alert.id,
+            userId: user.id
+          })
           return
         }
 
@@ -79,12 +88,14 @@ export default function EmergencyActivePage() {
 
         // If no accepted responders, clear the map
         if (!acceptedResponses || acceptedResponses.length === 0) {
+          console.log('[Sender] No accepted responders yet')
           setReceiverLocations(new Map())
           setReceiverUserIds([])
           return
         }
 
         const acceptedUserIds = acceptedResponses.map((r: { contact_user_id: string }) => r.contact_user_id)
+        console.log('[Sender] Querying locations for accepted responders:', acceptedUserIds)
 
         // Get all locations for this alert where user_id != sender.user_id AND user has accepted
         const { data: allLocations, error } = await supabase
@@ -97,11 +108,24 @@ export default function EmergencyActivePage() {
           .limit(50)
 
         if (error) {
-          console.warn('[Sender] Failed to load receiver locations:', error)
+          console.error('[Sender] Failed to load receiver locations:', {
+            error: error,
+            code: error.code,
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            alertId: alert.id,
+            userId: user.id,
+            acceptedUserIds: acceptedUserIds
+          })
+          // Don't return - try to continue with empty locations
+          setReceiverLocations(new Map())
+          setReceiverUserIds([])
           return
         }
 
         if (allLocations && allLocations.length > 0) {
+          console.log('[Sender] Loaded receiver locations:', allLocations.length)
           // Group locations by receiver user_id
           const receiverMap = new Map<string, LocationHistory[]>()
           const userIds = new Set<string>()
@@ -119,11 +143,20 @@ export default function EmergencyActivePage() {
           setReceiverLocations(receiverMap)
           setReceiverUserIds(Array.from(userIds))
         } else {
+          console.log('[Sender] No receiver locations found')
           setReceiverLocations(new Map())
           setReceiverUserIds([])
         }
-      } catch (error) {
-        console.warn('[Sender] Error loading receiver locations:', error)
+      } catch (error: any) {
+        console.error('[Sender] Error loading receiver locations:', {
+          error: error,
+          message: error?.message,
+          stack: error?.stack,
+          alertId: alert.id,
+          userId: user.id
+        })
+        setReceiverLocations(new Map())
+        setReceiverUserIds([])
       }
     }
 
@@ -154,20 +187,35 @@ export default function EmergencyActivePage() {
 
     // Subscribe to receiver location updates (only from accepted responders)
     const unsubscribeReceiverLocations = subscribeToLocationHistory(alert.id, async (newLocation) => {
+      console.log('[Sender] Location update received:', {
+        userId: newLocation.user_id,
+        senderUserId: user.id,
+        isSender: newLocation.user_id === user.id
+      })
+      
       // Only process receiver locations (not sender's own location)
       if (newLocation.user_id !== user.id) {
         // Check if this user has accepted to respond
         const supabase = createClient()
         if (supabase) {
-          const { data: response } = await supabase
+          const { data: response, error: responseError } = await supabase
             .from('alert_responses')
             .select('acknowledged_at')
             .eq('alert_id', alert.id)
             .eq('contact_user_id', newLocation.user_id)
             .maybeSingle()
           
+          if (responseError) {
+            console.error('[Sender] Error checking acceptance status:', {
+              error: responseError,
+              receiverUserId: newLocation.user_id,
+              alertId: alert.id
+            })
+          }
+          
           // Only add location if user has accepted
           if (response && response.acknowledged_at) {
+            console.log('[Sender] Adding accepted responder location:', newLocation.user_id)
             setReceiverLocations((prev) => {
               const updated = new Map(prev)
               const receiverId = newLocation.user_id
@@ -185,8 +233,12 @@ export default function EmergencyActivePage() {
               updated.get(receiverId)!.push(newLocation)
               return updated
             })
+          } else {
+            console.log('[Sender] Ignoring location from non-accepted responder:', newLocation.user_id)
           }
         }
+      } else {
+        console.log('[Sender] Ignoring own location update')
       }
     })
 
