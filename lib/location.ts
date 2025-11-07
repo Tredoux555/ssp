@@ -62,9 +62,19 @@ export async function updateLocation(
   try {
     const { updateLocation: updateLocationService } = await import('./services/location')
     await updateLocationService(userId, alertId, location)
+    console.log('[Location] ✅ Location saved to database:', {
+      userId,
+      alertId,
+      location: { lat: location.lat, lng: location.lng, accuracy: location.accuracy }
+    })
   } catch (error: any) {
     // Network errors or other issues should not break the emergency alert
-    console.error('Failed to update location:', error)
+    console.error('[Location] ❌ Failed to update location:', {
+      error: error,
+      message: error?.message,
+      userId,
+      alertId
+    })
     // Don't throw - location update is non-critical
   }
 }

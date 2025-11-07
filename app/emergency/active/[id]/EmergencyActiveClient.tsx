@@ -236,8 +236,17 @@ export default function EmergencyActivePage() {
           filter: `alert_id=eq.${alert.id}`,
         },
         (payload: any) => {
+          console.log('[Sender] ✅ Alert response update received:', {
+            contactUserId: payload.new.contact_user_id,
+            acknowledgedAt: payload.new.acknowledged_at,
+            alertId: alert.id
+          })
           // When someone accepts, reload receiver locations and update count
           if (payload.new.acknowledged_at) {
+            console.log('[Sender] ✅ Responder accepted - reloading locations:', {
+              contactUserId: payload.new.contact_user_id,
+              alertId: alert.id
+            })
             // Update count immediately
             setAcceptedResponderCount((prev) => prev + 1)
             // Reload receiver locations

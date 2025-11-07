@@ -331,6 +331,29 @@ export default function AlertResponsePage() {
       setHasAccepted(true)
       setAccepting(false)
       console.log('[Alert] ✅ User accepted to respond')
+      
+      // Immediately save receiver's location to location_history when they accept
+      // This ensures the sender can see the receiver's location right away
+      try {
+        const currentLoc = await getCurrentLocation()
+        if (currentLoc) {
+          const { updateLocation } = await import('@/lib/location')
+          await updateLocation(user.id, alert.id, currentLoc)
+          console.log('[Receiver] ✅ Saved initial location after acceptance:', {
+            location: currentLoc,
+            alertId: alert.id,
+            userId: user.id
+          })
+          // Also update local state so map shows immediately
+          setReceiverLocation(currentLoc)
+          setReceiverLastUpdate(new Date())
+        } else {
+          console.warn('[Receiver] ⚠️ Could not get current location to save after acceptance')
+        }
+      } catch (locError) {
+        console.warn('[Receiver] ⚠️ Could not save initial location after acceptance:', locError)
+        // Don't block acceptance if location save fails
+      }
     } catch (error: any) {
       console.error('[Alert] Error accepting response:', error)
       window.alert('An error occurred. Please try again.')
