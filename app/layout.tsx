@@ -4,6 +4,7 @@ import "./globals.css";
 import { AuthProvider } from "@/lib/contexts/AuthContext";
 import { ErrorHandler } from "@/components/ErrorHandler";
 import PushNotificationSetup from "@/components/PushNotificationSetup";
+import { GlobalErrorBoundary } from "@/components/GlobalErrorBoundary";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -25,11 +26,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.variable} font-sans antialiased`}>
-        <ErrorHandler />
-        <AuthProvider>
-          <PushNotificationSetup />
-          {children}
-        </AuthProvider>
+        <GlobalErrorBoundary>
+          <ErrorHandler />
+          <AuthProvider>
+            <PushNotificationSetup />
+            {children}
+          </AuthProvider>
+        </GlobalErrorBoundary>
       </body>
     </html>
   );

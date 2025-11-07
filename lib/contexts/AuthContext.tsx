@@ -29,9 +29,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (typeof window === 'undefined') {
         return undefined
       }
+      
+      // Check if required environment variables are available
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+      const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+      
+      if (!supabaseUrl || !supabaseAnonKey) {
+        console.error('[Auth] Missing Supabase environment variables:', {
+          hasUrl: !!supabaseUrl,
+          hasKey: !!supabaseAnonKey
+        })
+        return undefined
+      }
+      
       return createClient()
     } catch (error) {
-      console.error('Failed to initialize Supabase client:', error)
+      console.error('[Auth] Failed to initialize Supabase client:', error)
       return undefined
     }
   }, [])
