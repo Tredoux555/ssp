@@ -73,13 +73,26 @@ export default function EmergencyActivePage() {
           .not('acknowledged_at', 'is', null)
 
         if (responsesError) {
-          console.error('[Sender] Failed to load accepted responses:', {
-            error: responsesError,
-            code: responsesError.code,
-            message: responsesError.message,
-            alertId: alert.id,
-            userId: user.id
-          })
+          // Check if it's an RLS error
+          if (responsesError.code === '42501' || responsesError.message?.includes('row-level security') || responsesError.message?.includes('RLS')) {
+            console.error('[Sender] ❌ RLS policy blocking alert_responses query:', {
+              error: responsesError,
+              code: responsesError.code,
+              message: responsesError.message,
+              hint: responsesError.hint,
+              alertId: alert.id,
+              userId: user.id,
+              note: 'Migration fix-alert-responses-sender-view.sql may need to be run in Supabase'
+            })
+          } else {
+            console.error('[Sender] Failed to load accepted responses:', {
+              error: responsesError,
+              code: responsesError.code,
+              message: responsesError.message,
+              alertId: alert.id,
+              userId: user.id
+            })
+          }
           return
         }
 
@@ -239,7 +252,8 @@ export default function EmergencyActivePage() {
           console.log('[Sender] ✅ Alert response update received:', {
             contactUserId: payload.new.contact_user_id,
             acknowledgedAt: payload.new.acknowledged_at,
-            alertId: alert.id
+            alertId: alert.id,
+            oldAcknowledgedAt: payload.old?.acknowledged_at
           })
           // When someone accepts, reload receiver locations and update count
           if (payload.new.acknowledged_at) {
@@ -254,7 +268,56 @@ export default function EmergencyActivePage() {
           }
         }
       )
-      .subscribe()
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[Sender] ✅ Successfully subscribed to alert_responses updates')
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('[Sender] ❌ Failed to subscribe to alert_responses updates - will use polling fallback')
+        } else {
+          console.log('[Sender] Alert responses subscription status:', status)
+        }
+      })
+    
+    // Add polling fallback to check for accepted responders (in case subscription fails)
+    // Poll every 5 seconds to check if anyone has accepted
+    const acceptancePollInterval = setInterval(async () => {
+      if (!alert || !user) return
+      
+      try {
+        const supabase = createClient()
+        const { data: acceptedResponses, error: pollError } = await supabase
+          .from('alert_responses')
+          .select('contact_user_id')
+          .eq('alert_id', alert.id)
+          .not('acknowledged_at', 'is', null)
+        
+        if (pollError) {
+          // Check if it's an RLS error
+          if (pollError.code === '42501' || pollError.message?.includes('row-level security')) {
+            console.error('[Sender] ⚠️ RLS policy blocking alert_responses query in polling:', {
+              code: pollError.code,
+              message: pollError.message,
+              hint: pollError.hint,
+              note: 'Migration fix-alert-responses-sender-view.sql may need to be run in Supabase'
+            })
+          }
+          return
+        }
+        
+        const currentCount = acceptedResponses?.length || 0
+        if (currentCount !== acceptedResponderCount) {
+          console.log('[Sender] ✅ Polling detected acceptance change:', {
+            oldCount: acceptedResponderCount,
+            newCount: currentCount,
+            alertId: alert.id
+          })
+          setAcceptedResponderCount(currentCount)
+          loadReceiverLocations()
+        }
+      } catch (pollErr) {
+        console.warn('[Sender] Polling error (non-critical):', pollErr)
+      }
+    }, 5000) // Poll every 5 seconds
 
     // Subscribe to receiver location updates (only from accepted responders)
     const unsubscribeReceiverLocations = subscribeToLocationHistory(alert.id, async (newLocation) => {
@@ -459,6 +522,11 @@ export default function EmergencyActivePage() {
       // Cleanup subscriptions
       unsubscribeReceiverLocations()
       unsubscribeAcceptance?.unsubscribe()
+      
+      // Cleanup polling intervals
+      if (acceptancePollInterval) {
+        clearInterval(acceptancePollInterval)
+      }
       
       // Cleanup audio
       if (audio) {
