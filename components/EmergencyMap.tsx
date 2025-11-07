@@ -73,8 +73,15 @@ function EmergencyMapComponent({
   useEffect(() => {
     if (receiverLocation) {
       setReceiverLoc(receiverLocation)
+      console.log('[Map] ✅ Receiver location updated from props:', receiverLocation)
+    } else if (receiverUserId && receiverUserId !== (senderUserId || user_id)) {
+      console.log('[Map] ⚠️ Receiver location not available but receiverUserId is set:', {
+        receiverUserId,
+        senderUserId,
+        user_id
+      })
     }
-  }, [receiverLocation])
+  }, [receiverLocation, receiverUserId, senderUserId, user_id])
   
   // Update receiver location history when props change
   useEffect(() => {
@@ -87,6 +94,12 @@ function EmergencyMapComponent({
   useEffect(() => {
     if (receiverLocations) {
       setAllReceiverLocations(receiverLocations)
+      console.log('[Map] ✅ Receiver locations updated from props:', {
+        receiverCount: receiverLocations.size,
+        receiverIds: Array.from(receiverLocations.keys())
+      })
+    } else {
+      console.log('[Map] ⚠️ Receiver locations prop is null/undefined')
     }
   }, [receiverLocations])
   
@@ -403,9 +416,24 @@ function EmergencyMapComponent({
       historyMarkers: Array<{ key: string; position: { lat: number; lng: number }; icon: any }>
     }> = []
     
+    console.log('[Map] 🔍 Computing multiple receiver markers:', {
+      receiverLocationsSize: allReceiverLocations.size,
+      receiverUserIds: allReceiverUserIds,
+      senderLocation
+    })
+    
     Array.from(allReceiverLocations.entries()).forEach(([receiverId, locations]) => {
-      if (locations.length === 0) return
+      if (locations.length === 0) {
+        console.log('[Map] ⚠️ Skipping receiver with no locations:', receiverId)
+        return
+      }
       const latestLocation = locations[locations.length - 1]
+      
+      console.log('[Map] ✅ Creating marker for receiver:', {
+        receiverId,
+        locationCount: locations.length,
+        latestLocation: { lat: latestLocation.latitude, lng: latestLocation.longitude }
+      })
       
       markers.push({
         receiverId,
@@ -445,8 +473,13 @@ function EmergencyMapComponent({
       })
     })
     
+    console.log('[Map] ✅ Computed multiple receiver markers:', {
+      markerCount: markers.length,
+      receiverIds: markers.map(m => m.receiverId)
+    })
+    
     return markers
-  }, [allReceiverLocations, senderLocation, googleMaps])
+  }, [allReceiverLocations, senderLocation, googleMaps, allReceiverUserIds])
 
   // Handle loading states - AFTER all hooks are called
   if (!apiKey) {

@@ -372,16 +372,19 @@ export default function AlertResponsePage() {
 
     // Get receiver's current location for directions (even if not accepted yet)
     // This allows directions to be shown from receiver to sender
+    // Also ensures receiver's location is visible on their own map
     getCurrentLocation()
       .then((loc) => {
         if (loc) {
           setReceiverLocation(loc)
           setReceiverLastUpdate(new Date())
-          console.log('[Receiver] Got current location for directions:', loc)
+          console.log('[Receiver] ✅ Got current location for directions and map display:', loc)
+        } else {
+          console.warn('[Receiver] ⚠️ Could not get current location (returned null)')
         }
       })
       .catch((error) => {
-        console.warn('[Receiver] Could not get current location for directions:', error)
+        console.warn('[Receiver] ⚠️ Could not get current location for directions:', error)
         // Location unavailable - that's ok, directions won't show
       })
 
@@ -420,12 +423,20 @@ export default function AlertResponsePage() {
       // Check if this is sender's location or receiver's location
       if (newLocation.user_id === alert.user_id) {
         // This is sender's location
-        console.log('[Receiver] Updating sender location from subscription')
+        console.log('[Receiver] ✅ Updating sender location from subscription:', {
+          lat: newLocation.latitude,
+          lng: newLocation.longitude,
+          timestamp: newLocation.created_at
+        })
         setLocationHistory((prev) => [...prev, newLocation])
         setLocation(newLocation)
       } else if (newLocation.user_id === user.id) {
         // This is receiver's location
-        console.log('[Receiver] Updating own location from subscription')
+        console.log('[Receiver] ✅ Updating own location from subscription:', {
+          lat: newLocation.latitude,
+          lng: newLocation.longitude,
+          timestamp: newLocation.created_at
+        })
         setReceiverLocationHistory((prev) => [...prev, newLocation])
         setReceiverLocation({
           lat: newLocation.latitude,
@@ -433,7 +444,11 @@ export default function AlertResponsePage() {
         })
         setReceiverLastUpdate(new Date())
       } else {
-        console.warn('[Receiver] Received location update for unknown user:', newLocation.user_id)
+        console.warn('[Receiver] ⚠️ Received location update for unknown user:', {
+          userId: newLocation.user_id,
+          alertUserId: alert.user_id,
+          receiverUserId: user.id
+        })
       }
     })
 
@@ -632,6 +647,11 @@ export default function AlertResponsePage() {
               receiverUserId={user.id}
               senderUserId={alert.user_id}
             />
+            {!receiverLocation && (
+              <div className="mt-2 text-sm text-yellow-600 bg-yellow-50 p-2 rounded">
+                ⚠️ Your location is not available. Please enable location permissions to see directions.
+              </div>
+            )}
           </div>
         )}
       </Card>

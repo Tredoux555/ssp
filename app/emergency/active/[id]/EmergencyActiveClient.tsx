@@ -166,7 +166,16 @@ export default function EmergencyActivePage() {
         }
 
         if (allLocations && allLocations.length > 0) {
-          console.log('[Sender] Loaded receiver locations:', allLocations.length)
+          console.log('[Sender] ✅ Loaded receiver locations:', {
+            count: allLocations.length,
+            uniqueReceivers: new Set(allLocations.map(loc => loc.user_id)).size,
+            locations: allLocations.map(loc => ({
+              userId: loc.user_id,
+              lat: loc.latitude,
+              lng: loc.longitude,
+              timestamp: loc.created_at
+            }))
+          })
           // Group locations by receiver user_id
           const receiverMap = new Map<string, LocationHistory[]>()
           const userIds = new Set<string>()
@@ -181,10 +190,22 @@ export default function EmergencyActivePage() {
             receiverMap.get(receiverId)!.push(loc)
           })
 
+          console.log('[Sender] ✅ Grouped receiver locations:', {
+            receiverCount: userIds.size,
+            receiverIds: Array.from(userIds),
+            locationsPerReceiver: Array.from(receiverMap.entries()).map(([id, locs]) => ({
+              receiverId: id,
+              locationCount: locs.length
+            }))
+          })
+
           setReceiverLocations(receiverMap)
           setReceiverUserIds(Array.from(userIds))
         } else {
-          console.log('[Sender] No receiver locations found')
+          console.log('[Sender] ⚠️ No receiver locations found for accepted responders:', {
+            acceptedUserIds: acceptedUserIds,
+            alertId: alert.id
+          })
           setReceiverLocations(new Map())
           setReceiverUserIds([])
         }
@@ -256,7 +277,11 @@ export default function EmergencyActivePage() {
           
           // Only add location if user has accepted
           if (response && response.acknowledged_at) {
-            console.log('[Sender] Adding accepted responder location:', newLocation.user_id)
+            console.log('[Sender] ✅ Adding accepted responder location:', {
+              receiverId: newLocation.user_id,
+              location: { lat: newLocation.latitude, lng: newLocation.longitude },
+              timestamp: newLocation.created_at
+            })
             setReceiverLocations((prev) => {
               const updated = new Map(prev)
               const receiverId = newLocation.user_id
@@ -265,6 +290,7 @@ export default function EmergencyActivePage() {
                 updated.set(receiverId, [])
                 setReceiverUserIds((prevIds) => {
                   if (!prevIds.includes(receiverId)) {
+                    console.log('[Sender] ✅ Added new receiver to map:', receiverId)
                     return [...prevIds, receiverId]
                   }
                   return prevIds
@@ -272,10 +298,18 @@ export default function EmergencyActivePage() {
               }
               
               updated.get(receiverId)!.push(newLocation)
+              console.log('[Sender] ✅ Updated receiver locations map:', {
+                receiverId,
+                totalLocations: updated.get(receiverId)!.length
+              })
               return updated
             })
           } else {
-            console.log('[Sender] Ignoring location from non-accepted responder:', newLocation.user_id)
+            console.log('[Sender] ⚠️ Ignoring location from non-accepted responder:', {
+              receiverId: newLocation.user_id,
+              hasResponse: !!response,
+              acknowledgedAt: response?.acknowledged_at
+            })
           }
         }
       } else {
