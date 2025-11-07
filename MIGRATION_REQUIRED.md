@@ -121,6 +121,13 @@ CREATE POLICY "Contacts can view location during emergency" ON location_history
 
 After running both migrations, you can verify they were created successfully:
 
+### Option 1: Using SQL Query (Recommended)
+1. Go to Supabase Dashboard → SQL Editor
+2. Run the verification script: `scripts/verify-migrations.sql`
+3. Both queries should return 1 row each
+4. If either returns 0 rows, that migration still needs to be run
+
+### Option 2: Using Dashboard
 1. Go to Supabase Dashboard → Authentication → Policies
 2. Find the `alert_responses` table
 3. You should see a policy named "Alert creators can view responses for their alerts"
