@@ -726,25 +726,34 @@ export default function EmergencyActivePage() {
     if (!alert || !user || uploadingPhoto) return
 
     try {
+      console.log('[Photo] 📸 Button clicked - starting capture')
       setUploadingPhoto(true)
+      
       const file = await capturePhoto()
+      console.log('[Photo] 📁 File captured:', file ? { name: file.name, size: file.size, type: file.type } : 'null')
       
       if (!file) {
+        console.log('[Photo] ⚠️ No file selected')
         setUploadingPhoto(false)
         return
       }
 
+      console.log('[Photo] 🚀 Starting upload process...')
       const photo = await uploadEmergencyPhoto(alert.id, user.id, file)
       
       if (photo) {
-        console.log('[Photo] ✅ Photo uploaded successfully')
+        console.log('[Photo] ✅ Photo uploaded successfully:', photo.id)
         // Photo will be added via Realtime subscription
       } else {
-        window.alert('Failed to upload photo. Please try again.')
+        console.error('[Photo] ❌ Upload returned null')
+        // Error message already shown by uploadEmergencyPhoto
       }
     } catch (error: any) {
-      console.error('[Photo] Error capturing photo:', error)
-      window.alert('Failed to capture photo. Please try again.')
+      console.error('[Photo] ❌ Error capturing photo:', {
+        error: error?.message || error,
+        stack: error?.stack
+      })
+      window.alert(`Failed to capture photo: ${error?.message || 'Unknown error'}. Please try again.`)
     } finally {
       setUploadingPhoto(false)
     }

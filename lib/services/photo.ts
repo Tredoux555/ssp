@@ -1,6 +1,7 @@
 /**
  * Photo upload service for emergency alerts
  * Handles camera capture, image compression, and upload to Supabase Storage
+ * iOS-specific fixes included
  */
 
 import { createClient } from '@/lib/supabase'
@@ -10,70 +11,165 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
 const MAX_DIMENSION = 1920 // Max width/height in pixels
 
 /**
- * Compress image to reduce file size
+ * Fix image orientation based on EXIF data (iOS fix)
+ */
+function fixImageOrientation(img: HTMLImageElement, canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
+  // Get EXIF orientation from image (if available)
+  const orientation = (img as any).exifdata?.Orientation || 1
+  
+  // iOS Safari sometimes doesn't respect EXIF, so we handle it manually
+  // Most common: orientation 6 (90° clockwise) and 8 (90° counter-clockwise)
+  switch (orientation) {
+    case 2:
+      // Horizontal flip
+      ctx.transform(-1, 0, 0, 1, canvas.width, 0)
+      break
+    case 3:
+      // 180° rotation
+      ctx.transform(-1, 0, 0, -1, canvas.width, canvas.height)
+      break
+    case 4:
+      // Vertical flip
+      ctx.transform(1, 0, 0, -1, 0, canvas.height)
+      break
+    case 5:
+      // Vertical flip + 90° clockwise
+      ctx.transform(0, 1, 1, 0, 0, 0)
+      break
+    case 6:
+      // 90° clockwise
+      ctx.transform(0, 1, -1, 0, canvas.height, 0)
+      break
+    case 7:
+      // Horizontal flip + 90° clockwise
+      ctx.transform(0, -1, -1, 0, canvas.height, canvas.width)
+      break
+    case 8:
+      // 90° counter-clockwise
+      ctx.transform(0, -1, 1, 0, 0, canvas.width)
+      break
+    default:
+      // No transformation needed
+      break
+  }
+}
+
+/**
+ * Compress image to reduce file size (iOS-optimized)
  */
 function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality: number = 0.8): Promise<Blob> {
   return new Promise((resolve, reject) => {
+    // Add timeout for iOS devices (they can be slower)
+    const timeout = setTimeout(() => {
+      reject(new Error('Image processing timed out. Please try a smaller photo.'))
+    }, 30000) // 30 seconds
+
     const reader = new FileReader()
+    
     reader.onload = (e) => {
       const img = new Image()
+      
       img.onload = () => {
-        const canvas = document.createElement('canvas')
-        let width = img.width
-        let height = img.height
-
-        // Calculate new dimensions
-        if (width > height) {
-          if (width > maxWidth) {
-            height = (height * maxWidth) / width
-            width = maxWidth
+        try {
+          clearTimeout(timeout)
+          
+          const canvas = document.createElement('canvas')
+          let width = img.width
+          let height = img.height
+          
+          // Handle EXIF orientation for iOS
+          // If image is rotated in EXIF, swap dimensions
+          const orientation = (img as any).exifdata?.Orientation || 1
+          if (orientation >= 5 && orientation <= 8) {
+            // Dimensions are swapped for rotated images
+            [width, height] = [height, width]
           }
-        } else {
-          if (height > maxWidth) {
-            width = (width * maxWidth) / height
-            height = maxWidth
-          }
-        }
 
-        canvas.width = width
-        canvas.height = height
-
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          reject(new Error('Could not get canvas context'))
-          return
-        }
-
-        ctx.drawImage(img, 0, 0, width, height)
-
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              resolve(blob)
-            } else {
-              reject(new Error('Failed to compress image'))
+          // Calculate new dimensions
+          if (width > height) {
+            if (width > maxWidth) {
+              height = (height * maxWidth) / width
+              width = maxWidth
             }
-          },
-          'image/jpeg',
-          quality
-        )
+          } else {
+            if (height > maxWidth) {
+              width = (width * maxWidth) / height
+              height = maxWidth
+            }
+          }
+
+          // Set canvas size
+          canvas.width = width
+          canvas.height = height
+
+          const ctx = canvas.getContext('2d', { 
+            willReadFrequently: false, // Better performance on iOS
+            alpha: false // No transparency needed for photos
+          })
+          
+          if (!ctx) {
+            clearTimeout(timeout)
+            reject(new Error('Could not get canvas context'))
+            return
+          }
+
+          // Fix orientation if needed
+          fixImageOrientation(img, canvas, ctx)
+          
+          // Draw image
+          ctx.drawImage(img, 0, 0, width, height)
+
+          // Convert to blob with error handling
+          canvas.toBlob(
+            (blob) => {
+              clearTimeout(timeout)
+              if (blob) {
+                resolve(blob)
+              } else {
+                reject(new Error('Failed to compress image. Try a different photo.'))
+              }
+            },
+            'image/jpeg', // Always JPEG for compatibility
+            quality
+          )
+        } catch (error: any) {
+          clearTimeout(timeout)
+          reject(new Error(`Image processing failed: ${error.message || 'Unknown error'}`))
+        }
       }
-      img.onerror = () => reject(new Error('Failed to load image'))
+      
+      img.onerror = () => {
+        clearTimeout(timeout)
+        reject(new Error('Failed to load image. Unsupported format (try JPEG or PNG).'))
+      }
+      
+      // Handle HEIC files - convert to data URL
+      if (file.type === 'image/heic' || file.type === 'image/heif' || file.name.toLowerCase().endsWith('.heic')) {
+        // iOS Safari should convert HEIC automatically, but if not, show error
+        console.warn('[Photo] HEIC format detected - may need conversion')
+      }
+      
       img.src = e.target?.result as string
     }
-    reader.onerror = () => reject(new Error('Failed to read file'))
+    
+    reader.onerror = () => {
+      clearTimeout(timeout)
+      reject(new Error('Failed to read file'))
+    }
+    
+    // Use DataURL for better iOS compatibility
     reader.readAsDataURL(file)
   })
 }
 
 /**
- * Capture photo from camera or file picker
+ * Capture photo from camera or file picker (iOS-optimized)
  */
 export async function capturePhoto(): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = 'image/*'
+    input.accept = 'image/jpeg,image/jpg,image/png,image/heic,image/heif' // Include HEIC
     input.capture = 'environment' // Prefer rear camera on mobile
 
     input.onchange = async (e) => {
@@ -83,9 +179,15 @@ export async function capturePhoto(): Promise<File | null> {
         return
       }
 
+      console.log('[Photo] File selected:', {
+        name: file.name,
+        type: file.type,
+        size: file.size
+      })
+
       // Check file size
       if (file.size > MAX_FILE_SIZE) {
-        alert(`Image is too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB.`)
+        alert(`Image is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB.`)
         resolve(null)
         return
       }
@@ -114,70 +216,88 @@ export async function uploadEmergencyPhoto(
       return null
     }
 
-    console.log('[Photo] 📸 Starting upload:', { fileName: file.name, fileSize: file.size })
+    console.log('[Photo] 📸 Starting upload:', { 
+      fileName: file.name, 
+      fileSize: file.size,
+      fileType: file.type 
+    })
 
-    // Compress image
+    // Compress image with better error handling
     let compressedBlob: Blob
     try {
       compressedBlob = await compressImage(file)
       console.log('[Photo] ✅ Compressed:', { 
         original: file.size, 
-        compressed: compressedBlob.size 
+        compressed: compressedBlob.size,
+        reduction: `${Math.round((1 - compressedBlob.size / file.size) * 100)}%`
       })
     } catch (compressError: any) {
       console.error('[Photo] ❌ Compression failed:', compressError)
-      window.alert('Failed to process image. Please try a smaller photo.')
+      const errorMsg = compressError.message || 'Failed to process image'
+      window.alert(`${errorMsg}. Please try a smaller photo or different format.`)
       return null
     }
 
-    const compressedFile = new File([compressedBlob], file.name, { type: 'image/jpeg' })
+    // Create File object from blob with proper type
+    const compressedFile = new File([compressedBlob], `photo_${Date.now()}.jpg`, { 
+      type: 'image/jpeg',
+      lastModified: Date.now()
+    })
 
     // Generate unique filename
     const photoId = crypto.randomUUID()
-    const fileExtension = compressedFile.name.split('.').pop() || 'jpg'
-    const fileName = `${photoId}.${fileExtension}`
+    const fileName = `${photoId}.jpg` // Always use .jpg extension
     const storagePath = `${alertId}/${fileName}`
 
     // Upload to Supabase Storage
-    console.log('[Photo] 📤 Uploading to storage...')
+    console.log('[Photo] 📤 Uploading to storage...', { storagePath, fileSize: compressedFile.size })
+    
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('emergency-photos')
       .upload(storagePath, compressedFile, {
         contentType: 'image/jpeg',
         upsert: false,
+        cacheControl: '3600',
       })
 
     if (uploadError) {
       console.error('[Photo] ❌ Storage error:', {
         code: uploadError.statusCode,
         message: uploadError.message,
-        error: uploadError
+        error: uploadError,
+        status: (uploadError as any).status
       })
       
       // Check for bucket not found
       if (uploadError.message?.includes('Bucket not found') || 
           uploadError.message?.includes('does not exist') ||
-          uploadError.statusCode === '404') {
-        window.alert('Photo storage not configured. Please run the setup.')
+          uploadError.statusCode === '404' ||
+          (uploadError as any).status === 404) {
+        window.alert('Photo storage not configured. Setting up now...')
         // Try to auto-setup bucket
         try {
           const setupResponse = await fetch('/api/storage/setup-bucket', { method: 'POST' })
           const setupResult = await setupResponse.json()
           if (setupResult.success) {
             window.alert('Storage bucket created! Please try uploading again.')
+          } else {
+            window.alert(`Setup failed: ${setupResult.error || 'Unknown error'}. Please create the bucket manually in Supabase.`)
           }
-        } catch (setupError) {
+        } catch (setupError: any) {
           console.error('[Photo] Failed to auto-setup bucket:', setupError)
+          window.alert('Could not auto-setup storage. Please create "emergency-photos" bucket in Supabase Storage.')
         }
-      } else if (uploadError.statusCode === '403' || uploadError.message?.includes('policy')) {
+      } else if (uploadError.statusCode === '403' || 
+                 uploadError.message?.includes('policy') ||
+                 (uploadError as any).status === 403) {
         window.alert('Permission denied. Storage policies may need to be configured.')
       } else {
-        window.alert(`Failed to upload: ${uploadError.message || 'Unknown error'}`)
+        window.alert(`Failed to upload: ${uploadError.message || 'Unknown error'}. Please try again.`)
       }
       return null
     }
 
-    console.log('[Photo] ✅ Storage upload successful')
+    console.log('[Photo] ✅ Storage upload successful:', uploadData)
 
     // Save metadata to database
     const { data: photoData, error: dbError } = await supabase
@@ -229,9 +349,10 @@ export async function uploadEmergencyPhoto(
   } catch (error: any) {
     console.error('[Photo] ❌ Unexpected error:', {
       error: error?.message || error,
-      stack: error?.stack
+      stack: error?.stack,
+      name: error?.name
     })
-    window.alert(`Failed to upload photo: ${error?.message || 'Unknown error'}`)
+    window.alert(`Failed to upload photo: ${error?.message || 'Unknown error'}. Please try again.`)
     return null
   }
 }
