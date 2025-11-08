@@ -333,9 +333,11 @@ function EmergencyMapComponent({
   }, [])
 
   // Get Google Maps API - memoize to ensure hooks are called before early returns
+  // Depend on isLoaded so it updates when Google Maps actually loads
   const googleMaps = useMemo(() => {
+    if (!isLoaded) return null
     return typeof window !== 'undefined' ? window.google?.maps : null
-  }, [])
+  }, [isLoaded])
 
   // Memoize map options to prevent re-renders
   const mapOptions = useMemo(() => ({
@@ -348,7 +350,7 @@ function EmergencyMapComponent({
 
   // Memoize sender marker icon
   const senderMarkerIcon = useMemo(() => {
-    if (!googleMaps) return undefined
+    if (!isLoaded || !googleMaps) return undefined
     return {
       path: googleMaps.SymbolPath.CIRCLE,
       scale: 8,
@@ -357,11 +359,11 @@ function EmergencyMapComponent({
       strokeColor: '#FFFFFF',
       strokeWeight: 3,
     }
-  }, [googleMaps])
+  }, [googleMaps, isLoaded])
 
   // Memoize receiver marker icon
   const receiverMarkerIcon = useMemo(() => {
-    if (!googleMaps) return undefined
+    if (!isLoaded || !googleMaps) return undefined
     return {
       path: googleMaps.SymbolPath.CIRCLE,
       scale: 8,
@@ -370,11 +372,11 @@ function EmergencyMapComponent({
       strokeColor: '#FFFFFF',
       strokeWeight: 3,
     }
-  }, [googleMaps])
+  }, [googleMaps, isLoaded])
 
   // Memoize sender location history markers
   const senderHistoryMarkers = useMemo(() => {
-    if (!googleMaps) return []
+    if (!isLoaded || !googleMaps) return []
     return senderLocationHistory.map((loc, index) => ({
       key: `sender-${loc.id}-${index}`,
       position: { lat: loc.latitude, lng: loc.longitude },
@@ -387,11 +389,11 @@ function EmergencyMapComponent({
         strokeWeight: 2,
       },
     }))
-  }, [senderLocationHistory, googleMaps])
+  }, [senderLocationHistory, googleMaps, isLoaded])
 
   // Memoize receiver location history markers
   const receiverHistoryMarkers = useMemo(() => {
-    if (!googleMaps) return []
+    if (!isLoaded || !googleMaps) return []
     return receiverLocHistory.map((loc, index) => ({
       key: `receiver-${loc.id}-${index}`,
       position: { lat: loc.latitude, lng: loc.longitude },
@@ -404,11 +406,11 @@ function EmergencyMapComponent({
         strokeWeight: 2,
       },
     }))
-  }, [receiverLocHistory, googleMaps])
+  }, [receiverLocHistory, googleMaps, isLoaded])
 
   // Memoize multiple receiver markers
   const multipleReceiverMarkers = useMemo(() => {
-    if (!googleMaps) return []
+    if (!isLoaded || !googleMaps) return []
     const markers: Array<{
       receiverId: string
       currentMarker: { position: { lat: number; lng: number }; title: string; icon: any }
@@ -479,7 +481,7 @@ function EmergencyMapComponent({
     })
     
     return markers
-  }, [allReceiverLocations, senderLocation, googleMaps, allReceiverUserIds])
+  }, [allReceiverLocations, senderLocation, googleMaps, allReceiverUserIds, isLoaded])
 
   // Handle loading states - AFTER all hooks are called
   if (!apiKey) {
@@ -605,7 +607,7 @@ function EmergencyMapComponent({
         )}
 
         {/* Fallback polyline if no directions available */}
-        {!directionsResult && receiverLoc && googleMaps && (
+        {!directionsResult && receiverLoc && isLoaded && googleMaps && (
           <Polyline
             path={[senderLocation, receiverLoc]}
             options={{
@@ -646,7 +648,7 @@ function EmergencyMapComponent({
             />
             
             {/* Polyline from sender to this receiver */}
-            {googleMaps && (
+            {isLoaded && googleMaps && (
               <Polyline
                 key={`polyline-${markerData.receiverId}`}
                 path={markerData.polyline.path}
