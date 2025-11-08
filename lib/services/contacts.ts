@@ -30,20 +30,45 @@ export async function getIncomingInvites(): Promise<Array<{
       } catch {
         // If response isn't JSON, use default error
       }
-      throw new Error(error.error || `Failed to fetch invites (${res.status})`)
+      
+      // Log error but don't throw for client-side handling
+      console.warn('[Contacts] Failed to fetch invites:', {
+        status: res.status,
+        statusText: res.statusText,
+        error: error.error || 'Unknown error'
+      })
+      
+      // Return empty array for non-critical errors (UI will handle gracefully)
+      if (res.status === 401 || res.status === 403) {
+        // Auth errors - return empty array, UI will handle
+        return []
+      }
+      
+      // For other errors, still return empty array to prevent UI breakage
+      return []
     }
 
     const data = await res.json()
     return data.invites || []
   } catch (error: any) {
-    console.error('Error fetching incoming invites:', error)
-    
-    // Handle network errors gracefully
-    if (error instanceof TypeError || error.message?.includes('fetch')) {
-      throw new Error('Network error: Unable to connect to server. Please check your internet connection.')
+    // Handle network errors gracefully - return empty array instead of throwing
+    if (error instanceof TypeError || error.message?.includes('fetch') || error.message?.includes('Network error')) {
+      console.warn('[Contacts] Network error fetching invites (returning empty array):', {
+        error: error.message || error,
+        type: error.constructor?.name || typeof error
+      })
+      // Return empty array for network errors - UI already handles this gracefully
+      return []
     }
     
-    throw error
+    // For other errors, log and return empty array to prevent UI breakage
+    console.error('[Contacts] Error fetching incoming invites:', {
+      error: error?.message || error,
+      type: error?.constructor?.name || typeof error
+    })
+    
+    // Return empty array instead of throwing - UI will handle gracefully
+    return []
   }
 }
 
