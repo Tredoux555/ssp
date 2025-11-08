@@ -61,9 +61,16 @@ export default function EmergencyActivePage() {
     const loadReceiverLocations = async () => {
       try {
         // Use API endpoint to get accepted responders (bypasses RLS)
-        const acceptedResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`)
+        // Use no-store to prevent caching - we need real-time data
+        const acceptedResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache'
+          }
+        })
         
-        if (!acceptedResponse.ok) {
+        // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
+        if (!acceptedResponse.ok && acceptedResponse.status !== 304) {
           let errorData: any = {}
           let responseText = ''
           try {
@@ -126,9 +133,16 @@ export default function EmergencyActivePage() {
         })
 
         // Use API endpoint to get receiver locations (bypasses RLS)
-        const locationsResponse = await fetch(`/api/emergency/${alert.id}/receiver-locations`)
+        // Use no-store to prevent caching - we need real-time data
+        const locationsResponse = await fetch(`/api/emergency/${alert.id}/receiver-locations`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache'
+          }
+        })
         
-        if (!locationsResponse.ok) {
+        // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
+        if (!locationsResponse.ok && locationsResponse.status !== 304) {
           const errorData = await locationsResponse.json().catch(() => ({}))
           console.error('[Sender] Failed to fetch receiver locations:', {
             status: locationsResponse.status,
@@ -259,9 +273,16 @@ export default function EmergencyActivePage() {
       
       try {
         // Use API endpoint instead of direct query (bypasses RLS)
-        const response = await fetch(`/api/emergency/${alert.id}/accepted-responders`)
+        // Use no-store to prevent caching - we need real-time data
+        const response = await fetch(`/api/emergency/${alert.id}/accepted-responders`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache'
+          }
+        })
         
-        if (!response.ok) {
+        // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
+        if (!response.ok && response.status !== 304) {
           // Silently handle errors - API might be temporarily unavailable
           if (process.env.NODE_ENV === 'development') {
             const errorData = await response.json().catch(() => ({}))
@@ -315,10 +336,25 @@ export default function EmergencyActivePage() {
       if (newLocation.user_id !== user.id) {
         // Use API to check if this user has accepted to respond (bypasses RLS)
         try {
-          const acceptanceResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`)
+          // Use no-store to prevent caching - we need real-time data
+          const acceptanceResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`, {
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache'
+            }
+          })
           
-          if (acceptanceResponse.ok) {
-            const acceptanceData = await acceptanceResponse.json()
+          // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
+          if (acceptanceResponse.ok || acceptanceResponse.status === 304) {
+            // 304 responses have no body, so we need to handle it differently
+            let acceptanceData: any
+            if (acceptanceResponse.status === 304) {
+              // For 304, we'll reload all locations to get fresh data
+              loadReceiverLocations()
+              return
+            } else {
+              acceptanceData = await acceptanceResponse.json()
+            }
             const acceptedUserIds = acceptanceData.acceptedResponders?.map((r: { contact_user_id: string }) => r.contact_user_id) || []
             const hasAccepted = acceptedUserIds.includes(newLocation.user_id)
             
