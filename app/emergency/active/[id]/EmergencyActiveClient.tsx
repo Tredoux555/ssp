@@ -48,12 +48,12 @@ export default function EmergencyActivePage() {
   const uploadingPhotoRef = useRef(false)
   const loadLocationsQueuedRef = useRef(false)
   const loadReceiverLocationsRef = useRef<(() => void) | null>(null)
+  const loadingAlertRef = useRef(false) // Prevent concurrent loadAlert calls
 
   useEffect(() => {
     if (!user) return
-
     loadAlert()
-  }, [user, alertId])
+  }, [user, alertId, loadAlert])
 
   useEffect(() => {
     if (!alert || !user) return
@@ -474,10 +474,11 @@ export default function EmergencyActivePage() {
         setLocation(loc)
         setLastLocationUpdate(new Date())
         setLocationTrackingActive(true)
+        // Only set address if it's not already set to prevent infinite loops
         if (!address && loc) {
           try {
             const addr = await reverseGeocode(loc.lat, loc.lng)
-            if (addr) setAddress(addr)
+            if (addr && addr !== address) setAddress(addr)
           } catch (error) {
             // Reverse geocoding failed - that's ok, continue without address
             // Don't log - reverseGeocode already handles errors silently
@@ -496,7 +497,8 @@ export default function EmergencyActivePage() {
           setLocation(loc)
           try {
             const addr = await reverseGeocode(loc.lat, loc.lng)
-            if (addr) setAddress(addr)
+            // Only set address if it's different to prevent infinite loops
+            if (addr && addr !== address) setAddress(addr)
           } catch (error) {
             // Reverse geocoding failed - that's ok, continue without address
           }
@@ -507,12 +509,13 @@ export default function EmergencyActivePage() {
               lat: alert.location_lat,
               lng: alert.location_lng,
             })
-            if (alert.address) {
+            // Only set address if it's different to prevent infinite loops
+            if (alert.address && alert.address !== address) {
               setAddress(alert.address)
-            } else {
+            } else if (!address) {
               try {
                 const addr = await reverseGeocode(alert.location_lat, alert.location_lng)
-                if (addr) setAddress(addr)
+                if (addr && addr !== address) setAddress(addr)
               } catch (error) {
                 // Reverse geocoding failed - that's ok, continue without address
               }
@@ -527,7 +530,8 @@ export default function EmergencyActivePage() {
             lat: alert.location_lat,
             lng: alert.location_lng,
           })
-          if (alert.address) {
+          // Only set address if it's different to prevent infinite loops
+          if (alert.address && alert.address !== address) {
             setAddress(alert.address)
           }
         }
@@ -626,7 +630,7 @@ export default function EmergencyActivePage() {
       setLocationTrackingActive(false)
       unsubscribeReceiverLocations()
     }
-  }, [alert, user, address, permissionStatus])
+  }, [alert, user, permissionStatus]) // Removed 'address' from dependencies to prevent infinite loop
 
   // Load photos and subscribe to photo updates
   useEffect(() => {
@@ -665,11 +669,14 @@ export default function EmergencyActivePage() {
     }
   }, [alert, user])
 
-  const loadAlert = async () => {
-    if (!user) {
-      setLoading(false)
+  const loadAlert = useCallback(async () => {
+    if (!user || loadingAlertRef.current) {
+      if (!user) setLoading(false)
       return
     }
+    
+    loadingAlertRef.current = true
+    setLoading(true)
 
     try {
       const activeAlert = await getActiveEmergency(user.id)
@@ -680,7 +687,8 @@ export default function EmergencyActivePage() {
             lat: activeAlert.location_lat,
             lng: activeAlert.location_lng,
           })
-          if (activeAlert.address) {
+          // Only set address if it's different to prevent infinite loops
+          if (activeAlert.address && activeAlert.address !== address) {
             setAddress(activeAlert.address)
           }
         }
@@ -695,8 +703,9 @@ export default function EmergencyActivePage() {
       router.push('/dashboard')
     } finally {
       setLoading(false)
+      loadingAlertRef.current = false
     }
-  }
+  }, [user, alertId, address, router])
 
   const handleCancel = async () => {
     if (!user || !alert) return
