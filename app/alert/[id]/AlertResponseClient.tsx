@@ -710,6 +710,49 @@ export default function AlertResponsePage() {
     hideEmergencyAlert()
   }, [])
 
+  // Auto-redirect if alert is cancelled/resolved
+  useEffect(() => {
+    if (alert && alert.status !== 'active' && !isClosingRef.current) {
+      console.log('[Receiver] Alert is not active, auto-redirecting to dashboard', {
+        alertId: alert.id,
+        status: alert.status
+      })
+      setIsClosing(true)
+      isClosingRef.current = true
+      
+      // Clean up subscriptions
+      try {
+        if (cleanupRefs.current.stopReceiverTracking) {
+          cleanupRefs.current.stopReceiverTracking()
+        }
+        if (cleanupRefs.current.unsubscribeLocation) {
+          cleanupRefs.current.unsubscribeLocation()
+        }
+        if (cleanupRefs.current.unsubscribeAlert) {
+          cleanupRefs.current.unsubscribeAlert()
+        }
+        if (cleanupRefs.current.pollInterval) {
+          clearInterval(cleanupRefs.current.pollInterval)
+        }
+        if (cleanupRefs.current.statusPollInterval) {
+          clearInterval(cleanupRefs.current.statusPollInterval)
+        }
+      } catch (cleanupError) {
+        console.warn('[Receiver] Error during auto-cleanup:', cleanupError)
+      }
+      
+      hideEmergencyAlert()
+      
+      // Force navigation with small delay to ensure cleanup completes
+      setTimeout(() => {
+        if (window.location.pathname !== '/dashboard') {
+          console.log('[Receiver] Force navigating to dashboard')
+          window.location.href = '/dashboard'
+        }
+      }, 100)
+    }
+  }, [alert?.status, alert?.id])
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-sa-green via-sa-blue to-sa-gold flex items-center justify-center">
@@ -794,12 +837,26 @@ export default function AlertResponsePage() {
                 console.warn('[Receiver] Error during cleanup:', cleanupError)
               }
               
-              // Hide alert overlay
-              hideEmergencyAlert()
-              
-              // Navigate immediately - use replace to prevent back navigation
-              console.log('[Receiver] Navigating to dashboard...')
+            // Hide alert overlay
+            hideEmergencyAlert()
+            
+            // Navigate immediately - use replace to prevent back navigation
+            // Use window.location.href as fallback if router fails
+            console.log('[Receiver] Navigating to dashboard...')
+            try {
               router.replace('/dashboard')
+              // Fallback: if navigation doesn't happen within 500ms, force it
+              setTimeout(() => {
+                if (window.location.pathname !== '/dashboard') {
+                  console.log('[Receiver] Router navigation failed, using window.location')
+                  window.location.href = '/dashboard'
+                }
+              }, 500)
+            } catch (navError) {
+              console.error('[Receiver] Navigation error:', navError)
+              // Force navigation as fallback
+              window.location.href = '/dashboard'
+            }
             }} 
             variant="secondary" 
             size="sm"
