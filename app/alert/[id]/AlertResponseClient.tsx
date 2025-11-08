@@ -930,20 +930,31 @@ export default function AlertResponsePage() {
             </p>
           </div>
 
-          {!hasAccepted && (
+          {!hasAccepted && !hasDeclined && (
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
               <p className="text-sm text-gray-700 mb-3">
-                Accept to start sharing your location and help respond to this emergency.
+                Choose how you want to respond to this emergency alert.
               </p>
-              <Button
-                onClick={handleAcceptResponse}
-                disabled={accepting}
-                variant="primary"
-                size="lg"
-                className="w-full"
-              >
-                {accepting ? 'Accepting...' : 'Accept to Respond'}
-              </Button>
+              <div className="flex gap-3">
+                <Button
+                  onClick={handleAcceptResponse}
+                  disabled={accepting || declining}
+                  variant="primary"
+                  size="lg"
+                  className="flex-1"
+                >
+                  {accepting ? 'Accepting...' : 'Accept to Respond'}
+                </Button>
+                <Button
+                  onClick={handleDeclineResponse}
+                  disabled={accepting || declining}
+                  variant="secondary"
+                  size="lg"
+                  className="flex-1"
+                >
+                  {declining ? 'Declining...' : 'Decline'}
+                </Button>
+              </div>
             </div>
           )}
 
@@ -951,6 +962,14 @@ export default function AlertResponsePage() {
             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
               <p className="text-sm text-green-700 font-medium">
                 ✓ You're responding - Your location is being shared
+              </p>
+            </div>
+          )}
+
+          {hasDeclined && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <p className="text-sm text-gray-700 font-medium">
+                You have declined to respond to this alert.
               </p>
             </div>
           )}
