@@ -114,11 +114,21 @@ export default function EmergencyActivePage() {
     // Query all receiver locations from location_history (only from accepted responders)
     // Uses server-side API endpoints to bypass RLS
     const loadReceiverLocations = async () => {
-      // Guard check - ensure alert exists before making API calls
+      // Enhanced guard check - ensure alert exists AND ID matches URL
       if (!alert || !alert.id) {
         console.warn('[Sender] Cannot load receiver locations - alert not available', {
           hasAlert: !!alert,
-          alertId: alert?.id
+          alertId: alert?.id,
+          urlAlertId: alertId
+        })
+        return
+      }
+      
+      // Verify alert ID matches URL parameter
+      if (alert.id !== alertId) {
+        console.warn('[Sender] Alert ID mismatch - waiting for correct alert', {
+          alertId: alert.id,
+          urlAlertId: alertId
         })
         return
       }
@@ -179,9 +189,24 @@ export default function EmergencyActivePage() {
             console.error('[Sender] ⚠️ Alert not found - it may have been deleted or the alert ID is invalid')
             console.error('[Sender] ⚠️ Alert details:', {
               alertId: alert?.id,
+              urlAlertId: alertId,
               alertExists: !!alert,
-              alertStatus: alert?.status
+              alertStatus: alert?.status,
+              alertUserId: alert?.user_id,
+              currentUserId: user?.id,
+              alertIdMatch: alert?.id === alertId
             })
+            
+            // If alert exists locally but API can't find it, try reloading alert
+            // This handles timing issues where alert was just created
+            if (alert && alert.id && alert.id === alertId) {
+              console.log('[Sender] 🔄 Alert exists locally but not in API - reloading alert in 1 second...')
+              setTimeout(() => {
+                if (!isUnmountingRef.current && alert && alert.id === alertId) {
+                  loadAlert()
+                }
+              }, 1000)
+            }
           } else if (status === 500) {
             console.error('[Sender] ⚠️ Server error - check API logs in Vercel')
           }
