@@ -106,7 +106,19 @@ function EmergencyMapComponent({
   // Update receiver user IDs when props change
   useEffect(() => {
     if (receiverUserIds) {
-      setAllReceiverUserIds(receiverUserIds)
+      setAllReceiverUserIds((prev) => {
+        // Compare arrays by converting to strings to prevent infinite loops
+        // This handles cases where receiverUserIds is a new array reference with same contents
+        const prevStr = JSON.stringify([...prev].sort())
+        const newStr = JSON.stringify([...receiverUserIds].sort())
+        if (prevStr !== newStr) {
+          return receiverUserIds
+        }
+        return prev // Return previous to prevent unnecessary re-render
+      })
+    } else {
+      // Only clear if we actually had IDs before
+      setAllReceiverUserIds((prev) => prev.length > 0 ? [] : prev)
     }
   }, [receiverUserIds])
   
