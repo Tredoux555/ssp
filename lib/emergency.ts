@@ -312,7 +312,33 @@ export async function getActiveEmergency(userId: string): Promise<EmergencyAlert
     .maybeSingle()
 
   if (error && error.code !== 'PGRST116') {
+    console.error('[getActiveEmergency] Query error:', error)
     throw new Error(`Failed to fetch active emergency: ${error.message}`)
+  }
+
+  // Additional validation: Ensure the alert is actually valid
+  if (data) {
+    // Verify the alert has required fields and belongs to the user
+    if (!data.id || !data.user_id || data.user_id !== userId || data.status !== 'active') {
+      console.warn('[getActiveEmergency] ⚠️ Invalid alert data returned:', {
+        id: data.id,
+        userId: data.user_id,
+        expectedUserId: userId,
+        status: data.status,
+        hasId: !!data.id,
+        userIdMatch: data.user_id === userId,
+        statusActive: data.status === 'active'
+      })
+      return null
+    }
+    
+    console.log('[getActiveEmergency] ✅ Valid active emergency found:', {
+      id: data.id,
+      userId: data.user_id,
+      status: data.status
+    })
+  } else {
+    console.log('[getActiveEmergency] ℹ️ No active emergency found for user:', userId)
   }
 
   return data as EmergencyAlert | null
