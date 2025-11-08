@@ -66,20 +66,33 @@ function EmergencyMapComponent({
   const directionsServiceRef = useRef<google.maps.DirectionsService | null>(null)
   const lastDirectionsUpdateRef = useRef<{ origin: { lat: number; lng: number }; destination: { lat: number; lng: number } } | null>(null)
   const directionsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const lastProcessedLatLngRef = useRef<{ lat: number; lng: number } | null>(null) // Track last processed props to prevent infinite loops
+  const directionsErrorCountRef = useRef<number>(0) // Track consecutive errors to prevent infinite retries
+  const lastDirectionsErrorRef = useRef<string | null>(null) // Track last error to prevent retrying same error
 
   // Update sender location when props change - with robust validation
   useEffect(() => {
     if (latitude && longitude && !isNaN(latitude) && !isNaN(longitude) && 
         typeof latitude === 'number' && typeof longitude === 'number' &&
         latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
-      const newLocation = { lat: latitude, lng: longitude }
-      console.log('[Map] 📍 Updating sender location from props:', {
-        lat: latitude,
-        lng: longitude,
-        hasLatLng: true,
-        previousLocation: senderLocation
-      })
-      setSenderLocation(newLocation)
+      
+      // Check if props have actually changed (using ref, not state)
+      // Use threshold to ignore tiny GPS variations (about 0.1 meters)
+      const hasChanged = !lastProcessedLatLngRef.current || 
+        Math.abs(lastProcessedLatLngRef.current.lat - latitude) > 0.000001 ||
+        Math.abs(lastProcessedLatLngRef.current.lng - longitude) > 0.000001
+      
+      if (hasChanged) {
+        const newLocation = { lat: latitude, lng: longitude }
+        console.log('[Map] 📍 Updating sender location from props:', {
+          lat: latitude,
+          lng: longitude,
+          hasLatLng: true,
+          previousLocation: lastProcessedLatLngRef.current
+        })
+        setSenderLocation(newLocation)
+        lastProcessedLatLngRef.current = newLocation // Update ref with new values
+      }
     } else {
       console.warn('[Map] ⚠️ Invalid sender location props:', { 
         latitude, 
@@ -90,7 +103,7 @@ function EmergencyMapComponent({
         lngIsNaN: isNaN(longitude as number)
       })
     }
-  }, [latitude, longitude, senderLocation])
+  }, [latitude, longitude]) // Only depend on props, not state
   
   // Update receiver location when props change
   useEffect(() => {
@@ -116,13 +129,42 @@ function EmergencyMapComponent({
   // Update all receiver locations when props change (for sender's map)
   useEffect(() => {
     if (receiverLocations) {
-      setAllReceiverLocations(receiverLocations)
-      console.log('[Map] ✅ Receiver locations updated from props:', {
-        receiverCount: receiverLocations.size,
-        receiverIds: Array.from(receiverLocations.keys())
+      // Compare Maps by size and content to prevent unnecessary updates
+      setAllReceiverLocations((prev) => {
+        if (prev.size !== receiverLocations.size) {
+          console.log('[Map] ✅ Receiver locations updated from props (size changed):', {
+            receiverCount: receiverLocations.size,
+            receiverIds: Array.from(receiverLocations.keys())
+          })
+          return new Map(receiverLocations)
+        }
+        // Check if any receiver has new locations
+        let hasChanges = false
+        for (const [receiverId, locations] of receiverLocations.entries()) {
+          const prevLocations = prev.get(receiverId)
+          if (!prevLocations || prevLocations.length !== locations.length) {
+            hasChanges = true
+            break
+          }
+        }
+        if (hasChanges) {
+          console.log('[Map] ✅ Receiver locations updated from props (content changed):', {
+            receiverCount: receiverLocations.size,
+            receiverIds: Array.from(receiverLocations.keys())
+          })
+          return new Map(receiverLocations)
+        }
+        return prev // No changes, return previous to prevent re-render
       })
     } else {
-      console.log('[Map] ⚠️ Receiver locations prop is null/undefined')
+      // Clear if prop is null/undefined
+      setAllReceiverLocations((prev) => {
+        if (prev.size > 0) {
+          console.log('[Map] ⚠️ Receiver locations prop is null/undefined, clearing')
+          return new Map()
+        }
+        return prev
+      })
     }
   }, [receiverLocations])
   
@@ -280,6 +322,12 @@ function EmergencyMapComponent({
       }
     }
 
+    // Don't retry if we've had too many consecutive errors
+    if (directionsErrorCountRef.current >= 3) {
+      console.warn('[Map] ⚠️ Too many directions errors, skipping request')
+      return
+    }
+
     // Clear any existing timeout
     if (directionsTimeoutRef.current) {
       clearTimeout(directionsTimeoutRef.current)
@@ -312,14 +360,37 @@ function EmergencyMapComponent({
             setDirectionsResult(result)
             setDirectionsError(null)
             lastDirectionsUpdateRef.current = { origin, destination }
+            directionsErrorCountRef.current = 0 // Reset error count on success
+            lastDirectionsErrorRef.current = null
           } else {
             setDirectionsResult(null)
+            const errorKey = `${status}-${origin.lat}-${origin.lng}-${destination.lat}-${destination.lng}`
+            
+            // Don't retry if it's the same error
+            if (lastDirectionsErrorRef.current === errorKey) {
+              console.warn('[Map] ⚠️ Same directions error, not retrying:', status)
+              return
+            }
+            
+            lastDirectionsErrorRef.current = errorKey
+            directionsErrorCountRef.current += 1
+            
+            // Handle specific error types
             if (status === window.google.maps.DirectionsStatus.ZERO_RESULTS) {
               setDirectionsError('No route found')
             } else if (status === window.google.maps.DirectionsStatus.REQUEST_DENIED) {
               setDirectionsError('Directions request denied')
+              directionsErrorCountRef.current = 3 // Don't retry denied requests
             } else if (status === window.google.maps.DirectionsStatus.OVER_QUERY_LIMIT) {
               setDirectionsError('Directions API quota exceeded')
+              directionsErrorCountRef.current = 3 // Don't retry quota errors
+            } else if (status === 'UNKNOWN_ERROR') {
+              // UNKNOWN_ERROR often means API issue - don't retry aggressively
+              console.warn('[Map] ⚠️ Directions UNKNOWN_ERROR - may be API issue, limiting retries')
+              setDirectionsError(null) // Don't show error to user for UNKNOWN_ERROR
+              if (directionsErrorCountRef.current >= 2) {
+                directionsErrorCountRef.current = 3 // Stop retrying after 2 UNKNOWN_ERRORs
+              }
             } else {
               setDirectionsError(`Directions error: ${status}`)
             }
@@ -363,15 +434,64 @@ function EmergencyMapComponent({
     }
   }, [directionsResult, map, receiverLoc, senderLocation])
 
+  // Adjust map bounds to show all receivers (for sender's map with multiple receivers)
+  useEffect(() => {
+    if (map && allReceiverLocations.size > 0 && senderLocation && typeof window !== 'undefined' && window.google?.maps) {
+      // Only adjust bounds if we have receivers and no directions (directions already handles bounds)
+      if (!directionsResult) {
+        const bounds = new window.google.maps.LatLngBounds()
+        bounds.extend(senderLocation)
+        
+        // Add all receiver locations to bounds
+        allReceiverLocations.forEach((locations) => {
+          if (locations.length > 0) {
+            const latestLocation = locations[locations.length - 1]
+            bounds.extend({ lat: latestLocation.latitude, lng: latestLocation.longitude })
+          }
+        })
+        
+        // Fit bounds with padding
+        map.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 })
+        console.log('[Map] ✅ Adjusted bounds to show all receivers:', {
+          receiverCount: allReceiverLocations.size,
+          senderLocation
+        })
+      }
+    }
+  }, [map, allReceiverLocations, senderLocation, directionsResult])
+
   const onLoad = useCallback((mapInstance: any) => {
     console.log('[Map] ✅ Map loaded, sender location:', senderLocation)
     setMap(mapInstance)
     
-    // Ensure map centers on sender location
+    // Ensure map centers on sender location or fits all markers
     if (senderLocation && senderLocation.lat && senderLocation.lng && 
         !isNaN(senderLocation.lat) && !isNaN(senderLocation.lng)) {
-      mapInstance.setCenter(senderLocation)
-      console.log('[Map] 📍 Map centered on sender location:', senderLocation)
+      
+      // If we have receiver locations, fit bounds to show all
+      if (allReceiverLocations.size > 0 && typeof window !== 'undefined' && window.google?.maps) {
+        const bounds = new window.google.maps.LatLngBounds()
+        bounds.extend(senderLocation)
+        
+        // Add all receiver locations to bounds
+        allReceiverLocations.forEach((locations) => {
+          if (locations.length > 0) {
+            const latestLocation = locations[locations.length - 1]
+            bounds.extend({ lat: latestLocation.latitude, lng: latestLocation.longitude })
+          }
+        })
+        
+        // Fit bounds with padding
+        mapInstance.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 })
+        console.log('[Map] 📍 Map fitted to show sender and all receivers:', {
+          senderLocation,
+          receiverCount: allReceiverLocations.size
+        })
+      } else {
+        // No receivers, just center on sender
+        mapInstance.setCenter(senderLocation)
+        console.log('[Map] 📍 Map centered on sender location:', senderLocation)
+      }
       
       // Verify marker will be visible
       setTimeout(() => {
@@ -393,7 +513,7 @@ function EmergencyMapComponent({
     } else {
       console.warn('[Map] ⚠️ Cannot center map - invalid sender location:', senderLocation)
     }
-  }, [senderLocation])
+  }, [senderLocation, allReceiverLocations])
 
   // Get Google Maps API - memoize to ensure hooks are called before early returns
   // Depend on isLoaded so it updates when Google Maps actually loads
@@ -670,29 +790,14 @@ function EmergencyMapComponent({
         options={mapOptions}
     >
         {/* Sender location marker (Emergency Location - Red) - Always visible */}
-        {(() => {
-          console.log('[Map] 🎨 Rendering sender marker:', {
-            position: senderLocation,
-            icon: senderMarkerIcon ? 'defined' : 'undefined',
-            iconType: typeof senderMarkerIcon,
-            hasIcon: !!senderMarkerIcon,
-            isLoaded,
-            hasGoogleMaps: !!googleMaps
-          })
-          return (
-            <Marker
-              key={`sender-${senderLocation.lat}-${senderLocation.lng}`}
-              position={senderLocation}
-              title="Emergency Location (Sender)"
-              icon={senderMarkerIcon}
-              zIndex={1000}
-              visible={true}
-              onClick={() => {
-                console.log('[Map] 🎯 Sender marker clicked:', senderLocation)
-              }}
-            />
-          )
-        })()}
+        <Marker
+          key={`sender-${senderLocation.lat}-${senderLocation.lng}`}
+          position={senderLocation}
+          title="Emergency Location (Sender)"
+          icon={senderMarkerIcon}
+          zIndex={1000}
+          visible={true}
+        />
 
         {/* Receiver location marker (Responder Location - Blue) */}
         {receiverLoc && (

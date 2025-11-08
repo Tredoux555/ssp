@@ -1024,12 +1024,12 @@ export default function AlertResponsePage() {
           )}
         </div>
 
-        {location && user && (
+        {alert && user && (location || alert.location_lat) && (
           <div className="mb-6">
             <div style={{ height: '400px', width: '100%' }}>
             <GoogleMapComponent
-              latitude={location.latitude}
-              longitude={location.longitude}
+              latitude={location?.latitude || alert.location_lat || 0}
+              longitude={location?.longitude || alert.location_lng || 0}
               alertId={alert.id}
               user_id={alert.user_id}
                 receiverLocation={receiverLocation}
