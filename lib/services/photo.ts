@@ -183,6 +183,12 @@ export function getPhotoUrl(storagePath: string): string {
 export async function getAlertPhotos(alertId: string): Promise<EmergencyPhoto[]> {
   try {
     const supabase = createClient()
+    
+    if (!supabase) {
+      console.warn('[Photo] Supabase client not available')
+      return []
+    }
+    
     const { data, error } = await supabase
       .from('emergency_photos')
       .select('*')
@@ -190,13 +196,33 @@ export async function getAlertPhotos(alertId: string): Promise<EmergencyPhoto[]>
       .order('created_at', { ascending: false })
 
     if (error) {
-      console.error('[Photo] Error fetching photos:', error)
+      // Check if it's an RLS error or table doesn't exist
+      const isRLSError = error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('RLS')
+      const tableNotExists = error.code === '42P01' || error.message?.includes('does not exist')
+      
+      if (tableNotExists) {
+        console.warn('[Photo] ⚠️ emergency_photos table does not exist. Run migration: migrations/add-emergency-photos-table.sql')
+      } else if (isRLSError) {
+        console.warn('[Photo] ⚠️ RLS policy blocking photo fetch. This is expected if migration not run yet.')
+      } else {
+        console.error('[Photo] Error fetching photos:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          alertId
+        })
+      }
       return []
     }
 
     return (data || []) as EmergencyPhoto[]
-  } catch (error) {
-    console.error('[Photo] Failed to fetch photos:', error)
+  } catch (error: any) {
+    console.error('[Photo] Failed to fetch photos:', {
+      error: error?.message || error,
+      code: error?.code,
+      alertId
+    })
     return []
   }
 }
