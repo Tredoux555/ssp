@@ -64,10 +64,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // After successful bucket creation, provide instructions for policies
+    // Note: Storage policies must be created via SQL in Supabase Dashboard
+    // We can't execute SQL directly from the API, but we can verify the bucket exists
+    
     return NextResponse.json({
       success: true,
       message: 'Bucket created successfully',
       bucket,
+      nextStep: 'IMPORTANT: You must now run the storage policies SQL migration. Go to Supabase Dashboard → SQL Editor and run: migrations/add-emergency-photos-storage-policies.sql',
+      policySetupRequired: true
     })
   } catch (error: any) {
     console.error('[Storage Setup] Unexpected error:', error)

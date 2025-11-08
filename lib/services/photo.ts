@@ -273,8 +273,25 @@ export async function uploadEmergencyPhoto(
         code: uploadError.statusCode,
         message: uploadError.message,
         error: uploadError,
-        status: (uploadError as any).status
+        status: (uploadError as any).status,
+        name: (uploadError as any).name,
+        stack: (uploadError as any).stack
       })
+      
+      // Check for "Load failed" - usually means RLS/CORS/permission issue
+      const errorMessage = uploadError.message || ''
+      const errorName = (uploadError as any).name || ''
+      const isLoadFailed = errorMessage.includes('Load failed') || 
+                           errorMessage.includes('Failed to fetch') ||
+                           errorMessage.includes('network') ||
+                           errorName === 'NetworkError' ||
+                           errorName === 'TypeError'
+      
+      if (isLoadFailed) {
+        console.error('[Photo] ❌ Network/RLS error detected - storage policies likely missing')
+        window.alert('Upload failed: Storage policies need to be configured. The bucket was created, but you need to run the storage policies SQL. Please run migrations/add-emergency-photos-storage-policies.sql in Supabase SQL Editor, then try again.')
+        return null
+      }
       
       // Check for bucket not found
       if (uploadError.message?.includes('Bucket not found') || 
@@ -287,13 +304,17 @@ export async function uploadEmergencyPhoto(
           const setupResponse = await fetch('/api/storage/setup-bucket', { method: 'POST' })
           const setupResult = await setupResponse.json()
           if (setupResult.success) {
-            window.alert('Storage bucket created! Please try uploading again.')
+            if (setupResult.policySetupRequired) {
+              window.alert('Storage bucket created! However, you must run the storage policies SQL migration before uploading photos. Go to Supabase Dashboard → SQL Editor and run: migrations/add-emergency-photos-storage-policies.sql')
+            } else {
+              window.alert('Storage bucket created! Please try uploading again.')
+            }
           } else {
-            window.alert(`Setup failed: ${setupResult.error || 'Unknown error'}. Please create the bucket manually in Supabase.`)
+            window.alert(`Setup failed: ${setupResult.error || 'Unknown error'}. Please create the bucket manually in Supabase Storage.`)
           }
         } catch (setupError: any) {
           console.error('[Photo] Failed to auto-setup bucket:', setupError)
-          window.alert('Could not auto-setup storage. Please create "emergency-photos" bucket in Supabase Storage.')
+          window.alert('Could not auto-setup storage. Please create "emergency-photos" bucket in Supabase Storage and run migrations/add-emergency-photos-storage-policies.sql')
         }
       } else if (uploadError.statusCode === '403' || 
                  uploadError.message?.includes('policy') ||
