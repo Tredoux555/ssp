@@ -69,11 +69,20 @@ export default function DashboardPage() {
       await new Promise(resolve => setTimeout(resolve, 500))
       
       const emergency = await getActiveEmergency(user.id)
-      setActiveEmergency(emergency)
       
-      // Only auto-redirect if we have a confirmed active emergency
-      // Don't redirect if we just came from cancelling an alert or an error state
-      if (emergency && emergency.status === 'active') {
+      // Strict validation: Only set activeEmergency if emergency exists AND is actually active
+      // Also verify it belongs to the current user
+      if (emergency && emergency.status === 'active' && emergency.user_id === user.id && emergency.id) {
+        console.log('[Dashboard] ✅ Valid active emergency found:', {
+          id: emergency.id,
+          status: emergency.status,
+          userId: emergency.user_id,
+          triggeredAt: emergency.triggered_at
+        })
+        setActiveEmergency(emergency)
+        
+        // Only auto-redirect if we have a confirmed active emergency
+        // Don't redirect if we just came from cancelling an alert or an error state
         const currentPath = window.location.pathname
         const isOnEmergencyPage = currentPath.includes(`/emergency/active/${emergency.id}`)
         const hasErrorState = sessionStorage.getItem('emergency-error-state') === 'true'
@@ -93,9 +102,25 @@ export default function DashboardPage() {
             router.push(`/emergency/active/${emergency.id}`)
           }
         }
+      } else {
+        // No valid active emergency - clear state
+        if (emergency) {
+          console.warn('[Dashboard] ⚠️ Found emergency but it\'s not valid:', {
+            id: emergency.id,
+            status: emergency.status,
+            userId: emergency.user_id,
+            currentUserId: user.id,
+            reason: !emergency.id ? 'missing id' : 
+                    emergency.status !== 'active' ? `status is ${emergency.status}` :
+                    emergency.user_id !== user.id ? 'user mismatch' : 'unknown'
+          })
+        } else {
+          console.log('[Dashboard] ℹ️ No active emergency found')
+        }
+        setActiveEmergency(null)
       }
     } catch (error: any) {
-      console.error('Failed to load active emergency:', error)
+      console.error('[Dashboard] ❌ Failed to load active emergency:', error)
       // Don't show error to user - just log it
       // Emergency might not exist, which is fine
       setActiveEmergency(null)
