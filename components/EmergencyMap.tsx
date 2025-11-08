@@ -350,8 +350,15 @@ function EmergencyMapComponent({
   }, [directionsResult, map, receiverLoc, senderLocation])
 
   const onLoad = useCallback((mapInstance: any) => {
+    console.log('[Map] ✅ Map loaded, sender location:', senderLocation)
     setMap(mapInstance)
-  }, [])
+    
+    // Ensure map centers on sender location
+    if (senderLocation && senderLocation.lat && senderLocation.lng) {
+      mapInstance.setCenter(senderLocation)
+      console.log('[Map] 📍 Map centered on sender location:', senderLocation)
+    }
+  }, [senderLocation])
 
   // Get Google Maps API - memoize to ensure hooks are called before early returns
   // Depend on isLoaded so it updates when Google Maps actually loads
