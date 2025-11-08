@@ -254,7 +254,22 @@ export async function createEmergencyAlert(
         contactsNotifiedCount: alert.contacts_notified?.length || 0,
         contactIds: contactIds,
         contactIdsCount: contactIds.length,
+        contactsNotifiedType: Array.isArray(alert.contacts_notified) ? 'array' : typeof alert.contacts_notified,
       })
+      
+      if (alert.contacts_notified && Array.isArray(alert.contacts_notified) && alert.contacts_notified.length > 0) {
+        console.log(`[Alert] ✅ Alert created with ${alert.contacts_notified.length} contact(s) in contacts_notified array.`)
+        console.log(`[Alert] 📋 Contacts to be notified (EXACT IDs):`, alert.contacts_notified)
+        console.log(`[Alert] 🔔 Realtime subscriptions should fire immediately for these users.`)
+        console.log(`[Alert] 📡 Polling will also check for this alert every 2 seconds on contact devices.`)
+      } else {
+        console.warn(`[Alert] ⚠️ Alert created but contacts_notified is empty or invalid:`, {
+          contactsNotified: alert.contacts_notified,
+          type: typeof alert.contacts_notified,
+          isArray: Array.isArray(alert.contacts_notified),
+          contactIdsProvided: contactIds
+        })
+      }
       
       // Return alert immediately - post-creation steps will run asynchronously
       // This prevents timeout issues while still completing all operations

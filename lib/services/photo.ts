@@ -219,12 +219,15 @@ export async function uploadEmergencyPhoto(
     console.log('[Photo] 📸 Starting upload:', { 
       fileName: file.name, 
       fileSize: file.size,
-      fileType: file.type 
+      fileType: file.type,
+      alertId,
+      userId
     })
 
     // Compress image with better error handling
     let compressedBlob: Blob
     try {
+      console.log('[Photo] 🖼️ Starting image compression...')
       compressedBlob = await compressImage(file)
       console.log('[Photo] ✅ Compressed:', { 
         original: file.size, 
@@ -232,7 +235,12 @@ export async function uploadEmergencyPhoto(
         reduction: `${Math.round((1 - compressedBlob.size / file.size) * 100)}%`
       })
     } catch (compressError: any) {
-      console.error('[Photo] ❌ Compression failed:', compressError)
+      console.error('[Photo] ❌ Compression failed:', {
+        error: compressError?.message || compressError,
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type
+      })
       const errorMsg = compressError.message || 'Failed to process image'
       window.alert(`${errorMsg}. Please try a smaller photo or different format.`)
       return null

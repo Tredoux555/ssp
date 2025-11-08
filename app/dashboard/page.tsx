@@ -128,6 +128,29 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!user) return
     
+    // Connection health check
+    const checkConnection = async () => {
+      const supabase = createClient()
+      if (!supabase) {
+        console.error('[Dashboard] ❌ Supabase client not available')
+        return false
+      }
+      
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !session) {
+        console.error('[Dashboard] ❌ No active session:', sessionError)
+        return false
+      }
+      
+      console.log('[Dashboard] ✅ Connection check passed:', {
+        userId: session.user.id,
+        email: session.user.email
+      })
+      return true
+    }
+    
+    checkConnection()
+    
     // Only run once per user - use user.id as the key to prevent re-running
     const userId = user.id
     
@@ -419,12 +442,9 @@ export default function DashboardPage() {
           return
       }
       
-        // In development, disable polling entirely to prevent hanging
-        // Realtime subscriptions should be sufficient
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`[Dashboard] ⏸️ Polling disabled in development mode - using Realtime subscriptions only`)
-          return
-        }
+        // Always enable polling as fallback (even in development)
+        // Realtime subscriptions can fail, so polling is critical
+        console.log(`[Dashboard] 📡 Starting polling (development mode: ${process.env.NODE_ENV === 'development'})`)
         
         isPollingActive = true
         

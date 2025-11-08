@@ -552,11 +552,10 @@ export function subscribeToContactAlerts(
   contactUserId: string,
   callback: (alert: any) => void
 ): () => void {
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`[Realtime] 🔔 Setting up contact alert subscription for user: ${contactUserId}`)
-  }
+  console.log(`[Realtime] 🔔 Setting up contact alert subscription for user: ${contactUserId}`)
   
   const manager = getSubscriptionManager()
+  
   const unsubscribe = manager.subscribe({
     channel: `contact-alerts-${contactUserId}`,
     table: 'emergency_alerts',
@@ -564,6 +563,13 @@ export function subscribeToContactAlerts(
     callback: (payload) => {
       try {
         const alert = payload.new || payload.old
+        
+        console.log(`[Realtime] 📨 Received event for user ${contactUserId}:`, {
+          event: payload.eventType,
+          alertId: alert?.id,
+          status: alert?.status,
+          contactsNotified: alert?.contacts_notified
+        })
         
         // Only fire callback if this contact user is in the contacts_notified array
         if (alert && alert.contacts_notified && Array.isArray(alert.contacts_notified)) {
@@ -574,17 +580,34 @@ export function subscribeToContactAlerts(
             
             const isNotified = normalizedContactsNotified.some((id: string) => id === normalizedContactUserId)
             
+            console.log(`[Realtime] 🔍 Checking if user ${contactUserId} is notified:`, {
+              isNotified,
+              normalizedContactUserId,
+              normalizedContactsNotified,
+              alertStatus: alert.status
+            })
+            
             // Check if this is a new alert being created or updated to active status
             if (isNotified && alert.status === 'active') {
-              if (process.env.NODE_ENV === 'development') {
-                console.log(`[Realtime] ✅ TRIGGERING CALLBACK for contact ${contactUserId} - Alert ${alert.id}`)
-              }
+              console.log(`[Realtime] ✅ TRIGGERING CALLBACK for contact ${contactUserId} - Alert ${alert.id}`)
               callback(alert)
+            } else {
+              console.log(`[Realtime] ⏭️ Skipping callback:`, {
+                isNotified,
+                status: alert.status,
+                reason: !isNotified ? 'User not in contacts_notified' : `Status is ${alert.status}, not 'active'`
+              })
             }
           } catch (processingError) {
             console.error(`[Realtime] ❌ Error processing alert for user ${contactUserId}:`, processingError)
             // Don't rethrow - prevent breaking the subscription
           }
+        } else {
+          console.log(`[Realtime] ⏭️ Skipping - alert missing contacts_notified or not an array:`, {
+            hasAlert: !!alert,
+            hasContactsNotified: !!alert?.contacts_notified,
+            isArray: Array.isArray(alert?.contacts_notified)
+          })
         }
       } catch (callbackError) {
         console.error(`[Realtime] ❌ Error in contact alert callback for user ${contactUserId}:`, callbackError)
@@ -593,9 +616,7 @@ export function subscribeToContactAlerts(
     },
   })
   
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`[Realtime] ✅ Contact alert subscription setup complete for user: ${contactUserId}`)
-  }
+  console.log(`[Realtime] ✅ Contact alert subscription setup complete for user: ${contactUserId}`)
   return unsubscribe
 }
 
