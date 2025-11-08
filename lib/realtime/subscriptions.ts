@@ -566,9 +566,14 @@ export function subscribeToContactAlerts(
 ): () => void {
   console.log(`[Realtime] 🔔 Setting up contact alert subscription for user: ${contactUserId}`)
   
-  const manager = getSubscriptionManager()
-  
-  const unsubscribe = manager.subscribe({
+  try {
+    const manager = getSubscriptionManager()
+    console.log(`[Realtime] ✅ Subscription manager obtained for user: ${contactUserId}`, {
+      hasManager: !!manager,
+      managerType: typeof manager
+    })
+    
+    const unsubscribe = manager.subscribe({
     channel: `contact-alerts-${contactUserId}`,
     table: 'emergency_alerts',
     event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
@@ -642,10 +647,24 @@ export function subscribeToContactAlerts(
         // Don't rethrow - prevent breaking the subscription
       }
     },
-  })
-  
-  console.log(`[Realtime] ✅ Contact alert subscription setup complete for user: ${contactUserId}`)
-  return unsubscribe
+    })
+    
+    console.log(`[Realtime] ✅ Contact alert subscription setup complete for user: ${contactUserId}`, {
+      hasUnsubscribe: !!unsubscribe,
+      unsubscribeType: typeof unsubscribe
+    })
+    return unsubscribe
+  } catch (error: any) {
+    console.error(`[Realtime] ❌ Failed to set up contact alert subscription for user ${contactUserId}:`, {
+      error: error?.message || error,
+      stack: error?.stack,
+      name: error?.name
+    })
+    // Return no-op function to prevent errors
+    return () => {
+      console.log(`[Realtime] ⚠️ No-op unsubscribe called (subscription setup failed)`)
+    }
+  }
 }
 
 /**

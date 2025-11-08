@@ -174,7 +174,17 @@ export default function DashboardPage() {
   }, [user, authLoading, router])
 
   useEffect(() => {
-    if (!user) return
+    console.log('[Dashboard] 🔄 useEffect triggered:', {
+      hasUser: !!user,
+      userId: user?.id,
+      authLoading,
+      timestamp: new Date().toISOString()
+    })
+    
+    if (!user) {
+      console.log('[Dashboard] ⏭️ No user, skipping subscription setup')
+      return
+    }
     
     // Connection health check
     const checkConnection = async () => {
@@ -202,6 +212,8 @@ export default function DashboardPage() {
     // Only run once per user - use user.id as the key to prevent re-running
     const userId = user.id
     
+    console.log(`[Dashboard] 🚀 Starting subscription setup for user: ${userId}`)
+    
     // In development, add guard against rapid re-setup (Fast Refresh issue)
     if (process.env.NODE_ENV === 'development') {
       const setupKey = `dashboard-setup-${userId}`
@@ -210,7 +222,11 @@ export default function DashboardPage() {
       
       // If setup happened in last 2 seconds, skip (likely Fast Refresh)
       if (lastSetup && now - lastSetup < 2000) {
-        console.log(`[Dashboard] Skipping rapid re-setup for user ${userId} (likely Fast Refresh)`)
+        console.log(`[Dashboard] ⏭️ Skipping rapid re-setup for user ${userId} (likely Fast Refresh)`, {
+          lastSetup: new Date(lastSetup).toISOString(),
+          now: new Date(now).toISOString(),
+          diff: now - lastSetup
+        })
         return
       }
       
@@ -218,11 +234,10 @@ export default function DashboardPage() {
         (window as any).__lastDashboardSetup = {}
       }
       (window as any).__lastDashboardSetup[setupKey] = now
+      console.log(`[Dashboard] ✅ Fast Refresh guard passed for user ${userId}`)
     }
     
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`[Dashboard] Setting up subscription for user: ${userId}`)
-    }
+    console.log(`[Dashboard] ✅ Setting up subscription for user: ${userId}`)
     
     // Call these functions directly - they're stable useCallback functions
     // Use setTimeout to defer these calls and prevent blocking the effect
@@ -241,9 +256,13 @@ export default function DashboardPage() {
       
       // Subscribe to emergency alerts for this contact user
       // This fires when someone in their contact list triggers an alert
-      console.log(`[Dashboard] 🔔 Setting up contact alert subscription for user: ${userId}`)
-      const unsubscribe = subscribeToContactAlerts(userId, async (alert) => {
-        console.log(`[Dashboard] 📬 Subscription callback triggered for user ${userId}:`, {
+      console.log(`[Dashboard] 🔔 About to call subscribeToContactAlerts for user: ${userId}`)
+      
+      let unsubscribe: (() => void) | null = null
+      try {
+        console.log(`[Dashboard] 🔔 Calling subscribeToContactAlerts for user: ${userId}`)
+        unsubscribe = subscribeToContactAlerts(userId, async (alert) => {
+          console.log(`[Dashboard] 📬 Subscription callback triggered for user ${userId}:`, {
           alertId: alert?.id,
           alertUserId: alert?.user_id,
           alertStatus: alert?.status,
@@ -349,7 +368,20 @@ export default function DashboardPage() {
         
         // Navigate to alert page
         router.push(`/alert/${alert.id}`)
-      })
+        })
+        
+        console.log(`[Dashboard] ✅ subscribeToContactAlerts returned successfully for user: ${userId}`, {
+          hasUnsubscribe: !!unsubscribe,
+          unsubscribeType: typeof unsubscribe
+        })
+      } catch (subscriptionError: any) {
+        console.error(`[Dashboard] ❌ Failed to set up subscription for user ${userId}:`, {
+          error: subscriptionError?.message || subscriptionError,
+          stack: subscriptionError?.stack,
+          name: subscriptionError?.name
+        })
+        // Continue with polling fallback even if subscription fails
+      }
       
       // Adaptive polling mechanism - adjusts frequency based on app state
       // Idle: 30 seconds (when no active emergencies)
@@ -636,8 +668,17 @@ export default function DashboardPage() {
       
       return () => {
         isMounted = false
-        console.log(`[Dashboard] Cleaning up subscription for user: ${userId}`)
-        unsubscribe()
+        console.log(`[Dashboard] 🧹 Cleaning up subscription for user: ${userId}`)
+        if (unsubscribe) {
+          try {
+            unsubscribe()
+            console.log(`[Dashboard] ✅ Unsubscribed successfully`)
+          } catch (unsubError: any) {
+            console.error(`[Dashboard] ❌ Error unsubscribing:`, unsubError)
+          }
+        } else {
+          console.log(`[Dashboard] ⚠️ No unsubscribe function available`)
+        }
         hideEmergencyAlert()
         stopPolling()
         
