@@ -8,7 +8,17 @@ import { createClient } from '@/lib/supabase'
 import { EmergencyPhoto } from '@/types/database'
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
-const MAX_DIMENSION = 1920 // Max width/height in pixels
+const MAX_DIMENSION = 1280 // Reduced from 1920 for faster processing and smaller files
+
+/**
+ * Get optimal compression quality based on file size
+ * Smaller files = higher quality, larger files = lower quality for faster upload
+ */
+function getOptimalQuality(fileSize: number): number {
+  if (fileSize < 500 * 1024) return 0.75 // Small files (<500KB): 75% quality
+  if (fileSize < 2 * 1024 * 1024) return 0.7 // Medium files (<2MB): 70% quality
+  return 0.65 // Large files (>=2MB): 65% quality (smaller = faster upload)
+}
 
 /**
  * Fix image orientation based on EXIF data (iOS fix)
@@ -55,14 +65,18 @@ function fixImageOrientation(img: HTMLImageElement, canvas: HTMLCanvasElement, c
 }
 
 /**
- * Compress image to reduce file size (iOS-optimized)
+ * Compress image to reduce file size (iOS-optimized, speed-optimized)
  */
-function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality: number = 0.8): Promise<Blob> {
+function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality?: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    // Add timeout for iOS devices (they can be slower)
+    // Adaptive timeout based on file size - smaller files process faster
+    const timeoutDuration = file.size > 3 * 1024 * 1024 ? 30000 : 15000
     const timeout = setTimeout(() => {
       reject(new Error('Image processing timed out. Please try a smaller photo.'))
-    }, 30000) // 30 seconds
+    }, timeoutDuration)
+    
+    // Use adaptive quality if not provided
+    const compressionQuality = quality ?? getOptimalQuality(file.size)
 
     const reader = new FileReader()
     
@@ -77,10 +91,11 @@ function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality: nu
           let width = img.width
           let height = img.height
           
-          // Handle EXIF orientation for iOS
-          // If image is rotated in EXIF, swap dimensions
+          // Handle EXIF orientation for iOS - only process if rotation is needed
           const orientation = (img as any).exifdata?.Orientation || 1
-          if (orientation >= 5 && orientation <= 8) {
+          const needsRotation = orientation !== 1 && orientation !== 0
+          
+          if (needsRotation && orientation >= 5 && orientation <= 8) {
             // Dimensions are swapped for rotated images
             [width, height] = [height, width]
           }
@@ -104,7 +119,9 @@ function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality: nu
 
           const ctx = canvas.getContext('2d', { 
             willReadFrequently: false, // Better performance on iOS
-            alpha: false // No transparency needed for photos
+            alpha: false, // No transparency needed for photos
+            imageSmoothingEnabled: true, // Keep smoothing for quality
+            imageSmoothingQuality: 'medium' // Balance between quality and speed
           })
           
           if (!ctx) {
@@ -113,13 +130,15 @@ function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality: nu
             return
           }
 
-          // Fix orientation if needed
-          fixImageOrientation(img, canvas, ctx)
+          // Only fix orientation if needed (skip if orientation is 1 - no rotation needed)
+          if (needsRotation) {
+            fixImageOrientation(img, canvas, ctx)
+          }
           
           // Draw image
           ctx.drawImage(img, 0, 0, width, height)
 
-          // Convert to blob with error handling
+          // Convert to blob with optimized quality
           canvas.toBlob(
             (blob) => {
               clearTimeout(timeout)
@@ -130,7 +149,7 @@ function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality: nu
               }
             },
             'image/jpeg', // Always JPEG for compatibility
-            quality
+            compressionQuality
           )
         } catch (error: any) {
           clearTimeout(timeout)
