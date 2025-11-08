@@ -2,7 +2,7 @@
   "name": "psp",
   "version": "0.1.0",
   "private": true,
-  "description": "Emergency alert system with live location tracking",
+  "description": "Emergency alert system with live location tracking and photo sharing",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
