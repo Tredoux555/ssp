@@ -62,6 +62,17 @@ export interface LocationHistory {
   created_at: string
 }
 
+export interface EmergencyPhoto {
+  id: string
+  alert_id: string
+  user_id: string
+  storage_path: string
+  file_name: string
+  file_size?: number
+  mime_type?: string
+  created_at: string
+}
+
 export interface SocialGroup {
   id: string
   name: string

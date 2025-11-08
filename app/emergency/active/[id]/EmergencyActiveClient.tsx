@@ -10,10 +10,12 @@ import { subscribeToLocationHistory } from '@/lib/realtime/subscriptions'
 import { EmergencyAlert, LocationHistory } from '@/types/database'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
-import { AlertTriangle, X, MapPin } from 'lucide-react'
+import { AlertTriangle, X, MapPin, Camera } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import LocationPermissionPrompt from '@/components/LocationPermissionPrompt'
 import { useLocationPermission } from '@/lib/hooks/useLocationPermission'
+import { capturePhoto, uploadEmergencyPhoto, getAlertPhotos, getPhotoUrl } from '@/lib/services/photo'
+import { EmergencyPhoto } from '@/types/database'
 
 // Dynamically import Google Maps to avoid SSR issues
 const GoogleMapComponent = dynamic(
@@ -39,6 +41,8 @@ export default function EmergencyActivePage() {
   const [acceptedResponderCount, setAcceptedResponderCount] = useState(0)
   const { permissionStatus, requestPermission } = useLocationPermission()
   const [showPermissionPrompt, setShowPermissionPrompt] = useState(false)
+  const [photos, setPhotos] = useState<EmergencyPhoto[]>([])
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
 
   useEffect(() => {
     if (!user) return
@@ -597,6 +601,43 @@ export default function EmergencyActivePage() {
     }
   }, [alert, user, address, permissionStatus])
 
+  // Load photos and subscribe to photo updates
+  useEffect(() => {
+    if (!alert || !user) return
+
+    // Load existing photos
+    const loadPhotos = async () => {
+      if (alert.id) {
+        const alertPhotos = await getAlertPhotos(alert.id)
+        setPhotos(alertPhotos)
+      }
+    }
+    loadPhotos()
+
+    // Subscribe to new photos
+    const supabase = createClient()
+    const photoSubscription = supabase
+      .channel(`emergency-photos-${alert.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'emergency_photos',
+          filter: `alert_id=eq.${alert.id}`,
+        },
+        (payload) => {
+          console.log('[Photo] ✅ New photo received:', payload.new)
+          setPhotos((prev) => [payload.new as EmergencyPhoto, ...prev])
+        }
+      )
+      .subscribe()
+
+    return () => {
+      photoSubscription.unsubscribe()
+    }
+  }, [alert, user])
+
   const loadAlert = async () => {
     if (!user) {
       setLoading(false)
@@ -678,6 +719,34 @@ export default function EmergencyActivePage() {
         // Other errors - show error and stay on page
         window.alert(errorMessage)
       }
+    }
+  }
+
+  const handleCapturePhoto = async () => {
+    if (!alert || !user || uploadingPhoto) return
+
+    try {
+      setUploadingPhoto(true)
+      const file = await capturePhoto()
+      
+      if (!file) {
+        setUploadingPhoto(false)
+        return
+      }
+
+      const photo = await uploadEmergencyPhoto(alert.id, user.id, file)
+      
+      if (photo) {
+        console.log('[Photo] ✅ Photo uploaded successfully')
+        // Photo will be added via Realtime subscription
+      } else {
+        alert('Failed to upload photo. Please try again.')
+      }
+    } catch (error: any) {
+      console.error('[Photo] Error capturing photo:', error)
+      alert('Failed to capture photo. Please try again.')
+    } finally {
+      setUploadingPhoto(false)
     }
   }
 
@@ -817,6 +886,42 @@ export default function EmergencyActivePage() {
         {/* Actions */}
         <Card className="mb-6 bg-white/10 backdrop-blur-sm border-white/20">
           <div className="space-y-4">
+            {/* Capture Photo Button */}
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={handleCapturePhoto}
+              disabled={uploadingPhoto}
+              className="w-full flex items-center justify-center gap-2"
+            >
+              <Camera className="w-5 h-5" />
+              {uploadingPhoto ? 'Uploading Photo...' : 'Take Photo'}
+            </Button>
+
+            {/* Photo Gallery */}
+            {photos.length > 0 && (
+              <div className="mt-4">
+                <h3 className="text-white font-medium mb-2">Photos ({photos.length})</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {photos.map((photo) => (
+                    <div
+                      key={photo.id}
+                      className="relative aspect-square rounded-lg overflow-hidden bg-gray-800 border-2 border-white/20"
+                    >
+                      <img
+                        src={getPhotoUrl(photo.storage_path)}
+                        alt={`Emergency photo ${new Date(photo.created_at).toLocaleTimeString()}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 text-center">
+                        {new Date(photo.created_at).toLocaleTimeString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Cancel Button */}
             <Button
               variant="secondary"

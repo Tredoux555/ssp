@@ -154,7 +154,7 @@ export function showEmergencyAlert(alertId: string, alertData: any): void {
     const senderDisplay = alertData.senderName || alertData.senderEmail || 'a contact'
     messageText = `Emergency alert from ${senderDisplay}!`
   }
-  
+
   const message = document.createElement('p')
   message.textContent = messageText
   message.style.cssText = 'font-size: 1.2rem; margin-bottom: 1rem;'
@@ -181,7 +181,7 @@ export function showEmergencyAlert(alertId: string, alertData: any): void {
     hideEmergencyAlert()
     // Small delay to ensure overlay is removed before navigation
     setTimeout(() => {
-      window.location.href = `/alert/${alertId}`
+    window.location.href = `/alert/${alertId}`
     }, 50)
   }
 

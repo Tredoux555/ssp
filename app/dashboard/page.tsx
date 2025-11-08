@@ -159,9 +159,9 @@ export default function DashboardPage() {
       loadActiveEmergency()
       loadContactCount()
     }, 0)
-    
-    let subscriptionActive = false
-    let pollingInterval: NodeJS.Timeout | null = null
+      
+      let subscriptionActive = false
+      let pollingInterval: NodeJS.Timeout | null = null
     let isPollingActive = false
     let isPageVisible = true
     let isNetworkOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
@@ -289,15 +289,15 @@ export default function DashboardPage() {
           return
         }
         
-        try {
-          // Check if there are any active alerts where this user is in contacts_notified
-          const { createClient } = await import('@/lib/supabase')
-          const supabase = createClient()
-          if (!supabase) {
-            console.warn(`[Dashboard] ⚠️ Supabase client not available for polling`)
-            return
-          }
-          
+          try {
+            // Check if there are any active alerts where this user is in contacts_notified
+            const { createClient } = await import('@/lib/supabase')
+            const supabase = createClient()
+            if (!supabase) {
+              console.warn(`[Dashboard] ⚠️ Supabase client not available for polling`)
+              return
+            }
+            
           // Check if user session is valid
           const { data: { session } } = await supabase.auth.getSession()
           if (!session) {
@@ -306,39 +306,39 @@ export default function DashboardPage() {
           }
           
           // Query alerts - RLS will automatically filter to only alerts where user is in contacts_notified
-          const { data: allAlerts, error: queryError } = await supabase
-            .from('emergency_alerts')
-            .select('*')
-            .eq('status', 'active')
-            .order('triggered_at', { ascending: false })
+            const { data: allAlerts, error: queryError } = await supabase
+              .from('emergency_alerts')
+              .select('*')
+              .eq('status', 'active')
+              .order('triggered_at', { ascending: false })
             .limit(5)
-          
+            
           // If error is RLS-related (42501) or CORS-related, it means RLS is blocking
           // This is expected if the user has no alerts - don't spam the console
-          if (queryError) {
+            if (queryError) {
             // Only log if it's not a CORS/RLS error (which is expected when user has no access)
             if (queryError.code !== '42501' && !queryError.message?.includes('row-level security') && !queryError.message?.includes('access control') && !queryError.message?.includes('Load failed')) {
               console.warn(`[Dashboard] ⚠️ Polling query error:`, queryError)
             }
-            return
-          }
-          
-          if (allAlerts && allAlerts.length > 0) {
-            // Filter client-side: check if user.id is in contacts_notified array
-            const relevantAlerts = allAlerts.filter((alert: any) => {
-              if (!alert.contacts_notified || !Array.isArray(alert.contacts_notified)) {
-                return false
-              }
-              
-              // Normalize IDs for comparison (trim whitespace, ensure string)
-              const normalizedUserId = String(userId).trim()
-              const normalizedContacts = alert.contacts_notified.map((id: string) => String(id).trim())
-              
-              return normalizedContacts.includes(normalizedUserId)
-            })
+              return
+            }
             
-            if (relevantAlerts.length > 0) {
-              const alert = relevantAlerts[0]
+            if (allAlerts && allAlerts.length > 0) {
+              // Filter client-side: check if user.id is in contacts_notified array
+              const relevantAlerts = allAlerts.filter((alert: any) => {
+                if (!alert.contacts_notified || !Array.isArray(alert.contacts_notified)) {
+                  return false
+                }
+                
+                // Normalize IDs for comparison (trim whitespace, ensure string)
+              const normalizedUserId = String(userId).trim()
+                const normalizedContacts = alert.contacts_notified.map((id: string) => String(id).trim())
+                
+              return normalizedContacts.includes(normalizedUserId)
+              })
+              
+              if (relevantAlerts.length > 0) {
+                const alert = relevantAlerts[0]
               if (!isMounted) return // Prevent navigation if component unmounted
               
               // Skip if user is the sender
@@ -347,11 +347,11 @@ export default function DashboardPage() {
               }
               
               console.log(`[Dashboard] 🚨 POLLING FOUND ALERT FOR USER ${userId}:`, {
-                alertId: alert.id,
-                alertUserId: alert.user_id,
-                contactsNotified: alert.contacts_notified,
-                userIsInContacts: true
-              })
+                  alertId: alert.id,
+                  alertUserId: alert.user_id,
+                  contactsNotified: alert.contacts_notified,
+                  userIsInContacts: true
+                })
               
               // Fetch sender info
               let senderName: string | null = null
@@ -386,26 +386,26 @@ export default function DashboardPage() {
               } catch (err) {
                 console.warn('[Dashboard] Could not fetch sender info in polling:', err)
               }
-              
-              // Check if we're already on this alert page
-              const currentPath = window.location.pathname
-              if (!currentPath.includes(`/alert/${alert.id}`) && !currentPath.includes(`/emergency/active/${alert.id}`)) {
-                console.log(`[Dashboard] 🚨 Navigating to alert page via polling: ${alert.id}`)
-                showEmergencyAlert(alert.id, {
-                  address: alert.address,
-                  alert_type: alert.alert_type,
+                
+                // Check if we're already on this alert page
+                const currentPath = window.location.pathname
+                if (!currentPath.includes(`/alert/${alert.id}`) && !currentPath.includes(`/emergency/active/${alert.id}`)) {
+                  console.log(`[Dashboard] 🚨 Navigating to alert page via polling: ${alert.id}`)
+                  showEmergencyAlert(alert.id, {
+                    address: alert.address,
+                    alert_type: alert.alert_type,
                   senderName,
                   senderEmail,
                   user_id: alert.user_id,
                   currentUserId: userId,
-                })
-                router.push(`/alert/${alert.id}`)
+                  })
+                  router.push(`/alert/${alert.id}`)
+                }
               }
             }
+          } catch (error) {
+            console.warn(`[Dashboard] ⚠️ Polling error:`, error)
           }
-        } catch (error) {
-          console.warn(`[Dashboard] ⚠️ Polling error:`, error)
-        }
       }
       
       const startPolling = () => {
@@ -417,8 +417,8 @@ export default function DashboardPage() {
         // Don't start if tab hidden or offline
         if (!isPageVisible || !isNetworkOnline) {
           return
-        }
-        
+      }
+      
         // In development, disable polling entirely to prevent hanging
         // Realtime subscriptions should be sufficient
         if (process.env.NODE_ENV === 'development') {
@@ -590,25 +590,25 @@ export default function DashboardPage() {
 
     setEmergencyLoading(true)
 
-    try {
-      // Get current location on client-side (optional - continue without if fails)
-      let location
       try {
-        const coords = await getCurrentLocation()
-        // Check if coords is null before using it
-        if (coords) {
-          const address = await reverseGeocode(coords.lat, coords.lng).catch(() => null)
-          location = {
-            lat: coords.lat,
-            lng: coords.lng,
-            address: address || undefined,
+        // Get current location on client-side (optional - continue without if fails)
+        let location
+        try {
+          const coords = await getCurrentLocation()
+          // Check if coords is null before using it
+          if (coords) {
+            const address = await reverseGeocode(coords.lat, coords.lng).catch(() => null)
+            location = {
+              lat: coords.lat,
+              lng: coords.lng,
+              address: address || undefined,
+            }
           }
+          // If coords is null, location remains undefined and we continue without it
+        } catch (error) {
+          console.warn('Failed to get location, continuing without location:', error)
+          // Continue without location - alert can still be created
         }
-        // If coords is null, location remains undefined and we continue without it
-      } catch (error) {
-        console.warn('Failed to get location, continuing without location:', error)
-        // Continue without location - alert can still be created
-      }
 
       // Create emergency alert using client-side service with default type 'other'
       let emergencyAlert
@@ -636,7 +636,7 @@ export default function DashboardPage() {
 
       // Navigate to emergency screen immediately (post-creation steps run in background)
       if (emergencyAlert && emergencyAlert.id) {
-        router.push(`/emergency/active/${emergencyAlert.id}`)
+      router.push(`/emergency/active/${emergencyAlert.id}`)
         // Clear loading state immediately after navigation
         setEmergencyLoading(false)
       }
@@ -711,15 +711,15 @@ export default function DashboardPage() {
                 )}
               </div>
             )}
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleSignOut}
-              className="flex items-center gap-2"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Sign Out</span>
-            </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleSignOut}
+            className="flex items-center gap-2"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="hidden sm:inline">Sign Out</span>
+          </Button>
           </div>
         </div>
 

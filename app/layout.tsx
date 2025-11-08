@@ -27,11 +27,11 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.variable} font-sans antialiased`}>
         <GlobalErrorBoundary>
-          <ErrorHandler />
-          <AuthProvider>
-            <PushNotificationSetup />
-            {children}
-          </AuthProvider>
+        <ErrorHandler />
+        <AuthProvider>
+          <PushNotificationSetup />
+          {children}
+        </AuthProvider>
         </GlobalErrorBoundary>
       </body>
     </html>

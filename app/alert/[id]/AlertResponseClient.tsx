@@ -10,10 +10,12 @@ import { startLocationTracking, getCurrentLocation } from '@/lib/location'
 import { EmergencyAlert, LocationHistory } from '@/types/database'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
-import { AlertTriangle, MapPin, X } from 'lucide-react'
+import { AlertTriangle, MapPin, X, Camera } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import LocationPermissionPrompt from '@/components/LocationPermissionPrompt'
 import { useLocationPermission } from '@/lib/hooks/useLocationPermission'
+import { getAlertPhotos, getPhotoUrl } from '@/lib/services/photo'
+import { EmergencyPhoto } from '@/types/database'
 
 // Dynamically import Google Maps to avoid SSR issues
 const GoogleMapComponent = dynamic(
@@ -41,6 +43,7 @@ export default function AlertResponsePage() {
   const [hasAccepted, setHasAccepted] = useState(false)
   const [accepting, setAccepting] = useState(false)
   const [isClosing, setIsClosing] = useState(false) // Prevent multiple close attempts
+  const [photos, setPhotos] = useState<EmergencyPhoto[]>([])
   const isClosingRef = useRef(false) // Ref version for use in callbacks
   const subscriptionsSetupRef = useRef<string | null>(null) // Track which alert ID subscriptions are set up for
   const loadAlertCalledRef = useRef<string | null>(null) // Track if loadAlert has been called for this alertId
@@ -135,7 +138,7 @@ export default function AlertResponsePage() {
       // DON'T show overlay on alert page - the page itself is the alert view
       // Hide any existing overlay when viewing alert page
       hideEmergencyAlert()
-      
+
       // Check if user has already accepted to respond
       const { data: alertResponse, error: responseError } = await supabase
         .from('alert_responses')
@@ -143,7 +146,7 @@ export default function AlertResponsePage() {
         .eq('alert_id', alertId)
         .eq('contact_user_id', user.id)
         .maybeSingle()
-      
+
       if (alertResponse && alertResponse.acknowledged_at) {
         setHasAccepted(true)
       } else {
@@ -211,7 +214,7 @@ export default function AlertResponsePage() {
           setSenderEmail(senderEmail)
         } catch (err) {
           console.warn('[Alert] Could not fetch sender info:', err)
-        }
+      }
       }
       
       fetchSenderInfo()
@@ -269,16 +272,16 @@ export default function AlertResponsePage() {
           // Fallback to alert location (already set above, but ensure it's set)
           if (alertData.location_lat && alertData.location_lng && !location) {
             console.log('[Receiver] Using fallback alert location due to query error')
-            setLocation({
-              id: 'initial',
-              user_id: alertData.user_id,
-              alert_id: alertId,
-              latitude: alertData.location_lat,
-              longitude: alertData.location_lng,
-              timestamp: alertData.triggered_at,
-              created_at: alertData.triggered_at,
+        setLocation({
+          id: 'initial',
+          user_id: alertData.user_id,
+          alert_id: alertId,
+          latitude: alertData.location_lat,
+          longitude: alertData.location_lng,
+          timestamp: alertData.triggered_at,
+          created_at: alertData.triggered_at,
             } as LocationHistory)
-          }
+      }
         }
         // If no result and no error, location is already set from alert data above
       } catch (locationErr: any) {
@@ -317,11 +320,48 @@ export default function AlertResponsePage() {
     }
   }, [user, alertId, router])
 
+  // Load photos and subscribe to photo updates
+  useEffect(() => {
+    if (!alert || !user) return
+
+    // Load existing photos
+    const loadPhotos = async () => {
+      if (alert.id) {
+        const alertPhotos = await getAlertPhotos(alert.id)
+        setPhotos(alertPhotos)
+      }
+    }
+    loadPhotos()
+
+    // Subscribe to new photos
+    const supabase = createClient()
+    const photoSubscription = supabase
+      .channel(`emergency-photos-${alert.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'emergency_photos',
+          filter: `alert_id=eq.${alert.id}`,
+        },
+        (payload) => {
+          console.log('[Photo] ✅ New photo received:', payload.new)
+          setPhotos((prev) => [payload.new as EmergencyPhoto, ...prev])
+        }
+      )
+      .subscribe()
+
+    return () => {
+      photoSubscription.unsubscribe()
+    }
+  }, [alert, user])
+
   const handleAcceptResponse = useCallback(async () => {
     if (!user || !alert || accepting) return
 
     setAccepting(true)
-    const supabase = createClient()
+      const supabase = createClient()
 
     try {
       const { error } = await supabase
@@ -705,7 +745,7 @@ export default function AlertResponsePage() {
           <div className="flex items-center gap-3">
             <AlertTriangle className="w-8 h-8 text-red-500" />
             <div>
-              <h1 className="text-2xl font-bold">Emergency Alert</h1>
+            <h1 className="text-2xl font-bold">Emergency Alert</h1>
               {senderName || senderEmail ? (
                 <p className="text-sm text-gray-600">From: {senderName || senderEmail}</p>
               ) : null}
@@ -827,11 +867,11 @@ export default function AlertResponsePage() {
         {location && user && (
           <div className="mb-6">
             <div style={{ height: '400px', width: '100%' }}>
-              <GoogleMapComponent
-                latitude={location.latitude}
-                longitude={location.longitude}
-                alertId={alert.id}
-                user_id={alert.user_id}
+            <GoogleMapComponent
+              latitude={location.latitude}
+              longitude={location.longitude}
+              alertId={alert.id}
+              user_id={alert.user_id}
                 receiverLocation={receiverLocation}
                 receiverLocationHistory={receiverLocationHistory}
                 receiverUserId={user.id}
@@ -857,6 +897,38 @@ export default function AlertResponsePage() {
               </div>
             )}
           </div>
+        )}
+
+        {/* Photo Gallery */}
+        {photos.length > 0 && (
+          <Card className="mb-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Camera className="w-5 h-5 text-gray-600" />
+              <h2 className="text-xl font-bold text-gray-900">Photos from Emergency ({photos.length})</h2>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {photos.map((photo) => (
+                <div
+                  key={photo.id}
+                  className="relative aspect-square rounded-lg overflow-hidden bg-gray-200 border-2 border-gray-300 cursor-pointer hover:border-blue-500 transition-colors"
+                  onClick={() => {
+                    // Open photo in full screen
+                    window.open(getPhotoUrl(photo.storage_path), '_blank')
+                  }}
+                >
+                  <img
+                    src={getPhotoUrl(photo.storage_path)}
+                    alt={`Emergency photo ${new Date(photo.created_at).toLocaleTimeString()}`}
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-white text-xs p-2 text-center">
+                    {new Date(photo.created_at).toLocaleTimeString()}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">Click a photo to view full size</p>
+          </Card>
         )}
       </Card>
     </div>

@@ -186,9 +186,9 @@ function EmergencyMapComponent({
         // Update receiver location (for receiver's own map)
         setReceiverLocHistory((prev) => [...prev, newLocation])
         setReceiverLoc({
-          lat: newLocation.latitude,
-          lng: newLocation.longitude,
-        })
+        lat: newLocation.latitude,
+        lng: newLocation.longitude,
+      })
       } else if (senderUserId && newLocation.user_id !== senderUserId) {
         // This is a receiver location update (for sender's map showing all receivers)
         setAllReceiverLocations((prev) => {
@@ -216,10 +216,10 @@ function EmergencyMapComponent({
       // Pan map to new location with smooth animation (pan to sender if sender, receiver if receiver)
       if (map && typeof window !== 'undefined' && window.google?.maps) {
         if (isSenderLocation) {
-          map.panTo({
-            lat: newLocation.latitude,
-            lng: newLocation.longitude,
-          })
+        map.panTo({
+          lat: newLocation.latitude,
+          lng: newLocation.longitude,
+        })
         } else if (isReceiverLocation && receiverLoc) {
           // Optionally pan to receiver location, or keep centered on sender
           // For now, we'll keep it centered on sender (emergency location)
@@ -568,13 +568,13 @@ function EmergencyMapComponent({
         </div>
       )}
       
-      <GoogleMap
-        mapContainerStyle={mapContainerStyle}
+    <GoogleMap
+      mapContainerStyle={mapContainerStyle}
         center={senderLocation}
         zoom={directionsResult && receiverLoc ? undefined : 15}
-        onLoad={onLoad}
+      onLoad={onLoad}
         options={mapOptions}
-      >
+    >
         {/* Sender location marker (Emergency Location - Red) */}
         <Marker
           position={senderLocation}
@@ -653,7 +653,7 @@ function EmergencyMapComponent({
                 key={`polyline-${markerData.receiverId}`}
                 path={markerData.polyline.path}
                 options={markerData.polyline.options}
-              />
+        />
             )}
             
             {/* Receiver location history trail */}
@@ -665,8 +665,8 @@ function EmergencyMapComponent({
               />
             ))}
           </div>
-        ))}
-      </GoogleMap>
+      ))}
+    </GoogleMap>
     </div>
   )
 }
