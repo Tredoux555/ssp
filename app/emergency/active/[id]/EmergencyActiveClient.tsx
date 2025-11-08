@@ -49,6 +49,12 @@ export default function EmergencyActivePage() {
   const loadLocationsQueuedRef = useRef(false)
   const loadReceiverLocationsRef = useRef<(() => void) | null>(null)
   const loadingAlertRef = useRef(false) // Prevent concurrent loadAlert calls
+  const addressRef = useRef<string>('') // Track address without causing re-renders
+
+  // Update addressRef when address changes (doesn't trigger loadAlert)
+  useEffect(() => {
+    addressRef.current = address
+  }, [address])
 
   const loadAlert = useCallback(async () => {
     if (!user || loadingAlertRef.current) {
@@ -69,7 +75,8 @@ export default function EmergencyActivePage() {
             lng: activeAlert.location_lng,
           })
           // Only set address if it's different to prevent infinite loops
-          if (activeAlert.address && activeAlert.address !== address) {
+          // Use ref to check without causing dependency changes
+          if (activeAlert.address && activeAlert.address !== addressRef.current) {
             setAddress(activeAlert.address)
           }
         }
@@ -86,7 +93,7 @@ export default function EmergencyActivePage() {
       setLoading(false)
       loadingAlertRef.current = false
     }
-  }, [user, alertId, address, router])
+  }, [user, alertId, router]) // REMOVED 'address' - using ref instead
 
   useEffect(() => {
     if (!user) return

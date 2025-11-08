@@ -33,7 +33,10 @@ export default function Error({
             Try again
           </Button>
           <Button
-            onClick={() => window.location.href = '/'}
+            onClick={() => {
+              // Navigate directly to dashboard to avoid redirect loops
+              window.location.href = '/dashboard'
+            }}
             variant="secondary"
             className="w-full"
           >
