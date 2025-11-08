@@ -656,9 +656,9 @@ export default function DashboardPage() {
 
       // Navigate to emergency screen immediately (post-creation steps run in background)
       if (emergencyAlert && emergencyAlert.id) {
-      router.push(`/emergency/active/${emergencyAlert.id}`)
-        // Clear loading state immediately after navigation
-        setEmergencyLoading(false)
+        router.push(`/emergency/active/${emergencyAlert.id}`)
+        // Don't set loading state here - component may unmount during navigation
+        // The finally block will handle cleanup
       }
     } catch (error: any) {
       // Properly serialize error for logging
