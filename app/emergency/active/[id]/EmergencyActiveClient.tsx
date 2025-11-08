@@ -671,9 +671,10 @@ export default function EmergencyActivePage() {
       }
       
       // Stop location tracking
-      stopTracking()
+      if (stopTracking) {
+        stopTracking()
+      }
       setLocationTrackingActive(false)
-      unsubscribeReceiverLocations()
     }
   }, [alert, user, permissionStatus]) // Removed 'address' from dependencies to prevent infinite loop
 
@@ -730,8 +731,9 @@ export default function EmergencyActivePage() {
       console.log('[Sender] ✅ Alert cancelled successfully - redirecting to dashboard')
       
       // Successfully cancelled - redirect to dashboard immediately
-      // Use replace instead of push to prevent back navigation to cancelled alert
-      router.replace('/dashboard')
+      // Use window.location.href to completely unload component and prevent React error #321
+      // This ensures no state updates happen during navigation
+      window.location.href = '/dashboard'
     } catch (error: any) {
       console.error('Cancel alert error:', error)
       const errorMessage = error?.message || 'Failed to cancel alert. Please try again.'
@@ -754,9 +756,10 @@ export default function EmergencyActivePage() {
       // Check if the error suggests the alert might already be cancelled
       if (errorMessage.includes('already been cancelled') || 
           errorMessage.includes('may have already been cancelled')) {
-        // Alert might be cancelled - redirect to dashboard
+        // Alert might be cancelled - redirect to dashboard using window.location
+        // This prevents React error #321 by completely unloading the component
         setTimeout(() => {
-          router.push('/dashboard')
+          window.location.href = '/dashboard'
         }, 300)
       } else {
         // Other errors - show error and stay on page
