@@ -992,15 +992,24 @@ export default function EmergencyActivePage() {
               <h2 className="text-xl font-bold text-gray-900">Your Location on Map</h2>
             </div>
             <div className="w-full h-96 rounded-lg overflow-hidden bg-gray-200">
-              <GoogleMapComponent
-                latitude={location.lat}
-                longitude={location.lng}
-                alertId={alert.id}
-                user_id={alert.user_id}
-                receiverLocations={receiverLocations}
-                receiverUserIds={receiverUserIds}
-                senderUserId={user.id}
-              />
+              {location ? (
+                <GoogleMapComponent
+                  latitude={location.lat}
+                  longitude={location.lng}
+                  alertId={alert.id}
+                  user_id={alert.user_id}
+                  receiverLocations={receiverLocations}
+                  receiverUserIds={receiverUserIds}
+                  senderUserId={user.id}
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-gray-200">
+                  <div className="text-center p-4">
+                    <p className="text-gray-600 font-medium mb-2">Loading location...</p>
+                    <p className="text-gray-500 text-sm">Waiting for GPS coordinates</p>
+                  </div>
+                </div>
+              )}
             </div>
             
             {/* Location Tracking Status */}

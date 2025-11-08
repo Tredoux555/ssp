@@ -66,12 +66,16 @@ function EmergencyMapComponent({
 
   // Update sender location when props change
   useEffect(() => {
-    console.log('[Map] 📍 Updating sender location from props:', {
-      lat: latitude,
-      lng: longitude,
-      hasLatLng: !!(latitude && longitude)
-    })
-    setSenderLocation({ lat: latitude, lng: longitude })
+    if (latitude && longitude && !isNaN(latitude) && !isNaN(longitude)) {
+      console.log('[Map] 📍 Updating sender location from props:', {
+        lat: latitude,
+        lng: longitude,
+        hasLatLng: true
+      })
+      setSenderLocation({ lat: latitude, lng: longitude })
+    } else {
+      console.warn('[Map] ⚠️ Invalid sender location props:', { latitude, longitude })
+    }
   }, [latitude, longitude])
   
   // Update receiver location when props change
@@ -620,12 +624,19 @@ function EmergencyMapComponent({
         options={mapOptions}
     >
         {/* Sender location marker (Emergency Location - Red) - Always visible */}
-        <Marker
-          position={senderLocation}
-          title="Emergency Location (Sender)"
-          icon={senderMarkerIcon}
-          zIndex={1000}
-        />
+        {senderLocation && senderLocation.lat && senderLocation.lng && (
+          <Marker
+            key={`sender-${senderLocation.lat}-${senderLocation.lng}`}
+            position={senderLocation}
+            title="Emergency Location (Sender)"
+            icon={senderMarkerIcon}
+            zIndex={1000}
+            visible={true}
+            onClick={() => {
+              console.log('[Map] 🎯 Sender marker clicked:', senderLocation)
+            }}
+          />
+        )}
 
         {/* Receiver location marker (Responder Location - Blue) */}
         {receiverLoc && (
