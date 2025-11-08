@@ -740,11 +740,11 @@ export default function EmergencyActivePage() {
         console.log('[Photo] ✅ Photo uploaded successfully')
         // Photo will be added via Realtime subscription
       } else {
-        alert('Failed to upload photo. Please try again.')
+        window.alert('Failed to upload photo. Please try again.')
       }
     } catch (error: any) {
       console.error('[Photo] Error capturing photo:', error)
-      alert('Failed to capture photo. Please try again.')
+      window.alert('Failed to capture photo. Please try again.')
     } finally {
       setUploadingPhoto(false)
     }
