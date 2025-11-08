@@ -252,10 +252,10 @@ export async function uploadEmergencyPhoto(
       lastModified: Date.now()
     })
 
-    // Generate unique filename
-    const photoId = crypto.randomUUID()
-    const fileName = `${photoId}.jpg` // Always use .jpg extension
-    const storagePath = `${alertId}/${fileName}`
+    // Generate unique filename - will regenerate on retry if needed
+    let photoId = crypto.randomUUID()
+    let fileName = `${photoId}.jpg`
+    let storagePath = `${alertId}/${fileName}`
 
     // Upload to Supabase Storage with retry logic and timeout protection
     console.log('[Photo] 📤 Uploading to storage...', { storagePath, fileSize: compressedFile.size })
@@ -293,11 +293,67 @@ export async function uploadEmergencyPhoto(
           break
         }
         
-        // Check if it's a retryable error (network error, not permission/bucket errors)
+        // Get error details
         const errorMessage = uploadError.message || ''
         const errorName = (uploadError as any).name || ''
         const statusCode = uploadError.statusCode || (uploadError as any).status
         
+        // Handle 409 - file already exists (might have been uploaded in previous attempt)
+        if (statusCode === 409 || statusCode === '409' || errorMessage.includes('already exists')) {
+          console.warn(`[Photo] ⚠️ File already exists (409) - checking if upload succeeded...`)
+          
+          // Check if file actually exists and is accessible
+          try {
+            const { data: fileList, error: listError } = await supabase.storage
+              .from('emergency-photos')
+              .list(alertId, {
+                search: fileName
+              })
+            
+            if (!listError && fileList && fileList.some((f: any) => f.name === fileName)) {
+              // File exists! The upload actually succeeded, just got 409 on retry
+              console.log(`[Photo] ✅ File exists - previous upload succeeded, proceeding...`)
+              uploadError = null // Clear error - treat as success
+              uploadData = { path: storagePath } // Create mock data
+              break
+            } else {
+              // File doesn't exist but we got 409 - generate new filename and retry
+              console.warn(`[Photo] ⚠️ 409 error but file not found - generating new filename`)
+              photoId = crypto.randomUUID()
+              fileName = `${photoId}.jpg`
+              storagePath = `${alertId}/${fileName}`
+              
+              if (retries < maxRetries) {
+                retries++
+                const retryDelay = Math.min(1000 * Math.pow(2, retries - 1), 5000)
+                console.warn(`[Photo] ⚠️ Retrying with new filename in ${retryDelay}ms...`)
+                await new Promise(resolve => setTimeout(resolve, retryDelay))
+                continue
+              } else {
+                // Max retries reached even with new filename
+                console.error(`[Photo] ❌ Upload failed after ${maxRetries + 1} attempts (409 error)`)
+                break
+              }
+            }
+          } catch (checkErr) {
+            console.error('[Photo] Error checking file existence:', checkErr)
+            // Generate new filename and retry
+            photoId = crypto.randomUUID()
+            fileName = `${photoId}.jpg`
+            storagePath = `${alertId}/${fileName}`
+            
+            if (retries < maxRetries) {
+              retries++
+              const retryDelay = Math.min(1000 * Math.pow(2, retries - 1), 5000)
+              console.warn(`[Photo] ⚠️ Retrying with new filename after check error in ${retryDelay}ms...`)
+              await new Promise(resolve => setTimeout(resolve, retryDelay))
+              continue
+            }
+            break
+          }
+        }
+        
+        // Check if it's a retryable error (network error, not permission/bucket errors)
         const isRetryableError = (
           (errorMessage.includes('Load failed') || 
            errorMessage.includes('Failed to fetch') ||
@@ -314,14 +370,20 @@ export async function uploadEmergencyPhoto(
           break // Exit retry loop - not retryable
         }
         
-        // Retryable error - wait and retry
+        // Retryable error - generate new filename and retry
         if (retries < maxRetries) {
           retries++
+          // Generate new filename for retry to avoid conflicts
+          photoId = crypto.randomUUID()
+          fileName = `${photoId}.jpg`
+          storagePath = `${alertId}/${fileName}`
+          
           const retryDelay = Math.min(1000 * Math.pow(2, retries - 1), 5000) // Exponential backoff: 1s, 2s, 4s
-          console.warn(`[Photo] ⚠️ Upload attempt ${retries} failed, retrying in ${retryDelay}ms...`, {
+          console.warn(`[Photo] ⚠️ Upload attempt ${retries} failed, retrying with new filename in ${retryDelay}ms...`, {
             error: errorMessage || errorName,
             attempt: retries,
-            maxRetries: maxRetries + 1
+            maxRetries: maxRetries + 1,
+            newStoragePath: storagePath
           })
           await new Promise(resolve => setTimeout(resolve, retryDelay))
           continue
@@ -344,8 +406,13 @@ export async function uploadEmergencyPhoto(
         
         if (isRetryableError && retries < maxRetries) {
           retries++
+          // Generate new filename for retry
+          photoId = crypto.randomUUID()
+          fileName = `${photoId}.jpg`
+          storagePath = `${alertId}/${fileName}`
+          
           const retryDelay = Math.min(1000 * Math.pow(2, retries - 1), 5000)
-          console.warn(`[Photo] ⚠️ Upload ${isTimeoutError ? 'timeout' : 'exception'} on attempt ${retries}, retrying in ${retryDelay}ms...`, err)
+          console.warn(`[Photo] ⚠️ Upload ${isTimeoutError ? 'timeout' : 'exception'} on attempt ${retries}, retrying with new filename in ${retryDelay}ms...`, err)
           await new Promise(resolve => setTimeout(resolve, retryDelay))
           continue
         }
