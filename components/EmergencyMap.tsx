@@ -66,6 +66,11 @@ function EmergencyMapComponent({
 
   // Update sender location when props change
   useEffect(() => {
+    console.log('[Map] 📍 Updating sender location from props:', {
+      lat: latitude,
+      lng: longitude,
+      hasLatLng: !!(latitude && longitude)
+    })
     setSenderLocation({ lat: latitude, lng: longitude })
   }, [latitude, longitude])
   
@@ -362,14 +367,19 @@ function EmergencyMapComponent({
 
   // Memoize sender marker icon
   const senderMarkerIcon = useMemo(() => {
-    if (!isLoaded || !googleMaps) return undefined
+    if (!isLoaded || !googleMaps) {
+      console.log('[Map] ⚠️ Google Maps not loaded yet for sender marker icon')
+      return undefined
+    }
+    console.log('[Map] ✅ Created sender marker icon (red, scale 10)')
     return {
       path: googleMaps.SymbolPath.CIRCLE,
-      scale: 8,
+      scale: 10, // Increased from 8 to make more prominent
       fillColor: '#DE3831',
       fillOpacity: 1,
       strokeColor: '#FFFFFF',
       strokeWeight: 3,
+      zIndex: 1000, // Ensure sender marker is on top
     }
   }, [googleMaps, isLoaded])
 
@@ -609,11 +619,12 @@ function EmergencyMapComponent({
       onLoad={onLoad}
         options={mapOptions}
     >
-        {/* Sender location marker (Emergency Location - Red) */}
+        {/* Sender location marker (Emergency Location - Red) - Always visible */}
         <Marker
           position={senderLocation}
           title="Emergency Location (Sender)"
           icon={senderMarkerIcon}
+          zIndex={1000}
         />
 
         {/* Receiver location marker (Responder Location - Blue) */}
