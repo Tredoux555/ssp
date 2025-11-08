@@ -108,8 +108,28 @@ export async function uploadEmergencyPhoto(
   try {
     const supabase = createClient()
 
+    if (!supabase) {
+      console.error('[Photo] ❌ Supabase client not available')
+      window.alert('Unable to upload photo: Server configuration error')
+      return null
+    }
+
+    console.log('[Photo] 📸 Starting upload:', { fileName: file.name, fileSize: file.size })
+
     // Compress image
-    const compressedBlob = await compressImage(file)
+    let compressedBlob: Blob
+    try {
+      compressedBlob = await compressImage(file)
+      console.log('[Photo] ✅ Compressed:', { 
+        original: file.size, 
+        compressed: compressedBlob.size 
+      })
+    } catch (compressError: any) {
+      console.error('[Photo] ❌ Compression failed:', compressError)
+      window.alert('Failed to process image. Please try a smaller photo.')
+      return null
+    }
+
     const compressedFile = new File([compressedBlob], file.name, { type: 'image/jpeg' })
 
     // Generate unique filename
@@ -119,6 +139,7 @@ export async function uploadEmergencyPhoto(
     const storagePath = `${alertId}/${fileName}`
 
     // Upload to Supabase Storage
+    console.log('[Photo] 📤 Uploading to storage...')
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('emergency-photos')
       .upload(storagePath, compressedFile, {
@@ -127,12 +148,36 @@ export async function uploadEmergencyPhoto(
       })
 
     if (uploadError) {
-      console.error('[Photo] Upload error:', uploadError)
-      throw uploadError
+      console.error('[Photo] ❌ Storage error:', {
+        code: uploadError.statusCode,
+        message: uploadError.message,
+        error: uploadError
+      })
+      
+      // Check for bucket not found
+      if (uploadError.message?.includes('Bucket not found') || 
+          uploadError.message?.includes('does not exist') ||
+          uploadError.statusCode === '404') {
+        window.alert('Photo storage not configured. Please run the setup.')
+        // Try to auto-setup bucket
+        try {
+          const setupResponse = await fetch('/api/storage/setup-bucket', { method: 'POST' })
+          const setupResult = await setupResponse.json()
+          if (setupResult.success) {
+            window.alert('Storage bucket created! Please try uploading again.')
+          }
+        } catch (setupError) {
+          console.error('[Photo] Failed to auto-setup bucket:', setupError)
+        }
+      } else if (uploadError.statusCode === '403' || uploadError.message?.includes('policy')) {
+        window.alert('Permission denied. Storage policies may need to be configured.')
+      } else {
+        window.alert(`Failed to upload: ${uploadError.message || 'Unknown error'}`)
+      }
+      return null
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage.from('emergency-photos').getPublicUrl(storagePath)
+    console.log('[Photo] ✅ Storage upload successful')
 
     // Save metadata to database
     const { data: photoData, error: dbError } = await supabase
@@ -149,10 +194,29 @@ export async function uploadEmergencyPhoto(
       .single()
 
     if (dbError) {
-      console.error('[Photo] Database error:', dbError)
+      console.error('[Photo] ❌ Database error:', {
+        code: dbError.code,
+        message: dbError.message,
+        details: dbError.details
+      })
+      
       // Try to delete uploaded file if database insert fails
-      await supabase.storage.from('emergency-photos').remove([storagePath])
-      throw dbError
+      try {
+        await supabase.storage.from('emergency-photos').remove([storagePath])
+        console.log('[Photo] 🗑️ Cleaned up uploaded file')
+      } catch (cleanupError) {
+        console.warn('[Photo] ⚠️ Failed to cleanup:', cleanupError)
+      }
+      
+      // Check for specific errors
+      if (dbError.code === '42P01' || dbError.message?.includes('does not exist')) {
+        window.alert('Photo feature not configured. Please run database migrations.')
+      } else if (dbError.code === '42501' || dbError.message?.includes('row-level security')) {
+        window.alert('Permission denied. Database policies may need to be configured.')
+      } else {
+        window.alert(`Failed to save photo: ${dbError.message || 'Unknown error'}`)
+      }
+      return null
     }
 
     console.log('[Photo] ✅ Photo uploaded successfully:', {
@@ -162,8 +226,12 @@ export async function uploadEmergencyPhoto(
     })
 
     return photoData as EmergencyPhoto
-  } catch (error) {
-    console.error('[Photo] ❌ Failed to upload photo:', error)
+  } catch (error: any) {
+    console.error('[Photo] ❌ Unexpected error:', {
+      error: error?.message || error,
+      stack: error?.stack
+    })
+    window.alert(`Failed to upload photo: ${error?.message || 'Unknown error'}`)
     return null
   }
 }
