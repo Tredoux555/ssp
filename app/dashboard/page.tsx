@@ -691,6 +691,32 @@ export default function DashboardPage() {
     }
   }
 
+  const handleCancelAlert = async () => {
+    if (!activeEmergency || !user) return
+
+    const confirmed = window.confirm(
+      'Are you sure you want to cancel this emergency alert?'
+    )
+
+    if (!confirmed) return
+
+    try {
+      const { cancelEmergencyAlert } = await import('@/lib/services/emergency')
+      await cancelEmergencyAlert(activeEmergency.id)
+      
+      // Refresh active emergency state
+      await loadActiveEmergency()
+      
+      // Show success message
+      console.log('[Dashboard] ✅ Alert cancelled successfully')
+    } catch (error: any) {
+      console.error('[Dashboard] ❌ Failed to cancel alert:', error)
+      window.alert(
+        error?.message || 'Failed to cancel alert. Please try again.'
+      )
+    }
+  }
+
   const handleSignOut = async () => {
     await signOut()
     router.push('/auth/login')
@@ -790,17 +816,27 @@ export default function DashboardPage() {
             </div>
           </Card>
 
-          <Card>
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-sa-blue rounded-lg flex items-center justify-center">
-                <AlertTriangle className="w-6 h-6 text-white" />
+          <Card 
+            className={activeEmergency ? "cursor-pointer hover:shadow-lg transition-shadow border-2 border-red-500" : ""}
+            onClick={activeEmergency ? handleCancelAlert : undefined}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-12 h-12 ${activeEmergency ? 'bg-red-500' : 'bg-sa-blue'} rounded-lg flex items-center justify-center`}>
+                  <AlertTriangle className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Active Alerts</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {activeEmergency ? '1' : '0'}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm text-gray-600">Active Alerts</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {activeEmergency ? '1' : '0'}
-                </p>
-              </div>
+              {activeEmergency && (
+                <div className="text-right">
+                  <p className="text-xs text-red-600 font-medium">Click to cancel</p>
+                </div>
+              )}
             </div>
           </Card>
         </div>
