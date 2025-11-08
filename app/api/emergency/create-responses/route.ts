@@ -32,6 +32,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       )
     }
 
+    const body = await request.json()
+    const { alertId, contactIds } = body
+
     if (!alertId || !Array.isArray(contactIds)) {
       return NextResponse.json(
         { error: 'Missing required fields: alertId, contactIds' },
