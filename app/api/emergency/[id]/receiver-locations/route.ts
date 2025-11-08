@@ -37,7 +37,19 @@ export async function GET(
     }
 
     // Use admin client to bypass RLS
-    const admin = createAdminClient()
+    let admin
+    try {
+      admin = createAdminClient()
+    } catch (adminError: any) {
+      console.error('[API] Failed to create admin client:', {
+        error: adminError?.message || adminError,
+        alertId: alertId
+      })
+      return NextResponse.json(
+        { error: 'Internal server error', details: 'Failed to initialize database connection' },
+        { status: 500 }
+      )
+    }
 
     // Verify user has access to this alert (owns it or is notified about it)
     const { data: alert, error: alertError } = await admin
@@ -47,8 +59,14 @@ export async function GET(
       .single()
 
     if (alertError || !alert) {
+      console.error('[API] Alert query error:', {
+        error: alertError,
+        code: alertError?.code,
+        message: alertError?.message,
+        alertId: alertId
+      })
       return NextResponse.json(
-        { error: 'Alert not found' },
+        { error: 'Alert not found', details: alertError?.message || 'Alert does not exist' },
         { status: 404 }
       )
     }
@@ -75,9 +93,15 @@ export async function GET(
       .not('acknowledged_at', 'is', null)
 
     if (responsesError) {
-      console.error('[API] Error fetching accepted responders:', responsesError)
+      console.error('[API] Error fetching accepted responders:', {
+        code: responsesError.code,
+        message: responsesError.message,
+        details: responsesError.details,
+        hint: responsesError.hint,
+        alertId: alertId
+      })
       return NextResponse.json(
-        { error: 'Failed to fetch accepted responders' },
+        { error: 'Failed to fetch accepted responders', details: responsesError.message || 'Database query failed' },
         { status: 500 }
       )
     }
@@ -105,9 +129,15 @@ export async function GET(
       .limit(100) // Limit to last 100 locations per alert
 
     if (locationsError) {
-      console.error('[API] Error fetching receiver locations:', locationsError)
+      console.error('[API] Error fetching receiver locations:', {
+        code: locationsError.code,
+        message: locationsError.message,
+        details: locationsError.details,
+        hint: locationsError.hint,
+        alertId: alertId
+      })
       return NextResponse.json(
-        { error: 'Failed to fetch receiver locations' },
+        { error: 'Failed to fetch receiver locations', details: locationsError.message || 'Database query failed' },
         { status: 500 }
       )
     }
@@ -133,9 +163,13 @@ export async function GET(
       { status: 200 }
     )
   } catch (error: any) {
-    console.error('[API] Error in receiver-locations endpoint:', error)
+    console.error('[API] Unexpected error in receiver-locations endpoint:', {
+      error: error?.message || error,
+      stack: error?.stack,
+      name: error?.name
+    })
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Internal server error', details: error?.message || 'An unexpected error occurred' },
       { status: 500 }
     )
   }

@@ -64,10 +64,18 @@ export default function EmergencyActivePage() {
         const acceptedResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`)
         
         if (!acceptedResponse.ok) {
-          const errorData = await acceptedResponse.json().catch(() => ({}))
+          let errorData: any = {}
+          try {
+            const text = await acceptedResponse.text()
+            errorData = text ? JSON.parse(text) : {}
+          } catch (parseError) {
+            console.warn('[Sender] Failed to parse error response:', parseError)
+          }
           console.error('[Sender] Failed to fetch accepted responders:', {
             status: acceptedResponse.status,
+            statusText: acceptedResponse.statusText,
             error: errorData.error || 'Unknown error',
+            details: errorData.details || 'No details available',
             alertId: alert.id
           })
           setReceiverLocations(new Map())
