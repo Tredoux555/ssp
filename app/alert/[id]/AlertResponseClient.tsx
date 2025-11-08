@@ -40,8 +40,17 @@ export default function AlertResponsePage() {
   const [senderEmail, setSenderEmail] = useState<string | null>(null)
   const [hasAccepted, setHasAccepted] = useState(false)
   const [accepting, setAccepting] = useState(false)
+  const [isClosing, setIsClosing] = useState(false) // Prevent multiple close attempts
+  const isClosingRef = useRef(false) // Ref version for use in callbacks
   const subscriptionsSetupRef = useRef<string | null>(null) // Track which alert ID subscriptions are set up for
   const loadAlertCalledRef = useRef<string | null>(null) // Track if loadAlert has been called for this alertId
+  const cleanupRefs = useRef<{
+    unsubscribeLocation?: () => void
+    unsubscribeAlert?: () => void
+    pollInterval?: NodeJS.Timeout
+    statusPollInterval?: NodeJS.Timeout
+    stopReceiverTracking?: () => void
+  }>({})
 
   const loadAlert = useCallback(async () => {
     if (!user) return
@@ -476,6 +485,8 @@ export default function AlertResponsePage() {
 
     // Subscribe to location updates (both sender and receiver)
     const unsubscribeLocation = subscribeToLocationHistory(alert.id, (newLocation) => {
+      // Don't process updates if we're closing
+      if (isClosingRef.current) return
       console.log('[Receiver] Location update received via subscription:', {
         userId: newLocation.user_id,
         alertUserId: alert.user_id,
@@ -520,7 +531,7 @@ export default function AlertResponsePage() {
     // Add polling fallback for location updates (in case subscription fails)
     // Poll every 10 seconds for sender's location updates
     const pollInterval = setInterval(async () => {
-      if (!alert || !user) return
+      if (!alert || !user || isClosingRef.current) return
       
       try {
         const supabase = createClient()
@@ -568,6 +579,9 @@ export default function AlertResponsePage() {
           filter: `id=eq.${alert.id}`,
         },
         (payload: any) => {
+          // Don't process updates if we're closing
+          if (isClosingRef.current) return
+          
           const updatedAlert = payload.new as EmergencyAlert
           console.log('[Receiver] ✅ Alert status update received:', {
             alertId: alert.id,
@@ -588,7 +602,7 @@ export default function AlertResponsePage() {
     // Add polling fallback to check alert status (in case subscription fails)
     // Poll every 5 seconds to check if alert was cancelled
     const statusPollInterval = setInterval(async () => {
-      if (!alert || !user) return
+      if (!alert || !user || isClosingRef.current) return
       
       try {
         const supabase = createClient()
@@ -614,6 +628,15 @@ export default function AlertResponsePage() {
       }
     }, 5000) // Poll every 5 seconds
 
+    // Store cleanup functions in ref for X button handler
+    cleanupRefs.current = {
+      unsubscribeLocation,
+      unsubscribeAlert: unsubscribeAlert?.unsubscribe.bind(unsubscribeAlert),
+      pollInterval,
+      statusPollInterval,
+      stopReceiverTracking: stopReceiverTracking || undefined
+    }
+
 
     // Play alert sound and vibrate device
     playAlertSound()
@@ -635,6 +658,8 @@ export default function AlertResponsePage() {
         clearInterval(statusPollInterval)
       }
       hideEmergencyAlert()
+      // Clear cleanup refs
+      cleanupRefs.current = {}
     }
     // Only depend on alert.id and user.id, not the full alert object
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -683,14 +708,44 @@ export default function AlertResponsePage() {
           </div>
           <Button 
             onClick={() => {
-              // Hide alert overlay when closing
+              // Prevent multiple close attempts
+              if (isClosingRef.current) return
+              setIsClosing(true)
+              isClosingRef.current = true
+              
+              console.log('[Receiver] X button clicked - cleaning up and navigating')
+              
+              // Clean up all subscriptions and intervals
+              try {
+                if (cleanupRefs.current.stopReceiverTracking) {
+                  cleanupRefs.current.stopReceiverTracking()
+                }
+                if (cleanupRefs.current.unsubscribeLocation) {
+                  cleanupRefs.current.unsubscribeLocation()
+                }
+                if (cleanupRefs.current.unsubscribeAlert) {
+                  cleanupRefs.current.unsubscribeAlert()
+                }
+                if (cleanupRefs.current.pollInterval) {
+                  clearInterval(cleanupRefs.current.pollInterval)
+                }
+                if (cleanupRefs.current.statusPollInterval) {
+                  clearInterval(cleanupRefs.current.statusPollInterval)
+                }
+              } catch (cleanupError) {
+                console.warn('[Receiver] Error during cleanup:', cleanupError)
+              }
+              
+              // Hide alert overlay
               hideEmergencyAlert()
-              // Use replace to prevent back navigation to alert page
+              
+              // Navigate immediately - use replace to prevent back navigation
               router.replace('/dashboard')
             }} 
             variant="secondary" 
             size="sm"
             className="flex-shrink-0"
+            disabled={isClosing}
           >
             <X className="w-4 h-4" />
           </Button>
