@@ -59,6 +59,15 @@ export default function EmergencyActivePage() {
     // Query all receiver locations from location_history (only from accepted responders)
     // Uses server-side API endpoints to bypass RLS
     const loadReceiverLocations = async () => {
+      // Guard check - ensure alert exists before making API calls
+      if (!alert || !alert.id) {
+        console.warn('[Sender] Cannot load receiver locations - alert not available', {
+          hasAlert: !!alert,
+          alertId: alert?.id
+        })
+        return
+      }
+      
       try {
         // Use API endpoint to get accepted responders (bypasses RLS)
         // Use no-store to prevent caching - we need real-time data
@@ -71,35 +80,47 @@ export default function EmergencyActivePage() {
         
         // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
         if (!acceptedResponse.ok && acceptedResponse.status !== 304) {
+          // Always log the status code, even if parsing fails
+          const status = acceptedResponse.status
+          const statusText = acceptedResponse.statusText
+          
           let errorData: any = {}
           let responseText = ''
+          
           try {
             responseText = await acceptedResponse.text()
-            if (responseText) {
+            if (responseText && responseText.trim()) {
               errorData = JSON.parse(responseText)
             }
           } catch (parseError) {
-            console.warn('[Sender] Failed to parse error response:', parseError)
+            console.warn('[Sender] Failed to parse error response:', parseError, 'Raw text:', responseText.substring(0, 100))
           }
+          
           console.error('[Sender] ❌ API endpoint failed:', {
-            url: `/api/emergency/${alert.id}/accepted-responders`,
-            status: acceptedResponse.status,
-            statusText: acceptedResponse.statusText,
-            error: errorData.error || 'Unknown error',
-            details: errorData.details || 'No details available',
-            rawResponse: responseText.substring(0, 200), // First 200 chars
-            alertId: alert.id,
+            url: `/api/emergency/${alert?.id}/accepted-responders`,
+            status: status,
+            statusText: statusText,
+            error: errorData.error || `HTTP ${status} ${statusText}`,
+            details: errorData.details || `Server returned ${status} ${statusText}`,
+            rawResponse: responseText || '(empty response)',
+            alertId: alert?.id,
+            hasAlert: !!alert,
             headers: {
               contentType: acceptedResponse.headers.get('content-type'),
             }
           })
           
           // Show user-friendly error if it's a known issue
-          if (acceptedResponse.status === 401) {
+          if (status === 401) {
             console.error('[Sender] ⚠️ Authentication error - user may need to log in again')
-          } else if (acceptedResponse.status === 404) {
-            console.error('[Sender] ⚠️ Alert not found - it may have been deleted')
-          } else if (acceptedResponse.status === 500) {
+          } else if (status === 404) {
+            console.error('[Sender] ⚠️ Alert not found - it may have been deleted or the alert ID is invalid')
+            console.error('[Sender] ⚠️ Alert details:', {
+              alertId: alert?.id,
+              alertExists: !!alert,
+              alertStatus: alert?.status
+            })
+          } else if (status === 500) {
             console.error('[Sender] ⚠️ Server error - check API logs in Vercel')
           }
           
