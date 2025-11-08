@@ -626,7 +626,7 @@ export default function EmergencyActivePage() {
           table: 'emergency_photos',
           filter: `alert_id=eq.${alert.id}`,
         },
-        (payload) => {
+        (payload: { new: EmergencyPhoto }) => {
           console.log('[Photo] ✅ New photo received:', payload.new)
           setPhotos((prev) => [payload.new as EmergencyPhoto, ...prev])
         }

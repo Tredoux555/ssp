@@ -20,41 +20,41 @@ export default function PushNotificationSetup() {
     if (!user) return
 
     try {
-      // Check if push is supported
-      if (!isPushSupported()) {
+    // Check if push is supported
+    if (!isPushSupported()) {
         // Silently return - push not supported is not an error
-        return
-      }
+      return
+    }
 
-      // Check if already enabled
-      isPushEnabled()
-        .then((enabled) => {
-          if (enabled) {
-            setPushEnabled(true)
-            return
-          }
+    // Check if already enabled
+    isPushEnabled()
+      .then((enabled) => {
+        if (enabled) {
+          setPushEnabled(true)
+          return
+        }
 
-          // Register device for push notifications
-          // Don't show error to user - just log it
-          registerDeviceForPush()
-            .then((success) => {
-              if (success) {
-                setPushEnabled(true)
-                console.log('[Push] Push notifications enabled')
-              } else {
+        // Register device for push notifications
+        // Don't show error to user - just log it
+        registerDeviceForPush()
+          .then((success) => {
+            if (success) {
+              setPushEnabled(true)
+              console.log('[Push] Push notifications enabled')
+            } else {
                 // Silently fail - push notifications are optional
-                console.warn('[Push] Failed to enable push notifications')
-              }
-            })
-            .catch((error) => {
+              console.warn('[Push] Failed to enable push notifications')
+            }
+          })
+          .catch((error) => {
               // Silently handle errors - push notifications are optional
               console.warn('[Push] Error registering push:', error)
-            })
-        })
-        .catch((error) => {
+          })
+      })
+      .catch((error) => {
           // Silently handle errors - push notifications are optional
           console.warn('[Push] Error checking push status:', error)
-        })
+      })
     } catch (error) {
       // Silently handle any unexpected errors - don't crash the app
       console.warn('[Push] Unexpected error in PushNotificationSetup:', error)
