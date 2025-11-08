@@ -278,26 +278,23 @@ export async function uploadEmergencyPhoto(
         stack: (uploadError as any).stack
       })
       
-      // Check for "Load failed" - usually means RLS/CORS/permission issue
+      // Get error details for better debugging
       const errorMessage = uploadError.message || ''
       const errorName = (uploadError as any).name || ''
-      const isLoadFailed = errorMessage.includes('Load failed') || 
-                           errorMessage.includes('Failed to fetch') ||
-                           errorMessage.includes('network') ||
-                           errorName === 'NetworkError' ||
-                           errorName === 'TypeError'
+      const statusCode = uploadError.statusCode || (uploadError as any).status
       
-      if (isLoadFailed) {
-        console.error('[Photo] ❌ Network/RLS error detected - storage policies likely missing')
-        window.alert('Upload failed: Storage policies need to be configured. The bucket was created, but you need to run the storage policies SQL. Please run migrations/add-emergency-photos-storage-policies.sql in Supabase SQL Editor, then try again.')
+      // Check for 403 first (permission denied) - most likely RLS/policy issue
+      if (statusCode === '403' || statusCode === 403) {
+        console.error('[Photo] ❌ 403 Permission denied - storage policies may be blocking')
+        window.alert(`Permission denied (403). Storage policies may need to be configured or verified. Error: ${errorMessage || 'Unknown'}. Please check that storage policies were created correctly.`)
         return null
       }
       
-      // Check for bucket not found
+      // Check for bucket not found (404)
       if (uploadError.message?.includes('Bucket not found') || 
           uploadError.message?.includes('does not exist') ||
-          uploadError.statusCode === '404' ||
-          (uploadError as any).status === 404) {
+          statusCode === '404' ||
+          statusCode === 404) {
         window.alert('Photo storage not configured. Setting up now...')
         // Try to auto-setup bucket
         try {
@@ -316,13 +313,24 @@ export async function uploadEmergencyPhoto(
           console.error('[Photo] Failed to auto-setup bucket:', setupError)
           window.alert('Could not auto-setup storage. Please create "emergency-photos" bucket in Supabase Storage and run migrations/add-emergency-photos-storage-policies.sql')
         }
-      } else if (uploadError.statusCode === '403' || 
-                 uploadError.message?.includes('policy') ||
-                 (uploadError as any).status === 403) {
-        window.alert('Permission denied. Storage policies may need to be configured.')
-      } else {
-        window.alert(`Failed to upload: ${uploadError.message || 'Unknown error'}. Please try again.`)
+        return null
       }
+      
+      // Check for network errors - but only if they're also permission-related
+      const isNetworkError = errorMessage.includes('Load failed') || 
+                           errorMessage.includes('Failed to fetch') ||
+                           errorName === 'NetworkError'
+      
+      // Only treat as policy issue if it's a network error AND we don't have a specific status code
+      // This prevents false positives
+      if (isNetworkError && !statusCode) {
+        console.error('[Photo] ❌ Network error detected (no status code) - may be CORS or policy issue')
+        window.alert(`Upload failed: Network error. Error: ${errorMessage || errorName}. Please check browser console for details and verify storage policies are configured.`)
+        return null
+      }
+      
+      // Generic error fallback - show actual error message
+      window.alert(`Failed to upload: ${errorMessage || errorName || 'Unknown error'} (Status: ${statusCode || 'N/A'}). Please try again or check console for details.`)
       return null
     }
 
