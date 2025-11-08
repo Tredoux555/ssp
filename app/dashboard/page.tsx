@@ -72,12 +72,26 @@ export default function DashboardPage() {
       setActiveEmergency(emergency)
       
       // Only auto-redirect if we have a confirmed active emergency
-      // Don't redirect if we just came from cancelling an alert
+      // Don't redirect if we just came from cancelling an alert or an error state
       if (emergency && emergency.status === 'active') {
-        // Check if we're already on the emergency page to prevent redirect loops
         const currentPath = window.location.pathname
-        if (!currentPath.includes(`/emergency/active/${emergency.id}`)) {
-          router.push(`/emergency/active/${emergency.id}`)
+        const isOnEmergencyPage = currentPath.includes(`/emergency/active/${emergency.id}`)
+        const hasErrorState = sessionStorage.getItem('emergency-error-state') === 'true'
+        
+        // Don't redirect if:
+        // 1. Already on emergency page
+        // 2. Coming from error state (prevents redirect loop)
+        // 3. User explicitly navigated away (check referrer)
+        if (!isOnEmergencyPage && !hasErrorState) {
+          // Check if we came from emergency page (user might have navigated away intentionally)
+          const referrer = document.referrer
+          const cameFromEmergency = referrer.includes(`/emergency/active/${emergency.id}`)
+          
+          // Only redirect if we didn't come from the emergency page
+          // This prevents loops when user navigates away from error
+          if (!cameFromEmergency) {
+            router.push(`/emergency/active/${emergency.id}`)
+          }
         }
       }
     } catch (error: any) {

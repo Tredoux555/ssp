@@ -14,6 +14,16 @@ export default function Error({
   useEffect(() => {
     // Log error to console for debugging
     console.error('Application error:', error)
+    
+    // Mark that we're in an error state to prevent dashboard auto-redirect
+    sessionStorage.setItem('emergency-error-state', 'true')
+    
+    // Clear it after 10 seconds (enough time to navigate away)
+    const timeout = setTimeout(() => {
+      sessionStorage.removeItem('emergency-error-state')
+    }, 10000)
+    
+    return () => clearTimeout(timeout)
   }, [error])
 
   return (
