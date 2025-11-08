@@ -54,11 +54,20 @@ export default function DashboardPage() {
   const activeEmergencyRef = useRef<EmergencyAlert | null>(null)
   const senderInfoCacheRef = useRef<Map<string, { data: { name: string | null; email: string | null }; timestamp: number }>>(new Map())
   const contactCountCacheRef = useRef<{ count: number; timestamp: number } | null>(null)
+  const isMountedRef = useRef(true)
   
   // Keep ref in sync with state
   useEffect(() => {
     activeEmergencyRef.current = activeEmergency
   }, [activeEmergency])
+
+  // Track mount state
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
 
   const loadActiveEmergency = useCallback(async () => {
     if (!user) return
@@ -647,6 +656,9 @@ export default function DashboardPage() {
   const handleEmergencyButton = async () => {
     if (!user) return
 
+    // Use ref to prevent state updates after unmount
+    if (!isMountedRef.current) return
+
     setEmergencyLoading(true)
 
       try {
@@ -681,8 +693,10 @@ export default function DashboardPage() {
       } catch (alertError: any) {
         // Handle rate limit errors specifically
         if (alertError.message?.includes('Rate limit')) {
-          setEmergencyLoading(false)
-          window.alert(alertError.message)
+          if (isMountedRef.current) {
+            setEmergencyLoading(false)
+            window.alert(alertError.message)
+          }
           return
         }
         
@@ -693,13 +707,17 @@ export default function DashboardPage() {
       // Note: Contact notification is handled server-side in the API route
       // No need to call notifyEmergencyContacts() here - it's already done
 
-      // Navigate to emergency screen immediately (post-creation steps run in background)
+      // Navigate to emergency screen immediately using window.location to avoid React state updates
       if (emergencyAlert && emergencyAlert.id) {
-        router.push(`/emergency/active/${emergencyAlert.id}`)
-        // Don't set loading state here - component may unmount during navigation
-        // The finally block will handle cleanup
+        // Use window.location.href for full page reload - prevents React error #321
+        window.location.href = `/emergency/active/${emergencyAlert.id}`
+        // Don't update state after navigation - component will unmount
+        return
       }
     } catch (error: any) {
+      // Only update state if component is still mounted
+      if (!isMountedRef.current) return
+      
       // Properly serialize error for logging
       const serializedError = serializeError(error)
       console.error('Emergency button error:', {
@@ -726,7 +744,10 @@ export default function DashboardPage() {
       // Show error to user
       window.alert(errorMessage)
     } finally {
-      setEmergencyLoading(false)
+      // Only update state if component is still mounted
+      if (isMountedRef.current) {
+        setEmergencyLoading(false)
+      }
     }
   }
 

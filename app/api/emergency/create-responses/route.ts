@@ -8,6 +8,19 @@ import { createServerClient } from '@/lib/supabase-server'
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
+    // Add CORS headers for cross-origin requests (if needed)
+    const headers = {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    }
+
+    // Handle OPTIONS request for CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new NextResponse(null, { status: 200, headers })
+    }
+
     // Get authenticated user
     const supabase = await createServerClient()
     const { data: { session }, error: sessionError } = await supabase.auth.getSession()
@@ -15,17 +28,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (sessionError || !session?.user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
-        { status: 401 }
+        { status: 401, headers }
       )
     }
-
-    const body = await request.json()
-    const { alertId, contactIds } = body
 
     if (!alertId || !Array.isArray(contactIds)) {
       return NextResponse.json(
         { error: 'Missing required fields: alertId, contactIds' },
-        { status: 400 }
+        { status: 400, headers }
       )
     }
 
@@ -55,7 +65,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
         return NextResponse.json(
           { error: 'Alert not found' },
-          { status: 404 }
+          { status: 404, headers }
         )
       }
       break // Success
@@ -65,14 +75,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (!alert || !alert.user_id) {
       return NextResponse.json(
         { error: 'Alert not found' },
-        { status: 404 }
+        { status: 404, headers }
       )
     }
 
     if (alert.user_id !== session.user.id) {
       return NextResponse.json(
         { error: 'Unauthorized - you can only create responses for your own alerts' },
-        { status: 403 }
+        { status: 403, headers }
       )
     }
 
@@ -89,7 +99,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (responses.length === 0) {
       return NextResponse.json(
         { success: true, message: 'No valid contact IDs provided' },
-        { status: 200 }
+        { status: 200, headers }
       )
     }
 
@@ -101,7 +111,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       console.error('Failed to create alert responses:', insertError)
       return NextResponse.json(
         { error: insertError.message },
-        { status: 500 }
+        { status: 500, headers }
       )
     }
 
@@ -111,13 +121,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         message: `Created ${responses.length} alert response(s)`,
         count: responses.length 
       },
-      { status: 200 }
+      { status: 200, headers }
     )
   } catch (error: any) {
     console.error('Error creating alert responses:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
-      { status: 500 }
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     )
   }
 }
