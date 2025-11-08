@@ -436,8 +436,6 @@ function EmergencyMapComponent({
       senderLocation
     })
     
-    const markers: any[] = []
-    
     console.log('[Map] 🔍 Processing receiver locations:', {
       totalReceivers: allReceiverLocations.size,
       receiverIds: Array.from(allReceiverLocations.keys())
@@ -458,6 +456,7 @@ function EmergencyMapComponent({
       
       console.log('[Map] ✅ Creating marker for receiver:', {
         receiverId,
+        locationCount: locations.length,
         latestLocation: {
           lat: latestLocation.latitude,
           lng: latestLocation.longitude,
@@ -465,48 +464,41 @@ function EmergencyMapComponent({
         }
       })
       
-      console.log('[Map] ✅ Creating marker for receiver:', {
-        receiverId,
-        locationCount: locations.length,
-        latestLocation: { lat: latestLocation.latitude, lng: latestLocation.longitude }
-      })
+      const currentMarker = {
+        position: { lat: latestLocation.latitude, lng: latestLocation.longitude },
+        title: `Responder Location (${receiverId.slice(0, 8)}...)`,
+        icon: {
+          path: googleMaps.SymbolPath.CIRCLE,
+          scale: 8,
+          fillColor: '#2563EB',
+          fillOpacity: 1,
+          strokeColor: '#FFFFFF',
+          strokeWeight: 3,
+        },
+      }
       
-      markers.push({
-        receiverId,
-        currentMarker: {
-          position: { lat: latestLocation.latitude, lng: latestLocation.longitude },
-          title: `Responder Location (${receiverId.slice(0, 8)}...)`,
-          icon: {
-            path: googleMaps.SymbolPath.CIRCLE,
-            scale: 8,
-            fillColor: '#2563EB',
-            fillOpacity: 1,
-            strokeColor: '#FFFFFF',
-            strokeWeight: 3,
-          },
+      const polyline = {
+        path: [senderLocation, { lat: latestLocation.latitude, lng: latestLocation.longitude }],
+        options: {
+          strokeColor: '#2563EB',
+          strokeOpacity: 0.4,
+          strokeWeight: 2,
+          geodesic: true,
         },
-        polyline: {
-          path: [senderLocation, { lat: latestLocation.latitude, lng: latestLocation.longitude }],
-          options: {
-            strokeColor: '#2563EB',
-            strokeOpacity: 0.4,
-            strokeWeight: 2,
-            geodesic: true,
-          },
+      }
+      
+      const historyMarkers = locations.map((loc, index) => ({
+        key: `receiver-${receiverId}-${loc.id}-${index}`,
+        position: { lat: loc.latitude, lng: loc.longitude },
+        icon: {
+          path: googleMaps.SymbolPath.CIRCLE,
+          scale: 4,
+          fillColor: '#2563EB',
+          fillOpacity: 0.6,
+          strokeColor: '#FFFFFF',
+          strokeWeight: 2,
         },
-        historyMarkers: locations.map((loc, index) => ({
-          key: `receiver-${receiverId}-${loc.id}-${index}`,
-          position: { lat: loc.latitude, lng: loc.longitude },
-          icon: {
-            path: googleMaps.SymbolPath.CIRCLE,
-            scale: 4,
-            fillColor: '#2563EB',
-            fillOpacity: 0.6,
-            strokeColor: '#FFFFFF',
-            strokeWeight: 2,
-          },
-        })),
-      })
+      }))
       
       markers.push({
         receiverId,
