@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { getActiveEmergency } from '@/lib/emergency'
@@ -43,6 +43,11 @@ export default function EmergencyActivePage() {
   const [showPermissionPrompt, setShowPermissionPrompt] = useState(false)
   const [photos, setPhotos] = useState<EmergencyPhoto[]>([])
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  
+  // Refs to track upload state and queue location reloads
+  const uploadingPhotoRef = useRef(false)
+  const loadLocationsQueuedRef = useRef(false)
+  const loadReceiverLocationsRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -69,6 +74,13 @@ export default function EmergencyActivePage() {
           hasAlert: !!alert,
           alertId: alert?.id
         })
+        return
+      }
+      
+      // Don't reload locations if photo upload is in progress
+      if (uploadingPhotoRef.current) {
+        console.log('[Photo] ⏸️ Deferring location reload - photo upload in progress')
+        loadLocationsQueuedRef.current = true
         return
       }
       
@@ -227,6 +239,21 @@ export default function EmergencyActivePage() {
         setReceiverUserIds([])
       }
     }
+    
+    // Store function in ref for safe access
+    loadReceiverLocationsRef.current = loadReceiverLocations
+    
+    // Safe wrapper that checks upload state before calling
+    const safeLoadReceiverLocations = useCallback(() => {
+      if (uploadingPhotoRef.current) {
+        console.log('[Photo] ⏸️ Deferring location reload - photo upload in progress')
+        loadLocationsQueuedRef.current = true
+        return
+      }
+      if (loadReceiverLocationsRef.current) {
+        loadReceiverLocationsRef.current()
+      }
+    }, [])
 
     loadReceiverLocations()
 
@@ -256,8 +283,8 @@ export default function EmergencyActivePage() {
             })
             // Update count immediately
             setAcceptedResponderCount((prev) => prev + 1)
-            // Reload receiver locations
-            loadReceiverLocations()
+            // Reload receiver locations (safely - won't interrupt uploads)
+            safeLoadReceiverLocations()
           }
         }
       )
@@ -274,7 +301,7 @@ export default function EmergencyActivePage() {
             })
           }
           // Immediately trigger polling fallback when subscription fails
-          loadReceiverLocations()
+          safeLoadReceiverLocations()
         } else {
           // Only log non-critical statuses in development
           if (process.env.NODE_ENV === 'development') {
@@ -330,8 +357,8 @@ export default function EmergencyActivePage() {
             alertId: alert.id
           })
           setAcceptedResponderCount(currentCount)
-          // Immediately reload receiver locations when acceptance is detected
-          loadReceiverLocations()
+          // Immediately reload receiver locations when acceptance is detected (safely)
+          safeLoadReceiverLocations()
         } else if (currentCount > 0) {
           // Even if count hasn't changed, periodically reload locations to get latest updates
           // This ensures we get location updates even if subscription is working
@@ -339,7 +366,7 @@ export default function EmergencyActivePage() {
             acceptedCount: currentCount,
             alertId: alert.id
           })
-          loadReceiverLocations()
+          safeLoadReceiverLocations()
         }
       } catch (pollErr) {
         // Silently handle polling errors - non-critical
@@ -374,8 +401,8 @@ export default function EmergencyActivePage() {
             // 304 responses have no body, so we need to handle it differently
             let acceptanceData: any
             if (acceptanceResponse.status === 304) {
-              // For 304, we'll reload all locations to get fresh data
-              loadReceiverLocations()
+              // For 304, we'll reload all locations to get fresh data (safely)
+              safeLoadReceiverLocations()
               return
             } else {
               acceptanceData = await acceptanceResponse.json()
@@ -425,14 +452,14 @@ export default function EmergencyActivePage() {
             if (process.env.NODE_ENV === 'development') {
               console.warn('[Sender] ⚠️ Failed to check acceptance via API, reloading all locations')
             }
-            loadReceiverLocations()
+            safeLoadReceiverLocations()
           }
         } catch (apiError) {
           // API call failed - fallback: reload all locations
           if (process.env.NODE_ENV === 'development') {
             console.warn('[Sender] ⚠️ Error checking acceptance via API:', apiError)
           }
-          loadReceiverLocations()
+          safeLoadReceiverLocations()
         }
       } else {
         console.log('[Sender] Ignoring own location update')
@@ -723,10 +750,11 @@ export default function EmergencyActivePage() {
   }
 
   const handleCapturePhoto = async () => {
-    if (!alert || !user || uploadingPhoto) return
+    if (!alert || !user || uploadingPhoto || uploadingPhotoRef.current) return
 
     try {
       console.log('[Photo] 📸 Button clicked - starting capture')
+      uploadingPhotoRef.current = true
       setUploadingPhoto(true)
       
       const file = await capturePhoto()
@@ -734,6 +762,7 @@ export default function EmergencyActivePage() {
       
       if (!file) {
         console.log('[Photo] ⚠️ No file selected')
+        uploadingPhotoRef.current = false
         setUploadingPhoto(false)
         return
       }
@@ -755,7 +784,17 @@ export default function EmergencyActivePage() {
       })
       window.alert(`Failed to capture photo: ${error?.message || 'Unknown error'}. Please try again.`)
     } finally {
+      uploadingPhotoRef.current = false
       setUploadingPhoto(false)
+      
+      // Reload locations if queued during upload
+      if (loadLocationsQueuedRef.current) {
+        console.log('[Photo] ✅ Upload complete - reloading queued locations')
+        loadLocationsQueuedRef.current = false
+        if (loadReceiverLocationsRef.current) {
+          loadReceiverLocationsRef.current()
+        }
+      }
     }
   }
 
