@@ -41,7 +41,9 @@ export default function AlertResponsePage() {
   const [senderName, setSenderName] = useState<string | null>(null)
   const [senderEmail, setSenderEmail] = useState<string | null>(null)
   const [hasAccepted, setHasAccepted] = useState(false)
+  const [hasDeclined, setHasDeclined] = useState(false)
   const [accepting, setAccepting] = useState(false)
+  const [declining, setDeclining] = useState(false)
   const [isClosing, setIsClosing] = useState(false) // Prevent multiple close attempts
   const [photos, setPhotos] = useState<EmergencyPhoto[]>([])
   const isClosingRef = useRef(false) // Ref version for use in callbacks
@@ -139,18 +141,28 @@ export default function AlertResponsePage() {
       // Hide any existing overlay when viewing alert page
       hideEmergencyAlert()
 
-      // Check if user has already accepted to respond
+      // Check if user has already accepted or declined to respond
       const { data: alertResponse, error: responseError } = await supabase
         .from('alert_responses')
-        .select('acknowledged_at')
+        .select('acknowledged_at, declined_at')
         .eq('alert_id', alertId)
         .eq('contact_user_id', user.id)
         .maybeSingle()
 
-      if (alertResponse && alertResponse.acknowledged_at) {
-        setHasAccepted(true)
+      if (alertResponse) {
+        if (alertResponse.acknowledged_at) {
+          setHasAccepted(true)
+          setHasDeclined(false)
+        } else if (alertResponse.declined_at) {
+          setHasDeclined(true)
+          setHasAccepted(false)
+        } else {
+          setHasAccepted(false)
+          setHasDeclined(false)
+        }
       } else {
         setHasAccepted(false)
+        setHasDeclined(false)
       }
       
       // Fetch sender information (with 30-second cache)
@@ -357,16 +369,58 @@ export default function AlertResponsePage() {
     }
   }, [alert, user])
 
+  const handleDeclineResponse = useCallback(async () => {
+    if (!user || !alert || declining || hasAccepted) return
+
+    const confirmed = window.confirm('Are you sure you want to decline this emergency alert? You will not be able to help respond.')
+    if (!confirmed) return
+
+    setDeclining(true)
+    const supabase = createClient()
+
+    try {
+      const { error } = await supabase
+        .from('alert_responses')
+        .update({ declined_at: new Date().toISOString() })
+        .eq('alert_id', alert.id)
+        .eq('contact_user_id', user.id)
+
+      if (error) {
+        console.error('[Alert] Failed to decline response:', error)
+        window.alert('Failed to decline response. Please try again.')
+        setDeclining(false)
+        return
+      }
+
+      setHasDeclined(true)
+      setDeclining(false)
+      console.log('[Alert] ✅ User declined to respond')
+      
+      // Navigate back to dashboard after declining
+      setTimeout(() => {
+        router.replace('/dashboard')
+      }, 1000)
+    } catch (error: any) {
+      console.error('[Alert] Error declining response:', error)
+      window.alert('Failed to decline response. Please try again.')
+      setDeclining(false)
+    }
+  }, [user, alert, declining, hasAccepted, router])
+
   const handleAcceptResponse = useCallback(async () => {
-    if (!user || !alert || accepting) return
+    if (!user || !alert || accepting || hasDeclined) return
 
     setAccepting(true)
       const supabase = createClient()
 
     try {
+      // Clear declined_at if it was set (user can change their mind)
       const { error } = await supabase
         .from('alert_responses')
-        .update({ acknowledged_at: new Date().toISOString() })
+        .update({ 
+          acknowledged_at: new Date().toISOString(),
+          declined_at: null // Clear declined status if accepting
+        })
         .eq('alert_id', alert.id)
         .eq('contact_user_id', user.id)
 

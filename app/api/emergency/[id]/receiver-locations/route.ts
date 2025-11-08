@@ -85,12 +85,13 @@ export async function GET(
       )
     }
 
-    // First, get all accepted responders
+    // First, get all accepted responders (who have acknowledged AND not declined)
     const { data: acceptedResponses, error: responsesError } = await admin
       .from('alert_responses')
       .select('contact_user_id')
       .eq('alert_id', alertId)
       .not('acknowledged_at', 'is', null)
+      .is('declined_at', null) // Exclude declined users
 
     if (responsesError) {
       console.error('[API] Error fetching accepted responders:', {

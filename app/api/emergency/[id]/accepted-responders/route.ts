@@ -120,11 +120,13 @@ export async function GET(
     }
 
     // Get accepted responders using admin client (bypasses RLS)
+    // Only include users who have acknowledged AND not declined
     const { data: acceptedResponses, error: responsesError } = await admin
       .from('alert_responses')
-      .select('contact_user_id, acknowledged_at')
+      .select('contact_user_id, acknowledged_at, declined_at')
       .eq('alert_id', alertId)
       .not('acknowledged_at', 'is', null)
+      .is('declined_at', null) // Exclude declined users
       .order('acknowledged_at', { ascending: false })
 
     if (responsesError) {

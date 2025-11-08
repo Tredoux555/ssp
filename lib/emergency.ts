@@ -291,6 +291,8 @@ export async function resolveEmergencyAlert(alertId: string, userId: string): Pr
 
 /**
  * Get active emergency alert for a user
+ * IMPORTANT: Only returns alerts CREATED BY this user (user_id = userId)
+ * This is different from alerts where the user is notified (contacts_notified)
  */
 export async function getActiveEmergency(userId: string): Promise<EmergencyAlert | null> {
   const supabase = createClient()
@@ -300,12 +302,13 @@ export async function getActiveEmergency(userId: string): Promise<EmergencyAlert
     throw new Error('Failed to fetch active emergency: Server configuration error')
   }
 
-  // Use .maybeSingle() instead of .single() to handle cases where no active emergency exists
-  // .maybeSingle() returns null when no rows found instead of throwing 406 error
+  // CRITICAL: Only get alerts CREATED BY this user (user_id = userId)
+  // This is different from alerts where user is in contacts_notified
+  // The sender's active alert is the one they created, not one they received
   const { data, error } = await supabase
     .from('emergency_alerts')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', userId) // CRITICAL: Only alerts created by this user
     .eq('status', 'active')
     .order('triggered_at', { ascending: false })
     .limit(1)
@@ -316,7 +319,7 @@ export async function getActiveEmergency(userId: string): Promise<EmergencyAlert
     throw new Error(`Failed to fetch active emergency: ${error.message}`)
   }
 
-  // Additional validation: Ensure the alert is actually valid
+  // Additional validation: Ensure the alert is actually valid and belongs to the user
   if (data) {
     // Verify the alert has required fields and belongs to the user
     if (!data.id || !data.user_id || data.user_id !== userId || data.status !== 'active') {
@@ -332,13 +335,13 @@ export async function getActiveEmergency(userId: string): Promise<EmergencyAlert
       return null
     }
     
-    console.log('[getActiveEmergency] ✅ Valid active emergency found:', {
+    console.log('[getActiveEmergency] ✅ Valid active emergency found (created by user):', {
       id: data.id,
       userId: data.user_id,
       status: data.status
     })
   } else {
-    console.log('[getActiveEmergency] ℹ️ No active emergency found for user:', userId)
+    console.log('[getActiveEmergency] ℹ️ No active emergency found for user (as creator):', userId)
   }
 
   return data as EmergencyAlert | null

@@ -46,6 +46,7 @@ export interface AlertResponse {
   contact_user_id: string
   received_at: string
   acknowledged_at?: string
+  declined_at?: string
   navigated_to_location: boolean
   arrived_at_location?: string
   created_at: string
