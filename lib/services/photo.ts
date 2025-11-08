@@ -196,22 +196,46 @@ export async function getAlertPhotos(alertId: string): Promise<EmergencyPhoto[]>
       .order('created_at', { ascending: false })
 
     if (error) {
+      // Properly serialize error to see all properties
+      const errorDetails = {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        status: (error as any).status,
+        statusCode: (error as any).statusCode,
+        // Try to get all enumerable properties
+        ...(error as any),
+      }
+      
       // Check if it's an RLS error or table doesn't exist
-      const isRLSError = error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('RLS')
-      const tableNotExists = error.code === '42P01' || error.message?.includes('does not exist')
+      const isRLSError = error.code === '42501' || 
+                         error.message?.includes('row-level security') || 
+                         error.message?.includes('RLS') ||
+                         errorDetails.status === 403
+      const tableNotExists = error.code === '42P01' || 
+                             error.message?.includes('does not exist') ||
+                             error.message?.includes('relation "emergency_photos" does not exist')
       
       if (tableNotExists) {
         console.warn('[Photo] ⚠️ emergency_photos table does not exist. Run migration: migrations/add-emergency-photos-table.sql')
       } else if (isRLSError) {
         console.warn('[Photo] ⚠️ RLS policy blocking photo fetch. This is expected if migration not run yet.')
       } else {
-        console.error('[Photo] Error fetching photos:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          alertId
-        })
+        // Log full error details using JSON.stringify to see all properties
+        try {
+          console.error('[Photo] Error fetching photos:', JSON.stringify(errorDetails, null, 2))
+        } catch {
+          // Fallback if JSON.stringify fails
+          console.error('[Photo] Error fetching photos:', {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            alertId,
+            rawError: String(error)
+          })
+        }
       }
       return []
     }
