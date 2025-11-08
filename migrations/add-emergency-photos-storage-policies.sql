@@ -41,7 +41,7 @@ CREATE POLICY "Receivers can view photos for their alerts"
     EXISTS (
       SELECT 1 FROM emergency_alerts ea
       WHERE ea.id::text = (storage.foldername(name))[1]
-      AND auth.uid() = ANY(ea.contacts_notified)
+      AND auth.uid()::text = ANY(ea.contacts_notified)
     )
   );
 
