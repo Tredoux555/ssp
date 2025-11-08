@@ -50,6 +50,44 @@ export default function EmergencyActivePage() {
   const loadReceiverLocationsRef = useRef<(() => void) | null>(null)
   const loadingAlertRef = useRef(false) // Prevent concurrent loadAlert calls
 
+  const loadAlert = useCallback(async () => {
+    if (!user || loadingAlertRef.current) {
+      if (!user) setLoading(false)
+      return
+    }
+    
+    loadingAlertRef.current = true
+    setLoading(true)
+
+    try {
+      const activeAlert = await getActiveEmergency(user.id)
+      if (activeAlert && activeAlert.id === alertId) {
+        setAlert(activeAlert)
+        if (activeAlert.location_lat && activeAlert.location_lng) {
+          setLocation({
+            lat: activeAlert.location_lat,
+            lng: activeAlert.location_lng,
+          })
+          // Only set address if it's different to prevent infinite loops
+          if (activeAlert.address && activeAlert.address !== address) {
+            setAddress(activeAlert.address)
+          }
+        }
+      } else {
+        // Alert doesn't exist or doesn't belong to user
+        console.warn('Alert not found or access denied')
+        router.push('/dashboard')
+      }
+    } catch (error: any) {
+      console.error('Failed to load alert:', error)
+      // Redirect to dashboard on error
+      router.push('/dashboard')
+    } finally {
+      setLoading(false)
+      loadingAlertRef.current = false
+    }
+  }, [user, alertId, address, router])
+
   useEffect(() => {
     if (!user) return
     loadAlert()
@@ -668,44 +706,6 @@ export default function EmergencyActivePage() {
       photoSubscription.unsubscribe()
     }
   }, [alert, user])
-
-  const loadAlert = useCallback(async () => {
-    if (!user || loadingAlertRef.current) {
-      if (!user) setLoading(false)
-      return
-    }
-    
-    loadingAlertRef.current = true
-    setLoading(true)
-
-    try {
-      const activeAlert = await getActiveEmergency(user.id)
-      if (activeAlert && activeAlert.id === alertId) {
-        setAlert(activeAlert)
-        if (activeAlert.location_lat && activeAlert.location_lng) {
-          setLocation({
-            lat: activeAlert.location_lat,
-            lng: activeAlert.location_lng,
-          })
-          // Only set address if it's different to prevent infinite loops
-          if (activeAlert.address && activeAlert.address !== address) {
-            setAddress(activeAlert.address)
-          }
-        }
-      } else {
-        // Alert doesn't exist or doesn't belong to user
-        console.warn('Alert not found or access denied')
-        router.push('/dashboard')
-      }
-    } catch (error: any) {
-      console.error('Failed to load alert:', error)
-      // Redirect to dashboard on error
-      router.push('/dashboard')
-    } finally {
-      setLoading(false)
-      loadingAlertRef.current = false
-    }
-  }, [user, alertId, address, router])
 
   const handleCancel = async () => {
     if (!user || !alert) return
