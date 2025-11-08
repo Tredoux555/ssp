@@ -750,17 +750,32 @@ export default function AlertResponsePage() {
         </div>
 
         {location && user && (
-          <div className="mb-6" style={{ height: '400px', width: '100%' }}>
-            <GoogleMapComponent
-              latitude={location.latitude}
-              longitude={location.longitude}
-              alertId={alert.id}
-              user_id={alert.user_id}
-              receiverLocation={receiverLocation}
-              receiverLocationHistory={receiverLocationHistory}
-              receiverUserId={user.id}
-              senderUserId={alert.user_id}
-            />
+          <div className="mb-6">
+            <div style={{ height: '400px', width: '100%' }}>
+              <GoogleMapComponent
+                latitude={location.latitude}
+                longitude={location.longitude}
+                alertId={alert.id}
+                user_id={alert.user_id}
+                receiverLocation={receiverLocation}
+                receiverLocationHistory={receiverLocationHistory}
+                receiverUserId={user.id}
+                senderUserId={alert.user_id}
+              />
+            </div>
+            {receiverLocation && location && (
+              <div className="mt-4">
+                <a
+                  href={`https://www.google.com/maps/dir/${receiverLocation.lat},${receiverLocation.lng}/${location.latitude},${location.longitude}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <MapPin className="w-4 h-4" />
+                  Open in Google Maps
+                </a>
+              </div>
+            )}
             {!receiverLocation && (
               <div className="mt-2 text-sm text-yellow-600 bg-yellow-50 p-2 rounded">
                 ⚠️ Your location is not available. Please enable location permissions to see directions.

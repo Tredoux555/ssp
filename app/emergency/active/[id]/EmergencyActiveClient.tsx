@@ -37,7 +37,6 @@ export default function EmergencyActivePage() {
   const [receiverLocations, setReceiverLocations] = useState<Map<string, LocationHistory[]>>(new Map())
   const [receiverUserIds, setReceiverUserIds] = useState<string[]>([])
   const [acceptedResponderCount, setAcceptedResponderCount] = useState(0)
-  const [rlsErrorShown, setRlsErrorShown] = useState(false) // Track if RLS error message has been shown
   const { permissionStatus, requestPermission } = useLocationPermission()
   const [showPermissionPrompt, setShowPermissionPrompt] = useState(false)
 
@@ -58,50 +57,33 @@ export default function EmergencyActivePage() {
     }
 
     // Query all receiver locations from location_history (only from accepted responders)
+    // Uses server-side API endpoints to bypass RLS
     const loadReceiverLocations = async () => {
       try {
-        const supabase = createClient()
-        if (!supabase) {
-          console.error('[Sender] Supabase client not available')
+        // Use API endpoint to get accepted responders (bypasses RLS)
+        const acceptedResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`)
+        
+        if (!acceptedResponse.ok) {
+          const errorData = await acceptedResponse.json().catch(() => ({}))
+          console.error('[Sender] Failed to fetch accepted responders:', {
+            status: acceptedResponse.status,
+            error: errorData.error || 'Unknown error',
+            alertId: alert.id
+          })
+          setReceiverLocations(new Map())
+          setReceiverUserIds([])
           return
         }
 
-        // First, get all accepted responders for this alert
-        const { data: acceptedResponses, error: responsesError } = await supabase
-          .from('alert_responses')
-          .select('contact_user_id')
-          .eq('alert_id', alert.id)
-          .not('acknowledged_at', 'is', null)
-
-        if (responsesError) {
-          // Check if it's an RLS error
-          if (responsesError.code === '42501' || responsesError.message?.includes('row-level security') || responsesError.message?.includes('RLS')) {
-            console.error('[Sender] ❌ RLS policy blocking alert_responses query:', {
-              error: responsesError,
-              code: responsesError.code,
-              message: responsesError.message,
-              hint: responsesError.hint,
-              alertId: alert.id,
-              userId: user.id,
-              note: 'Migration fix-alert-responses-sender-view.sql may need to be run in Supabase'
-            })
-          } else {
-            console.error('[Sender] Failed to load accepted responses:', {
-              error: responsesError,
-              code: responsesError.code,
-              message: responsesError.message,
-              alertId: alert.id,
-              userId: user.id
-            })
-          }
-          return
-        }
+        const acceptedData = await acceptedResponse.json()
+        const acceptedResponses = acceptedData.acceptedResponders || []
+        const acceptedCount = acceptedData.count || 0
 
         // Update accepted responder count
-        setAcceptedResponderCount(acceptedResponses?.length || 0)
+        setAcceptedResponderCount(acceptedCount)
 
         // If no accepted responders, clear the map
-        if (!acceptedResponses || acceptedResponses.length === 0) {
+        if (acceptedCount === 0) {
           // Only log in development to reduce noise in production
           if (process.env.NODE_ENV === 'development') {
             console.log('[Sender] No accepted responders yet')
@@ -112,122 +94,64 @@ export default function EmergencyActivePage() {
         }
 
         const acceptedUserIds = acceptedResponses.map((r: { contact_user_id: string }) => r.contact_user_id)
-        console.log('[Sender] Querying locations for accepted responders:', acceptedUserIds)
+        console.log('[Sender] ✅ Found accepted responders via API:', {
+          count: acceptedCount,
+          userIds: acceptedUserIds
+        })
 
-        // Get all locations for this alert where user_id != sender.user_id AND user has accepted
-        // Add retry logic for RLS errors
-        let allLocations: LocationHistory[] | null = null
-        let error: any = null
-        let retries = 2
-        let delay = 500
+        // Use API endpoint to get receiver locations (bypasses RLS)
+        const locationsResponse = await fetch(`/api/emergency/${alert.id}/receiver-locations`)
         
-        while (retries >= 0) {
-          const result = await supabase
-            .from('location_history')
-            .select('*')
-            .eq('alert_id', alert.id)
-            .neq('user_id', user.id)
-            .in('user_id', acceptedUserIds)
-            .order('created_at', { ascending: false })
-            .limit(50)
-          
-          if (result.error) {
-            error = result.error
-            // Check if it's an RLS error and we have retries left
-            if ((error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('RLS')) && retries > 0) {
-              console.warn(`[Sender] RLS error, retrying in ${delay}ms (${retries} retries left):`, {
-                code: error.code,
-                message: error.message
-              })
-              await new Promise(resolve => setTimeout(resolve, delay))
-              delay *= 2
-              retries--
-              continue
-            }
-            break
-          } else {
-            allLocations = result.data
-            error = null
-            break
-          }
-        }
-
-        if (error) {
-          // Check if it's an RLS error
-          if (error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('RLS')) {
-            console.error('[Sender] RLS policy blocked receiver location query after retries:', {
-              code: error.code,
-              message: error.message,
-              hint: error.hint,
-              alertId: alert.id,
-              userId: user.id,
-              acceptedUserIds: acceptedUserIds,
-              note: 'RLS migration may need to be run in Supabase'
-            })
-          } else {
-            console.error('[Sender] Failed to load receiver locations:', {
-              error: error,
-              code: error.code,
-              message: error.message,
-              details: error.details,
-              hint: error.hint,
-              alertId: alert.id,
-              userId: user.id,
-              acceptedUserIds: acceptedUserIds
-            })
-          }
-          // Don't return - try to continue with empty locations
+        if (!locationsResponse.ok) {
+          const errorData = await locationsResponse.json().catch(() => ({}))
+          console.error('[Sender] Failed to fetch receiver locations:', {
+            status: locationsResponse.status,
+            error: errorData.error || 'Unknown error',
+            alertId: alert.id
+          })
+          // Don't clear - keep accepted count, just no locations yet
           setReceiverLocations(new Map())
           setReceiverUserIds([])
           return
         }
 
+        const locationsData = await locationsResponse.json()
+        const groupedByUser = locationsData.groupedByUser || {}
+        const allLocations = locationsData.receiverLocations || []
+
         if (allLocations && allLocations.length > 0) {
-          console.log('[Sender] ✅ Loaded receiver locations:', {
+          console.log('[Sender] ✅ Loaded receiver locations via API:', {
             count: allLocations.length,
-            uniqueReceivers: new Set(allLocations.map(loc => loc.user_id)).size,
-            locations: allLocations.map(loc => ({
-              userId: loc.user_id,
-              lat: loc.latitude,
-              lng: loc.longitude,
-              timestamp: loc.created_at
-            }))
-          })
-          // Group locations by receiver user_id
-          const receiverMap = new Map<string, LocationHistory[]>()
-          const userIds = new Set<string>()
-
-          allLocations.forEach((loc: LocationHistory) => {
-            const receiverId = loc.user_id
-            userIds.add(receiverId)
-            
-            if (!receiverMap.has(receiverId)) {
-              receiverMap.set(receiverId, [])
-            }
-            receiverMap.get(receiverId)!.push(loc)
-          })
-
-          console.log('[Sender] ✅ Grouped receiver locations:', {
-            receiverCount: userIds.size,
-            receiverIds: Array.from(userIds),
-            locationsPerReceiver: Array.from(receiverMap.entries()).map(([id, locs]) => ({
+            uniqueReceivers: Object.keys(groupedByUser).length,
+            receiverIds: Object.keys(groupedByUser),
+            locationsPerReceiver: Object.entries(groupedByUser).map(([id, locs]: [string, any]) => ({
               receiverId: id,
               locationCount: locs.length
             }))
+          })
+          
+          // Convert groupedByUser object to Map
+          const receiverMap = new Map<string, LocationHistory[]>()
+          const userIds = new Set<string>()
+
+          Object.entries(groupedByUser).forEach(([receiverId, locations]: [string, any]) => {
+            userIds.add(receiverId)
+            receiverMap.set(receiverId, locations as LocationHistory[])
           })
 
           setReceiverLocations(receiverMap)
           setReceiverUserIds(Array.from(userIds))
         } else {
-          console.log('[Sender] ⚠️ No receiver locations found for accepted responders:', {
+          console.log('[Sender] ⚠️ No receiver locations found yet (accepted responders exist but no locations saved):', {
             acceptedUserIds: acceptedUserIds,
             alertId: alert.id
           })
+          // Keep accepted count but clear locations
           setReceiverLocations(new Map())
           setReceiverUserIds([])
         }
       } catch (error: any) {
-        console.error('[Sender] Error loading receiver locations:', {
+        console.error('[Sender] Error loading receiver locations via API:', {
           error: error,
           message: error?.message,
           stack: error?.stack,
@@ -275,26 +199,14 @@ export default function EmergencyActivePage() {
       .subscribe((status: any, err?: any) => {
         if (status === 'SUBSCRIBED') {
           console.log('[Sender] ✅ Successfully subscribed to alert_responses updates')
-          setRlsErrorShown(false) // Reset error state on successful subscription
         } else if (status === 'CHANNEL_ERROR' || status === 'CLOSED' || status === 'TIMED_OUT') {
-          // Check if this is likely an RLS error (subscription closes immediately without network error)
-          const isRLSError = status === 'CLOSED' && !err
-          
-          if (isRLSError && !rlsErrorShown) {
-            // Only show RLS error once to avoid spam
-            console.error('[Sender] ❌ Subscription blocked by RLS policy:', {
+          // Network or other error - log in development only
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[Sender] ⚠️ Subscription error:', {
               status,
-              note: 'CRITICAL: Run migration fix-alert-responses-sender-view-clean.sql in Supabase SQL Editor. File location: migrations/fix-alert-responses-sender-view-clean.sql. Using polling fallback for now.'
+              error: err,
+              note: 'Using polling fallback'
             })
-            setRlsErrorShown(true)
-          } else if (!isRLSError) {
-            // Network or other error - log in development only
-            if (process.env.NODE_ENV === 'development') {
-              console.warn('[Sender] ⚠️ Subscription error (network/other):', {
-                status,
-                error: err
-              })
-            }
           }
           // Immediately trigger polling fallback when subscription fails
           loadReceiverLocations()
@@ -315,54 +227,34 @@ export default function EmergencyActivePage() {
     
     // Add polling fallback to check for accepted responders (in case subscription fails)
     // Poll every 3 seconds to check if anyone has accepted (more frequent for better responsiveness)
+    // Uses API endpoint to bypass RLS
     const acceptancePollInterval = setInterval(async () => {
       if (!alert || !user) return
       
       try {
-        const supabase = createClient()
-        const { data: acceptedResponses, error: pollError } = await supabase
-          .from('alert_responses')
-          .select('contact_user_id')
-          .eq('alert_id', alert.id)
-          .not('acknowledged_at', 'is', null)
+        // Use API endpoint instead of direct query (bypasses RLS)
+        const response = await fetch(`/api/emergency/${alert.id}/accepted-responders`)
         
-        if (pollError) {
-          // Check if it's an RLS error
-          if (pollError.code === '42501' || pollError.message?.includes('row-level security') || pollError.message?.includes('RLS')) {
-            // Only show RLS error once to avoid spam
-            if (!rlsErrorShown) {
-              console.error('[Sender] ⚠️ RLS policy blocking alert_responses query:', {
-                code: pollError.code,
-                message: pollError.message,
-                hint: pollError.hint,
-                alertId: alert.id,
-                userId: user.id,
-                note: 'CRITICAL: Migration fix-alert-responses-sender-view.sql MUST be run in Supabase SQL Editor for location sharing to work'
-              })
-              setRlsErrorShown(true)
-            }
-            // Don't return - continue to check count even if query failed
-            // This allows the UI to show an error state if needed
-          } else {
-            // Non-RLS errors - only log in development
-            if (process.env.NODE_ENV === 'development') {
-              console.warn('[Sender] ⚠️ Polling query error (non-RLS):', {
-                code: pollError.code,
-                message: pollError.message,
-                alertId: alert.id
-              })
-            }
+        if (!response.ok) {
+          // Silently handle errors - API might be temporarily unavailable
+          if (process.env.NODE_ENV === 'development') {
+            const errorData = await response.json().catch(() => ({}))
+            console.warn('[Sender] ⚠️ Polling API error:', {
+              status: response.status,
+              error: errorData.error
+            })
           }
-          // Still try to reload locations even if query failed (might work on retry)
           return
         }
         
-        const currentCount = acceptedResponses?.length || 0
+        const data = await response.json()
+        const currentCount = data.count || 0
+        
         if (currentCount !== acceptedResponderCount) {
-          console.log('[Sender] ✅ Polling detected acceptance change:', {
+          console.log('[Sender] ✅ Polling detected acceptance change via API:', {
             oldCount: acceptedResponderCount,
             newCount: currentCount,
-            acceptedUserIds: acceptedResponses?.map((r: { contact_user_id: string }) => r.contact_user_id),
+            acceptedUserIds: data.acceptedResponders?.map((r: { contact_user_id: string }) => r.contact_user_id),
             alertId: alert.id
           })
           setAcceptedResponderCount(currentCount)
@@ -371,14 +263,17 @@ export default function EmergencyActivePage() {
         } else if (currentCount > 0) {
           // Even if count hasn't changed, periodically reload locations to get latest updates
           // This ensures we get location updates even if subscription is working
-          console.log('[Sender] 🔄 Periodic location refresh (polling fallback):', {
+          console.log('[Sender] 🔄 Periodic location refresh via API (polling fallback):', {
             acceptedCount: currentCount,
             alertId: alert.id
           })
           loadReceiverLocations()
         }
       } catch (pollErr) {
-        console.warn('[Sender] Polling error (non-critical):', pollErr)
+        // Silently handle polling errors - non-critical
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[Sender] Polling error (non-critical):', pollErr)
+        }
       }
     }, 3000) // Poll every 3 seconds for better responsiveness
 
@@ -392,71 +287,65 @@ export default function EmergencyActivePage() {
       
       // Only process receiver locations (not sender's own location)
       if (newLocation.user_id !== user.id) {
-        // Check if this user has accepted to respond
-        const supabase = createClient()
-        if (supabase) {
-          const { data: response, error: responseError } = await supabase
-            .from('alert_responses')
-            .select('acknowledged_at')
-            .eq('alert_id', alert.id)
-            .eq('contact_user_id', newLocation.user_id)
-            .maybeSingle()
+        // Use API to check if this user has accepted to respond (bypasses RLS)
+        try {
+          const acceptanceResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`)
           
-          if (responseError) {
-            // Check if it's an RLS error
-            if (responseError.code === '42501' || responseError.message?.includes('row-level security') || responseError.message?.includes('RLS')) {
-              console.error('[Sender] ❌ RLS error checking acceptance status in subscription:', {
-                code: responseError.code,
-                message: responseError.message,
-                receiverUserId: newLocation.user_id,
-                alertId: alert.id,
-                note: 'Migration fix-alert-responses-sender-view.sql must be run in Supabase'
+          if (acceptanceResponse.ok) {
+            const acceptanceData = await acceptanceResponse.json()
+            const acceptedUserIds = acceptanceData.acceptedResponders?.map((r: { contact_user_id: string }) => r.contact_user_id) || []
+            const hasAccepted = acceptedUserIds.includes(newLocation.user_id)
+            
+            if (hasAccepted) {
+              console.log('[Sender] ✅ Adding accepted responder location from subscription:', {
+                receiverId: newLocation.user_id,
+                location: { lat: newLocation.latitude, lng: newLocation.longitude },
+                timestamp: newLocation.created_at
+              })
+              setReceiverLocations((prev) => {
+                const updated = new Map(prev)
+                const receiverId = newLocation.user_id
+                
+                if (!updated.has(receiverId)) {
+                  updated.set(receiverId, [])
+                  setReceiverUserIds((prevIds) => {
+                    if (!prevIds.includes(receiverId)) {
+                      console.log('[Sender] ✅ Added new receiver to map:', receiverId)
+                      return [...prevIds, receiverId]
+                    }
+                    return prevIds
+                  })
+                }
+                
+                // Add new location to receiver's history
+                const receiverHistory = updated.get(receiverId) || []
+                // Check if this location already exists (avoid duplicates)
+                const exists = receiverHistory.some(loc => loc.id === newLocation.id)
+                if (!exists) {
+                  updated.set(receiverId, [...receiverHistory, newLocation])
+                }
+                
+                return updated
               })
             } else {
-              console.error('[Sender] Error checking acceptance status:', {
-                error: responseError,
-                receiverUserId: newLocation.user_id,
-                alertId: alert.id
-              })
-            }
-          }
-          
-          // Only add location if user has accepted
-          if (response && response.acknowledged_at) {
-            console.log('[Sender] ✅ Adding accepted responder location:', {
-              receiverId: newLocation.user_id,
-              location: { lat: newLocation.latitude, lng: newLocation.longitude },
-              timestamp: newLocation.created_at
-            })
-            setReceiverLocations((prev) => {
-              const updated = new Map(prev)
-              const receiverId = newLocation.user_id
-              
-              if (!updated.has(receiverId)) {
-                updated.set(receiverId, [])
-                setReceiverUserIds((prevIds) => {
-                  if (!prevIds.includes(receiverId)) {
-                    console.log('[Sender] ✅ Added new receiver to map:', receiverId)
-                    return [...prevIds, receiverId]
-                  }
-                  return prevIds
-                })
+              // User hasn't accepted yet - ignore this location update
+              if (process.env.NODE_ENV === 'development') {
+                console.log('[Sender] ⏭️ Ignoring location update from non-accepted user:', newLocation.user_id)
               }
-              
-              updated.get(receiverId)!.push(newLocation)
-              console.log('[Sender] ✅ Updated receiver locations map:', {
-                receiverId,
-                totalLocations: updated.get(receiverId)!.length
-              })
-              return updated
-            })
+            }
           } else {
-            console.log('[Sender] ⚠️ Ignoring location from non-accepted responder:', {
-              receiverId: newLocation.user_id,
-              hasResponse: !!response,
-              acknowledgedAt: response?.acknowledged_at
-            })
+            // API call failed - fallback: reload all locations
+            if (process.env.NODE_ENV === 'development') {
+              console.warn('[Sender] ⚠️ Failed to check acceptance via API, reloading all locations')
+            }
+            loadReceiverLocations()
           }
+        } catch (apiError) {
+          // API call failed - fallback: reload all locations
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[Sender] ⚠️ Error checking acceptance via API:', apiError)
+          }
+          loadReceiverLocations()
         }
       } else {
         console.log('[Sender] Ignoring own location update')
@@ -753,14 +642,6 @@ export default function EmergencyActivePage() {
               <p className="text-green-600 font-medium">
                 {acceptedResponderCount} responder{acceptedResponderCount !== 1 ? 's' : ''} accepted
               </p>
-            )}
-            {rlsErrorShown && (
-              <div className="mt-4 p-3 bg-yellow-600/80 rounded-lg border border-yellow-400">
-                <p className="text-sm font-semibold mb-1">⚠️ Location Sharing Unavailable</p>
-                <p className="text-xs opacity-90">
-                  Database permissions need to be configured. Please contact support or check the console for details.
-                </p>
-              </div>
             )}
             <p className="text-xl mb-1">Your alert has been sent</p>
             <p className="text-lg opacity-90 mb-4">
