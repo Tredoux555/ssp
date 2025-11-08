@@ -18,8 +18,14 @@ export async function GET(
     const { data: { session }, error: sessionError } = await supabase.auth.getSession()
     
     if (sessionError || !session?.user) {
+      console.error('[API] Authentication failed in accepted-responders:', {
+        hasSession: !!session,
+        hasUser: !!session?.user,
+        errorCode: sessionError?.code,
+        errorMessage: sessionError?.message
+      })
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: 'Unauthorized', details: sessionError?.message || 'No valid session' },
         { status: 401 }
       )
     }
@@ -37,14 +43,34 @@ export async function GET(
     // Use admin client to bypass RLS
     let admin
     try {
+      const hasServiceKey = !!process.env.SUPABASE_SERVICE_ROLE_KEY
+      const hasUrl = !!process.env.NEXT_PUBLIC_SUPABASE_URL
+      
+      console.log('[API] Admin client environment check:', {
+        hasServiceKey,
+        hasUrl,
+        alertId: alertId,
+        userId: session.user.id
+      })
+      
       admin = createAdminClient()
+      
+      console.log('[API] ✅ Admin client created successfully')
     } catch (adminError: any) {
-      console.error('[API] Failed to create admin client:', {
-        error: adminError?.message || adminError,
-        alertId: alertId
+      console.error('[API] ❌ Failed to create admin client:', {
+        error: adminError?.message || String(adminError),
+        stack: adminError?.stack,
+        alertId: alertId,
+        envCheck: {
+          hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+          hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL
+        }
       })
       return NextResponse.json(
-        { error: 'Internal server error', details: 'Failed to initialize database connection' },
+        { 
+          error: 'Configuration error',
+          details: 'Database admin access not configured. Please set SUPABASE_SERVICE_ROLE_KEY in environment variables.'
+        },
         { status: 500 }
       )
     }
@@ -57,17 +83,27 @@ export async function GET(
       .single()
 
     if (alertError || !alert) {
-      console.error('[API] Alert query error:', {
+      console.error('[API] ❌ Alert query error:', {
         error: alertError,
         code: alertError?.code,
         message: alertError?.message,
-        alertId: alertId
+        details: alertError?.details,
+        hint: alertError?.hint,
+        alertId: alertId,
+        userId: session.user.id
       })
       return NextResponse.json(
         { error: 'Alert not found', details: alertError?.message || 'Alert does not exist' },
         { status: 404 }
       )
     }
+    
+    console.log('[API] ✅ Alert found:', {
+      alertId: alertId,
+      alertOwnerId: alert.user_id,
+      requestingUserId: session.user.id,
+      isOwner: alert.user_id === session.user.id
+    })
 
     // Check if user owns the alert or is notified about it
     const userId = session.user.id
@@ -92,18 +128,25 @@ export async function GET(
       .order('acknowledged_at', { ascending: false })
 
     if (responsesError) {
-      console.error('[API] Error fetching accepted responders:', {
+      console.error('[API] ❌ Error fetching accepted responders:', {
         code: responsesError.code,
         message: responsesError.message,
         details: responsesError.details,
         hint: responsesError.hint,
-        alertId: alertId
+        alertId: alertId,
+        userId: session.user.id
       })
       return NextResponse.json(
         { error: 'Failed to fetch accepted responders', details: responsesError.message || 'Database query failed' },
         { status: 500 }
       )
     }
+
+    console.log('[API] ✅ Successfully fetched accepted responders:', {
+      alertId: alertId,
+      count: acceptedResponses?.length || 0,
+      responderIds: acceptedResponses?.map((r: any) => r.contact_user_id) || []
+    })
 
     return NextResponse.json(
       {

@@ -65,19 +65,37 @@ export default function EmergencyActivePage() {
         
         if (!acceptedResponse.ok) {
           let errorData: any = {}
+          let responseText = ''
           try {
-            const text = await acceptedResponse.text()
-            errorData = text ? JSON.parse(text) : {}
+            responseText = await acceptedResponse.text()
+            if (responseText) {
+              errorData = JSON.parse(responseText)
+            }
           } catch (parseError) {
             console.warn('[Sender] Failed to parse error response:', parseError)
           }
-          console.error('[Sender] Failed to fetch accepted responders:', {
+          console.error('[Sender] ❌ API endpoint failed:', {
+            url: `/api/emergency/${alert.id}/accepted-responders`,
             status: acceptedResponse.status,
             statusText: acceptedResponse.statusText,
             error: errorData.error || 'Unknown error',
             details: errorData.details || 'No details available',
-            alertId: alert.id
+            rawResponse: responseText.substring(0, 200), // First 200 chars
+            alertId: alert.id,
+            headers: {
+              contentType: acceptedResponse.headers.get('content-type'),
+            }
           })
+          
+          // Show user-friendly error if it's a known issue
+          if (acceptedResponse.status === 401) {
+            console.error('[Sender] ⚠️ Authentication error - user may need to log in again')
+          } else if (acceptedResponse.status === 404) {
+            console.error('[Sender] ⚠️ Alert not found - it may have been deleted')
+          } else if (acceptedResponse.status === 500) {
+            console.error('[Sender] ⚠️ Server error - check API logs in Vercel')
+          }
+          
           setReceiverLocations(new Map())
           setReceiverUserIds([])
           return
