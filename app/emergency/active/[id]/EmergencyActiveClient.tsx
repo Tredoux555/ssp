@@ -290,7 +290,9 @@ export default function EmergencyActivePage() {
     loadReceiverLocationsRef.current = loadReceiverLocations
     
     // Safe wrapper that checks upload state before calling
-    const safeLoadReceiverLocations = useCallback(() => {
+    // NOTE: Cannot use useCallback here - it's inside useEffect (violates Rules of Hooks)
+    // Just use a regular function instead
+    const safeLoadReceiverLocations = () => {
       if (uploadingPhotoRef.current) {
         console.log('[Photo] ⏸️ Deferring location reload - photo upload in progress')
         loadLocationsQueuedRef.current = true
@@ -299,7 +301,7 @@ export default function EmergencyActivePage() {
       if (loadReceiverLocationsRef.current) {
         loadReceiverLocationsRef.current()
       }
-    }, [])
+    }
 
     loadReceiverLocations()
 
