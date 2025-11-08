@@ -267,6 +267,14 @@ export default function EmergencyActivePage() {
         const groupedByUser = locationsData.groupedByUser || {}
         const allLocations = locationsData.receiverLocations || []
 
+        console.log('[Sender] 📍 Received location data from API:', {
+          totalLocations: allLocations.length,
+          groupedByUserKeys: Object.keys(groupedByUser),
+          groupedByUserSize: Object.keys(groupedByUser).length,
+          acceptedUserIds: acceptedUserIds,
+          locationsDataKeys: Object.keys(locationsData)
+        })
+
         if (allLocations && allLocations.length > 0) {
           console.log('[Sender] ✅ Loaded receiver locations via API:', {
             count: allLocations.length,
@@ -274,7 +282,12 @@ export default function EmergencyActivePage() {
             receiverIds: Object.keys(groupedByUser),
             locationsPerReceiver: Object.entries(groupedByUser).map(([id, locs]: [string, any]) => ({
               receiverId: id,
-              locationCount: locs.length
+              locationCount: locs.length,
+              latestLocation: locs[0] ? {
+                lat: locs[0].latitude,
+                lng: locs[0].longitude,
+                timestamp: locs[0].created_at
+              } : null
             }))
           })
           
@@ -285,14 +298,31 @@ export default function EmergencyActivePage() {
           Object.entries(groupedByUser).forEach(([receiverId, locations]: [string, any]) => {
             userIds.add(receiverId)
             receiverMap.set(receiverId, locations as LocationHistory[])
+            console.log('[Sender] 📍 Added receiver to map:', {
+              receiverId: receiverId,
+              locationCount: locations.length,
+              latestLocation: locations[0] ? {
+                lat: locations[0].latitude,
+                lng: locations[0].longitude
+              } : null
+            })
+          })
+
+          console.log('[Sender] 📍 Setting receiver locations state:', {
+            mapSize: receiverMap.size,
+            userIds: Array.from(userIds),
+            receiverIds: Array.from(receiverMap.keys())
           })
 
           setReceiverLocations(receiverMap)
           setReceiverUserIds(Array.from(userIds))
         } else {
-          console.log('[Sender] ⚠️ No receiver locations found yet (accepted responders exist but no locations saved):', {
+          console.warn('[Sender] ⚠️ No receiver locations found yet (accepted responders exist but no locations saved):', {
             acceptedUserIds: acceptedUserIds,
-            alertId: alert.id
+            alertId: alert.id,
+            acceptedCount: acceptedCount,
+            locationsResponseStatus: locationsResponse.status,
+            locationsData: locationsData
           })
           // Keep accepted count but clear locations
           setReceiverLocations(new Map())

@@ -445,8 +445,38 @@ export default function AlertResponsePage() {
           console.log('[Receiver] ✅ Saved initial location after acceptance:', {
             location: currentLoc,
             alertId: alert.id,
-            userId: user.id
+            userId: user.id,
+            timestamp: new Date().toISOString()
           })
+          
+          // Verify location was saved by querying it back
+          setTimeout(async () => {
+            try {
+              const supabase = createClient()
+              const { data: savedLocation } = await supabase
+                .from('location_history')
+                .select('id, latitude, longitude, alert_id, user_id, created_at')
+                .eq('alert_id', alert.id)
+                .eq('user_id', user.id)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle()
+              
+              if (savedLocation) {
+                console.log('[Receiver] ✅ Verified location saved in database:', {
+                  locationId: savedLocation.id,
+                  alertId: savedLocation.alert_id,
+                  userId: savedLocation.user_id,
+                  location: { lat: savedLocation.latitude, lng: savedLocation.longitude },
+                  timestamp: savedLocation.created_at
+                })
+              } else {
+                console.warn('[Receiver] ⚠️ Location not found in database after save - may be a timing issue')
+              }
+            } catch (verifyError) {
+              console.warn('[Receiver] ⚠️ Could not verify location save:', verifyError)
+            }
+          }, 1000)
           // Also update local state so map shows immediately
           setReceiverLocation(currentLoc)
           setReceiverLastUpdate(new Date())

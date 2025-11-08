@@ -261,13 +261,30 @@ export async function updateLocation(
       locationData.accuracy = location.accuracy
     }
 
-    const { error } = await supabase
+    const { data: insertedData, error } = await supabase
       .from('location_history')
       .insert(locationData)
+      .select()
 
     if (error) {
-      console.error('Failed to update location:', error)
+      console.error('[Location] ❌ Failed to update location:', {
+        error: error,
+        code: error.code,
+        message: error.message,
+        userId: userId,
+        alertId: alertId,
+        location: location,
+        locationData: locationData
+      })
       // Don't throw - location updates are non-critical
+    } else {
+      console.log('[Location] ✅ Location saved successfully:', {
+        locationId: insertedData?.[0]?.id,
+        userId: userId,
+        alertId: alertId,
+        location: { lat: location.lat, lng: location.lng, accuracy: location.accuracy },
+        timestamp: insertedData?.[0]?.created_at
+      })
     }
   } catch (error) {
     console.error('Failed to update location:', error)

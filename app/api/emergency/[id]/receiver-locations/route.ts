@@ -109,7 +109,14 @@ export async function GET(
 
     const acceptedUserIds = acceptedResponses?.map((r: { contact_user_id: string }) => r.contact_user_id) || []
 
+    console.log('[API] 🔍 Querying receiver locations:', {
+      alertId: alertId,
+      acceptedUserIds: acceptedUserIds,
+      acceptedCount: acceptedUserIds.length
+    })
+
     if (acceptedUserIds.length === 0) {
+      console.log('[API] ⚠️ No accepted responders found - returning empty locations')
       return NextResponse.json(
         {
           success: true,
@@ -121,6 +128,12 @@ export async function GET(
     }
 
     // Get all locations for accepted responders using admin client (bypasses RLS)
+    console.log('[API] 🔍 Querying location_history with:', {
+      alertId: alertId,
+      userIds: acceptedUserIds,
+      query: `alert_id = ${alertId} AND user_id IN (${acceptedUserIds.join(', ')})`
+    })
+    
     const { data: locations, error: locationsError } = await admin
       .from('location_history')
       .select('*')
@@ -128,6 +141,22 @@ export async function GET(
       .in('user_id', acceptedUserIds)
       .order('created_at', { ascending: false })
       .limit(100) // Limit to last 100 locations per alert
+
+    console.log('[API] 📍 Location query result:', {
+      locationCount: locations?.length || 0,
+      locations: locations?.map((loc: any) => ({
+        id: loc.id,
+        userId: loc.user_id,
+        alertId: loc.alert_id,
+        lat: loc.latitude,
+        lng: loc.longitude,
+        createdAt: loc.created_at
+      })) || [],
+      error: locationsError ? {
+        code: locationsError.code,
+        message: locationsError.message
+      } : null
+    })
 
     if (locationsError) {
       console.error('[API] Error fetching receiver locations:', {
@@ -151,6 +180,20 @@ export async function GET(
         groupedByUser[receiverId] = []
       }
       groupedByUser[receiverId].push(loc)
+    })
+
+    console.log('[API] ✅ Returning receiver locations:', {
+      totalLocations: locations?.length || 0,
+      uniqueReceivers: Object.keys(groupedByUser).length,
+      receivers: Object.keys(groupedByUser).map(receiverId => ({
+        receiverId,
+        locationCount: groupedByUser[receiverId].length,
+        latestLocation: groupedByUser[receiverId][0] ? {
+          lat: groupedByUser[receiverId][0].latitude,
+          lng: groupedByUser[receiverId][0].longitude,
+          timestamp: groupedByUser[receiverId][0].created_at
+        } : null
+      }))
     })
 
     return NextResponse.json(

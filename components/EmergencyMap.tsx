@@ -436,12 +436,34 @@ function EmergencyMapComponent({
       senderLocation
     })
     
+    const markers: any[] = []
+    
+    console.log('[Map] 🔍 Processing receiver locations:', {
+      totalReceivers: allReceiverLocations.size,
+      receiverIds: Array.from(allReceiverLocations.keys())
+    })
+
     Array.from(allReceiverLocations.entries()).forEach(([receiverId, locations]) => {
+      console.log('[Map] 🔍 Processing receiver:', {
+        receiverId,
+        locationCount: locations.length,
+        hasLocations: locations.length > 0
+      })
+
       if (locations.length === 0) {
         console.log('[Map] ⚠️ Skipping receiver with no locations:', receiverId)
         return
       }
       const latestLocation = locations[locations.length - 1]
+      
+      console.log('[Map] ✅ Creating marker for receiver:', {
+        receiverId,
+        latestLocation: {
+          lat: latestLocation.latitude,
+          lng: latestLocation.longitude,
+          timestamp: latestLocation.created_at
+        }
+      })
       
       console.log('[Map] ✅ Creating marker for receiver:', {
         receiverId,
@@ -485,11 +507,19 @@ function EmergencyMapComponent({
           },
         })),
       })
+      
+      markers.push({
+        receiverId,
+        currentMarker,
+        polyline,
+        historyMarkers
+      })
     })
     
     console.log('[Map] ✅ Computed multiple receiver markers:', {
       markerCount: markers.length,
-      receiverIds: markers.map(m => m.receiverId)
+      receiverIds: markers.map(m => m.receiverId),
+      totalMarkers: markers.reduce((sum, m) => sum + 1 + m.historyMarkers.length, 0)
     })
     
     return markers
