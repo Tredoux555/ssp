@@ -47,24 +47,69 @@ export async function createEmergencyAlert(
  * Get user's emergency contacts
  */
 export async function getEmergencyContacts(userId: string) {
-  const supabase = createClient()
+  try {
+    const supabase = createClient()
 
-  if (!supabase) {
-    console.error('Supabase client not available for fetching emergency contacts')
-    throw new Error('Failed to fetch emergency contacts: Server configuration error')
+    if (!supabase) {
+      console.warn('[Emergency] Supabase client not available for fetching emergency contacts')
+      // Return empty array instead of throwing - UI handles empty arrays gracefully
+      return []
+    }
+
+    const { data, error } = await supabase
+      .from('emergency_contacts')
+      .select('*')
+      .eq('user_id', userId)
+      .order('priority', { ascending: false })
+
+    if (error) {
+      // Handle network errors gracefully
+      const isNetworkError = error.message?.includes('Load failed') || 
+                            error.message?.includes('fetch') ||
+                            error.message?.includes('network') ||
+                            error.message?.includes('NetworkError')
+      
+      if (isNetworkError) {
+        console.warn('[Emergency] Network error fetching emergency contacts (returning empty array):', {
+          error: error.message,
+          code: error.code
+        })
+        // Return empty array for network errors - UI handles this gracefully
+        return []
+      }
+      
+      // For other errors, log and return empty array to prevent UI breakage
+      console.warn('[Emergency] Error fetching emergency contacts (returning empty array):', {
+        error: error.message,
+        code: error.code
+      })
+      return []
+    }
+
+    return data || []
+  } catch (error: any) {
+    // Handle any unexpected errors (including network errors from Supabase client)
+    const isNetworkError = error instanceof TypeError || 
+                          error.message?.includes('Load failed') ||
+                          error.message?.includes('fetch') ||
+                          error.message?.includes('network') ||
+                          error.name === 'NetworkError'
+    
+    if (isNetworkError) {
+      console.warn('[Emergency] Network error in getEmergencyContacts (returning empty array):', {
+        error: error.message || error,
+        type: error.constructor?.name || typeof error
+      })
+      return []
+    }
+    
+    // For other errors, log and return empty array
+    console.warn('[Emergency] Unexpected error in getEmergencyContacts (returning empty array):', {
+      error: error?.message || error,
+      type: error?.constructor?.name || typeof error
+    })
+    return []
   }
-
-  const { data, error } = await supabase
-    .from('emergency_contacts')
-    .select('*')
-    .eq('user_id', userId)
-    .order('priority', { ascending: false })
-
-  if (error) {
-    throw new Error(`Failed to fetch emergency contacts: ${error.message}`)
-  }
-
-  return data || []
 }
 
 /**
