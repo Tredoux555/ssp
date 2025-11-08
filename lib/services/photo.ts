@@ -257,24 +257,32 @@ export async function uploadEmergencyPhoto(
     const fileName = `${photoId}.jpg` // Always use .jpg extension
     const storagePath = `${alertId}/${fileName}`
 
-    // Upload to Supabase Storage with retry logic for network errors
+    // Upload to Supabase Storage with retry logic and timeout protection
     console.log('[Photo] 📤 Uploading to storage...', { storagePath, fileSize: compressedFile.size })
     
     let uploadData: any = null
     let uploadError: any = null
     const maxRetries = 3
+    const uploadTimeout = 30000 // 30 second timeout per attempt
     let retries = 0
     
     // Retry loop for network errors
     while (retries <= maxRetries) {
       try {
-        const result = await supabase.storage
+        // Wrap upload in timeout to prevent hanging indefinitely
+        const uploadPromise = supabase.storage
           .from('emergency-photos')
           .upload(storagePath, compressedFile, {
             contentType: 'image/jpeg',
             upsert: false,
             cacheControl: '3600',
           })
+        
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Upload timeout after 30 seconds')), uploadTimeout)
+        })
+        
+        const result = await Promise.race([uploadPromise, timeoutPromise]) as any
         
         uploadData = result.data
         uploadError = result.error
@@ -293,6 +301,7 @@ export async function uploadEmergencyPhoto(
         const isRetryableError = (
           (errorMessage.includes('Load failed') || 
            errorMessage.includes('Failed to fetch') ||
+           errorMessage.includes('timeout') ||
            errorName === 'NetworkError') &&
           !statusCode // No status code means network issue, not policy issue
         ) || (
@@ -326,14 +335,17 @@ export async function uploadEmergencyPhoto(
         const errorMessage = err?.message || ''
         const errorName = err?.name || ''
         
+        // Check if it's a timeout error
+        const isTimeoutError = errorMessage.includes('timeout') || errorMessage.includes('Timeout')
         const isRetryableError = errorMessage.includes('Load failed') || 
                                 errorMessage.includes('Failed to fetch') ||
+                                errorMessage.includes('timeout') ||
                                 errorName === 'NetworkError'
         
         if (isRetryableError && retries < maxRetries) {
           retries++
           const retryDelay = Math.min(1000 * Math.pow(2, retries - 1), 5000)
-          console.warn(`[Photo] ⚠️ Upload exception on attempt ${retries}, retrying in ${retryDelay}ms...`, err)
+          console.warn(`[Photo] ⚠️ Upload ${isTimeoutError ? 'timeout' : 'exception'} on attempt ${retries}, retrying in ${retryDelay}ms...`, err)
           await new Promise(resolve => setTimeout(resolve, retryDelay))
           continue
         }
