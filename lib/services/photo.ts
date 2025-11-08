@@ -257,16 +257,90 @@ export async function uploadEmergencyPhoto(
     const fileName = `${photoId}.jpg` // Always use .jpg extension
     const storagePath = `${alertId}/${fileName}`
 
-    // Upload to Supabase Storage
+    // Upload to Supabase Storage with retry logic for network errors
     console.log('[Photo] 📤 Uploading to storage...', { storagePath, fileSize: compressedFile.size })
     
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('emergency-photos')
-      .upload(storagePath, compressedFile, {
-        contentType: 'image/jpeg',
-        upsert: false,
-        cacheControl: '3600',
-      })
+    let uploadData: any = null
+    let uploadError: any = null
+    const maxRetries = 3
+    let retries = 0
+    
+    // Retry loop for network errors
+    while (retries <= maxRetries) {
+      try {
+        const result = await supabase.storage
+          .from('emergency-photos')
+          .upload(storagePath, compressedFile, {
+            contentType: 'image/jpeg',
+            upsert: false,
+            cacheControl: '3600',
+          })
+        
+        uploadData = result.data
+        uploadError = result.error
+        
+        // Success - exit retry loop
+        if (!uploadError) {
+          console.log(`[Photo] ✅ Upload successful on attempt ${retries + 1}`)
+          break
+        }
+        
+        // Check if it's a retryable error (network error, not permission/bucket errors)
+        const errorMessage = uploadError.message || ''
+        const errorName = (uploadError as any).name || ''
+        const statusCode = uploadError.statusCode || (uploadError as any).status
+        
+        const isRetryableError = (
+          (errorMessage.includes('Load failed') || 
+           errorMessage.includes('Failed to fetch') ||
+           errorName === 'NetworkError') &&
+          !statusCode // No status code means network issue, not policy issue
+        ) || (
+          statusCode >= 500 // Server errors (500+) are retryable
+        )
+        
+        // Don't retry permission errors or bucket not found
+        if (statusCode === 403 || statusCode === 404 || !isRetryableError) {
+          console.log(`[Photo] ⚠️ Non-retryable error (${statusCode || 'unknown'}), not retrying`)
+          break // Exit retry loop - not retryable
+        }
+        
+        // Retryable error - wait and retry
+        if (retries < maxRetries) {
+          retries++
+          const retryDelay = Math.min(1000 * Math.pow(2, retries - 1), 5000) // Exponential backoff: 1s, 2s, 4s
+          console.warn(`[Photo] ⚠️ Upload attempt ${retries} failed, retrying in ${retryDelay}ms...`, {
+            error: errorMessage || errorName,
+            attempt: retries,
+            maxRetries: maxRetries + 1
+          })
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          continue
+        } else {
+          // Max retries reached
+          console.error(`[Photo] ❌ Upload failed after ${maxRetries + 1} attempts`)
+          break
+        }
+      } catch (err: any) {
+        uploadError = err
+        const errorMessage = err?.message || ''
+        const errorName = err?.name || ''
+        
+        const isRetryableError = errorMessage.includes('Load failed') || 
+                                errorMessage.includes('Failed to fetch') ||
+                                errorName === 'NetworkError'
+        
+        if (isRetryableError && retries < maxRetries) {
+          retries++
+          const retryDelay = Math.min(1000 * Math.pow(2, retries - 1), 5000)
+          console.warn(`[Photo] ⚠️ Upload exception on attempt ${retries}, retrying in ${retryDelay}ms...`, err)
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          continue
+        }
+        // Not retryable or max retries reached
+        break
+      }
+    }
 
     if (uploadError) {
       console.error('[Photo] ❌ Storage error:', {
