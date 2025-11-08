@@ -129,6 +129,13 @@ function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality?: n
             reject(new Error('Could not get canvas context'))
             return
           }
+          
+          // Type guard: ensure ctx is CanvasRenderingContext2D, not ImageBitmapRenderingContext
+          if (!(ctx instanceof CanvasRenderingContext2D)) {
+            clearTimeout(timeout)
+            reject(new Error('Invalid canvas context type'))
+            return
+          }
 
           // Only fix orientation if needed (skip if orientation is 1 - no rotation needed)
           if (needsRotation) {
