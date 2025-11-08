@@ -38,6 +38,24 @@ function EmergencyMapComponent({
 }: EmergencyMapProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ''
   
+  // Log prop changes for debugging
+  useEffect(() => {
+    console.log('[Map] 📥 Receiver locations prop received:', {
+      isDefined: !!receiverLocations,
+      size: receiverLocations?.size || 0,
+      receiverIds: receiverLocations ? Array.from(receiverLocations.keys()) : [],
+      locationsPerReceiver: receiverLocations ? Array.from(receiverLocations.entries()).map(([id, locs]) => ({
+        receiverId: id,
+        locationCount: locs.length,
+        latestLocation: locs.length > 0 ? {
+          lat: locs[locs.length - 1].latitude,
+          lng: locs[locs.length - 1].longitude,
+          id: locs[locs.length - 1].id
+        } : null
+      })) : []
+    })
+  }, [receiverLocations])
+  
   // Use useLoadScript hook for proper Google Maps loading
   const { isLoaded, loadError } = useLoadScript({
     googleMapsApiKey: apiKey,
@@ -58,6 +76,26 @@ function EmergencyMapComponent({
   const [receiverLocHistory, setReceiverLocHistory] = useState<LocationHistory[]>(receiverLocationHistory || [])
   const [allReceiverLocations, setAllReceiverLocations] = useState<Map<string, LocationHistory[]>>(receiverLocations || new Map())
   const [allReceiverUserIds, setAllReceiverUserIds] = useState<string[]>(receiverUserIds || [])
+  
+  // Log state updates for debugging
+  useEffect(() => {
+    console.log('[Map] 📊 allReceiverLocations state updated:', {
+      size: allReceiverLocations.size,
+      receiverIds: Array.from(allReceiverLocations.keys()),
+      locationsPerReceiver: Array.from(allReceiverLocations.entries()).map(([id, locs]) => ({
+        receiverId: id,
+        locationCount: locs.length,
+        locationIds: locs.map(loc => loc.id),
+        latestLocation: locs.length > 0 ? {
+          lat: locs[locs.length - 1].latitude,
+          lng: locs[locs.length - 1].longitude,
+          id: locs[locs.length - 1].id,
+          timestamp: locs[locs.length - 1].created_at
+        } : null
+      }))
+    })
+  }, [allReceiverLocations])
+  
   const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null)
   const [isLiveTracking, setIsLiveTracking] = useState(false)
   const [directionsResult, setDirectionsResult] = useState<google.maps.DirectionsResult | null>(null)
@@ -131,22 +169,62 @@ function EmergencyMapComponent({
     if (receiverLocations) {
       // Compare Maps by size and content to prevent unnecessary updates
       setAllReceiverLocations((prev) => {
+        // If sizes differ, definitely update
         if (prev.size !== receiverLocations.size) {
           console.log('[Map] ✅ Receiver locations updated from props (size changed):', {
             receiverCount: receiverLocations.size,
-            receiverIds: Array.from(receiverLocations.keys())
+            receiverIds: Array.from(receiverLocations.keys()),
+            prevSize: prev.size,
+            newSize: receiverLocations.size
           })
           return new Map(receiverLocations)
         }
-        // Check if any receiver has new locations
+        
+        // Check if any receiver has new locations by comparing location IDs
         let hasChanges = false
         for (const [receiverId, locations] of receiverLocations.entries()) {
           const prevLocations = prev.get(receiverId)
-          if (!prevLocations || prevLocations.length !== locations.length) {
+          
+          // If receiver is new, definitely update
+          if (!prevLocations) {
             hasChanges = true
+            console.log('[Map] ✅ New receiver detected:', receiverId)
             break
           }
+          
+          // If lengths differ, definitely update
+          if (prevLocations.length !== locations.length) {
+            hasChanges = true
+            console.log('[Map] ✅ Receiver location count changed:', {
+              receiverId,
+              prevCount: prevLocations.length,
+              newCount: locations.length
+            })
+            break
+          }
+          
+          // Compare location IDs to detect new locations (even if count is same)
+          // Get latest location IDs from both arrays
+          const prevLocationIds = new Set(prevLocations.map(loc => loc.id))
+          const newLocationIds = new Set(locations.map(loc => loc.id))
+          
+          // Check if there are any new location IDs
+          for (const newId of newLocationIds) {
+            if (!prevLocationIds.has(newId)) {
+              hasChanges = true
+              console.log('[Map] ✅ New location detected for receiver:', {
+                receiverId,
+                newLocationId: newId,
+                prevLocationIds: Array.from(prevLocationIds),
+                newLocationIds: Array.from(newLocationIds)
+              })
+              break
+            }
+          }
+          
+          if (hasChanges) break
         }
+        
         if (hasChanges) {
           console.log('[Map] ✅ Receiver locations updated from props (content changed):', {
             receiverCount: receiverLocations.size,
@@ -154,7 +232,9 @@ function EmergencyMapComponent({
           })
           return new Map(receiverLocations)
         }
-        return prev // No changes, return previous to prevent re-render
+        
+        // No changes detected
+        return prev // Return previous to prevent re-render
       })
     } else {
       // Clear if prop is null/undefined

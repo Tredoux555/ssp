@@ -272,7 +272,18 @@ export default function EmergencyActivePage() {
           groupedByUserKeys: Object.keys(groupedByUser),
           groupedByUserSize: Object.keys(groupedByUser).length,
           acceptedUserIds: acceptedUserIds,
-          locationsDataKeys: Object.keys(locationsData)
+          locationsDataKeys: Object.keys(locationsData),
+          groupedByUserStructure: Object.entries(groupedByUser).map(([id, locs]: [string, any]) => ({
+            receiverId: id,
+            locationCount: Array.isArray(locs) ? locs.length : 0,
+            isArray: Array.isArray(locs),
+            latestLocation: Array.isArray(locs) && locs.length > 0 ? {
+              lat: locs[0].latitude,
+              lng: locs[0].longitude,
+              id: locs[0].id,
+              timestamp: locs[0].created_at
+            } : null
+          }))
         })
 
         if (allLocations && allLocations.length > 0) {
@@ -282,8 +293,8 @@ export default function EmergencyActivePage() {
             receiverIds: Object.keys(groupedByUser),
             locationsPerReceiver: Object.entries(groupedByUser).map(([id, locs]: [string, any]) => ({
               receiverId: id,
-              locationCount: locs.length,
-              latestLocation: locs[0] ? {
+              locationCount: Array.isArray(locs) ? locs.length : 0,
+              latestLocation: Array.isArray(locs) && locs.length > 0 ? {
                 lat: locs[0].latitude,
                 lng: locs[0].longitude,
                 timestamp: locs[0].created_at
@@ -296,14 +307,23 @@ export default function EmergencyActivePage() {
           const userIds = new Set<string>()
 
           Object.entries(groupedByUser).forEach(([receiverId, locations]: [string, any]) => {
+            // Ensure locations is an array
+            const locationArray = Array.isArray(locations) ? locations : []
+            
+            // Sort by created_at descending (newest first) to ensure latest is at the end
+            const sortedLocations = [...locationArray].sort((a: LocationHistory, b: LocationHistory) => {
+              return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            })
+            
             userIds.add(receiverId)
-            receiverMap.set(receiverId, locations as LocationHistory[])
+            receiverMap.set(receiverId, sortedLocations as LocationHistory[])
             console.log('[Sender] 📍 Added receiver to map:', {
               receiverId: receiverId,
-              locationCount: locations.length,
-              latestLocation: locations[0] ? {
-                lat: locations[0].latitude,
-                lng: locations[0].longitude
+              locationCount: sortedLocations.length,
+              latestLocation: sortedLocations.length > 0 ? {
+                lat: sortedLocations[sortedLocations.length - 1].latitude,
+                lng: sortedLocations[sortedLocations.length - 1].longitude,
+                id: sortedLocations[sortedLocations.length - 1].id
               } : null
             })
           })
@@ -311,7 +331,8 @@ export default function EmergencyActivePage() {
           console.log('[Sender] 📍 Setting receiver locations state:', {
             mapSize: receiverMap.size,
             userIds: Array.from(userIds),
-            receiverIds: Array.from(receiverMap.keys())
+            receiverIds: Array.from(receiverMap.keys()),
+            totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0)
           })
 
           setReceiverLocations(receiverMap)
@@ -525,9 +546,11 @@ export default function EmergencyActivePage() {
               console.log('[Sender] ✅ Adding accepted responder location from subscription:', {
                 receiverId: newLocation.user_id,
                 location: { lat: newLocation.latitude, lng: newLocation.longitude },
-                timestamp: newLocation.created_at
+                timestamp: newLocation.created_at,
+                locationId: newLocation.id
               })
               setReceiverLocations((prev) => {
+                // Create a new Map instance to ensure React detects the change
                 const updated = new Map(prev)
                 const receiverId = newLocation.user_id
                 
@@ -542,12 +565,33 @@ export default function EmergencyActivePage() {
                   })
                 }
                 
-                // Add new location to receiver's history
+                // Get existing locations and add new one
                 const receiverHistory = updated.get(receiverId) || []
+                
                 // Check if this location already exists (avoid duplicates)
                 const exists = receiverHistory.some(loc => loc.id === newLocation.id)
                 if (!exists) {
-                  updated.set(receiverId, [...receiverHistory, newLocation])
+                  // Add new location and sort by created_at (ascending - oldest first, newest last)
+                  const updatedHistory = [...receiverHistory, newLocation].sort((a, b) => {
+                    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                  })
+                  updated.set(receiverId, updatedHistory)
+                  
+                  console.log('[Sender] ✅ Updated receiver locations:', {
+                    receiverId,
+                    previousCount: receiverHistory.length,
+                    newCount: updatedHistory.length,
+                    latestLocation: updatedHistory.length > 0 ? {
+                      lat: updatedHistory[updatedHistory.length - 1].latitude,
+                      lng: updatedHistory[updatedHistory.length - 1].longitude,
+                      id: updatedHistory[updatedHistory.length - 1].id
+                    } : null
+                  })
+                } else {
+                  console.log('[Sender] ⚠️ Location already exists, skipping:', {
+                    receiverId,
+                    locationId: newLocation.id
+                  })
                 }
                 
                 return updated
@@ -851,40 +895,75 @@ export default function EmergencyActivePage() {
   }
 
   const handleCapturePhoto = async () => {
-    if (!alert || !user || uploadingPhoto || uploadingPhotoRef.current) return
+    console.log('[Photo] 🎯 handleCapturePhoto called', {
+      hasAlert: !!alert,
+      hasUser: !!user,
+      alertId: alert?.id,
+      userId: user?.id,
+      uploadingPhoto,
+      uploadingPhotoRefCurrent: uploadingPhotoRef.current
+    })
+    
+    if (!alert || !user || uploadingPhoto || uploadingPhotoRef.current) {
+      console.warn('[Photo] ⚠️ Cannot capture photo - conditions not met:', {
+        hasAlert: !!alert,
+        hasUser: !!user,
+        uploadingPhoto,
+        uploadingPhotoRefCurrent: uploadingPhotoRef.current
+      })
+      return
+    }
 
     try {
       console.log('[Photo] 📸 Button clicked - starting capture')
       uploadingPhotoRef.current = true
       setUploadingPhoto(true)
       
+      console.log('[Photo] 🔄 Calling capturePhoto()...')
       const file = await capturePhoto()
-      console.log('[Photo] 📁 File captured:', file ? { name: file.name, size: file.size, type: file.type } : 'null')
+      console.log('[Photo] 📁 File captured result:', file ? { 
+        name: file.name, 
+        size: file.size, 
+        type: file.type 
+      } : 'null')
       
       if (!file) {
-        console.log('[Photo] ⚠️ No file selected')
+        console.log('[Photo] ⚠️ No file selected - user cancelled or error occurred')
         uploadingPhotoRef.current = false
         setUploadingPhoto(false)
         return
       }
 
-      console.log('[Photo] 🚀 Starting upload process...')
+      console.log('[Photo] 🚀 Starting upload process...', {
+        alertId: alert.id,
+        userId: user.id,
+        fileName: file.name,
+        fileSize: file.size
+      })
       const photo = await uploadEmergencyPhoto(alert.id, user.id, file)
       
       if (photo) {
-        console.log('[Photo] ✅ Photo uploaded successfully:', photo.id)
+        console.log('[Photo] ✅ Photo uploaded successfully:', {
+          photoId: photo.id,
+          alertId: alert.id,
+          storagePath: photo.storage_path
+        })
         // Photo will be added via Realtime subscription
       } else {
-        console.error('[Photo] ❌ Upload returned null')
+        console.error('[Photo] ❌ Upload returned null - check console for error details above')
         // Error message already shown by uploadEmergencyPhoto
       }
     } catch (error: any) {
       console.error('[Photo] ❌ Error capturing photo:', {
         error: error?.message || error,
-        stack: error?.stack
+        stack: error?.stack,
+        name: error?.name,
+        alertId: alert?.id,
+        userId: user?.id
       })
       window.alert(`Failed to capture photo: ${error?.message || 'Unknown error'}. Please try again.`)
     } finally {
+      console.log('[Photo] 🏁 handleCapturePhoto finally block - cleaning up')
       uploadingPhotoRef.current = false
       setUploadingPhoto(false)
       

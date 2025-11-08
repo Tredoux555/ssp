@@ -194,133 +194,171 @@ function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality?: n
  */
 export async function capturePhoto(): Promise<File | null> {
   return new Promise((resolve) => {
-    // Check if we're on iOS
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-    
-    // Create input element
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'image/*' // Use wildcard for better iOS compatibility
-    input.style.display = 'none'
-    input.style.position = 'absolute'
-    input.style.opacity = '0'
-    input.style.width = '0'
-    input.style.height = '0'
-    
-    // iOS-specific: Use 'camera' instead of 'environment' for better compatibility
-    // Also, iOS Safari may ignore capture attribute, but we set it anyway
-    if (isIOS) {
-      input.setAttribute('capture', 'camera')
-    } else {
-      input.setAttribute('capture', 'environment') // Prefer rear camera on Android
-    }
-    
-    // Add to DOM temporarily (required for iOS Safari)
-    document.body.appendChild(input)
-    
-    // Cleanup function
-    const cleanup = () => {
-      if (input.parentNode) {
-        input.parentNode.removeChild(input)
-      }
-    }
-    
-    // Handle cancellation (iOS Safari) - use blur as fallback since oncancel isn't always fired
-    let cancelled = false
+    let input: HTMLInputElement | null = null
     let cancelTimeout: NodeJS.Timeout | null = null
+    let cancelled = false
     
-    // Set up change handler
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      
-      // Clear cancellation timeout since we got a file
+    // Cleanup function - ensures cleanup happens even on errors
+    const cleanup = () => {
       if (cancelTimeout) {
         clearTimeout(cancelTimeout)
         cancelTimeout = null
       }
-      
-      cancelled = true
-      cleanup()
-      
-      if (!file) {
-        console.log('[Photo] ⚠️ No file selected or user cancelled')
-        resolve(null)
-        return
+      if (input && input.parentNode) {
+        try {
+          input.parentNode.removeChild(input)
+        } catch (cleanupError) {
+          console.warn('[Photo] ⚠️ Error during cleanup:', cleanupError)
+        }
       }
-
-      console.log('[Photo] File selected:', {
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        isIOS
-      })
-
-      // Check file size
-      if (file.size > MAX_FILE_SIZE) {
-        alert(`Image is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB.`)
-        resolve(null)
-        return
-      }
-
-      resolve(file)
+      input = null
     }
     
-    // Set up cancellation timeout
-    cancelTimeout = setTimeout(() => {
+    // Error handler that always cleans up
+    const handleError = (errorMessage: string, userMessage?: string) => {
       if (!cancelled) {
         cancelled = true
+        console.error(`[Photo] ❌ ${errorMessage}`)
         cleanup()
-        console.log('[Photo] ⚠️ Photo selection timeout')
+        if (userMessage) {
+          alert(userMessage)
+        }
         resolve(null)
       }
-    }, 60000) // 60 second timeout - if no file selected, assume cancelled
+    }
     
-    input.onblur = () => {
-      // On iOS, blur might fire before change, so we wait a bit
-      setTimeout(() => {
-        if (!cancelled && (!input.files || input.files.length === 0)) {
-          cancelled = true
+    try {
+      // Check if we're on iOS
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+      
+      console.log('[Photo] 📸 Starting photo capture, iOS detected:', isIOS)
+      
+      // Create input element
+      input = document.createElement('input')
+      input.type = 'file'
+      input.accept = 'image/*' // Use wildcard for better iOS compatibility
+      input.style.display = 'none'
+      input.style.position = 'absolute'
+      input.style.opacity = '0'
+      input.style.width = '0'
+      input.style.height = '0'
+      
+      // iOS-specific: Use 'camera' instead of 'environment' for better compatibility
+      // Also, iOS Safari may ignore capture attribute, but we set it anyway
+      if (isIOS) {
+        input.setAttribute('capture', 'camera')
+      } else {
+        input.setAttribute('capture', 'environment') // Prefer rear camera on Android
+      }
+      
+      // Add to DOM temporarily (required for iOS Safari)
+      try {
+        document.body.appendChild(input)
+        console.log('[Photo] ✅ File input added to DOM')
+      } catch (domError: any) {
+        handleError(`Failed to add input to DOM: ${domError?.message || domError}`, 
+          'Failed to initialize camera. Please refresh the page and try again.')
+        return
+      }
+      
+      // Set up change handler
+      input.onchange = async (e) => {
+        try {
+          const file = (e.target as HTMLInputElement).files?.[0]
+          
+          // Clear cancellation timeout since we got a file
           if (cancelTimeout) {
             clearTimeout(cancelTimeout)
             cancelTimeout = null
           }
+          
+          cancelled = true
           cleanup()
-          console.log('[Photo] ⚠️ User cancelled photo selection (blur)')
-          resolve(null)
+          
+          if (!file) {
+            console.log('[Photo] ⚠️ No file selected or user cancelled')
+            resolve(null)
+            return
+          }
+
+          console.log('[Photo] ✅ File selected:', {
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            isIOS
+          })
+
+          // Check file size
+          if (file.size > MAX_FILE_SIZE) {
+            const sizeMB = (file.size / 1024 / 1024).toFixed(1)
+            const maxMB = (MAX_FILE_SIZE / 1024 / 1024).toFixed(0)
+            alert(`Image is too large (${sizeMB}MB). Maximum size is ${maxMB}MB. Please choose a smaller image.`)
+            resolve(null)
+            return
+          }
+
+          // Validate file type
+          if (!file.type.startsWith('image/')) {
+            console.error('[Photo] ❌ Invalid file type:', file.type)
+            alert('Please select an image file (JPEG, PNG, etc.)')
+            resolve(null)
+            return
+          }
+
+          resolve(file)
+        } catch (changeError: any) {
+          handleError(`Error in file change handler: ${changeError?.message || changeError}`, 
+            'Error processing selected file. Please try again.')
+        }
+      }
+      
+      // Set up cancellation timeout
+      cancelTimeout = setTimeout(() => {
+        if (!cancelled) {
+          console.warn('[Photo] ⚠️ Photo selection timeout after 60 seconds')
+          handleError('Photo selection timeout', 
+            'Photo selection timed out. Please try again.')
+        }
+      }, 60000) // 60 second timeout - if no file selected, assume cancelled
+      
+      input.onblur = () => {
+        // On iOS, blur might fire before change, so we wait a bit
+        setTimeout(() => {
+          if (!cancelled && input && (!input.files || input.files.length === 0)) {
+            console.log('[Photo] ⚠️ User cancelled photo selection (blur event)')
+            handleError('User cancelled photo selection')
+          }
+        }, 100)
+      }
+      
+      // Error handler
+      input.onerror = (error) => {
+        handleError(`File input error: ${error}`, 
+          'Failed to access camera. Please check camera permissions in your browser settings and try again.')
+      }
+      
+      // Use setTimeout to ensure input is in DOM before clicking (iOS Safari requirement)
+      setTimeout(() => {
+        try {
+          if (!input) {
+            handleError('Input element is null', 
+              'Failed to initialize camera. Please refresh the page and try again.')
+            return
+          }
+          
+          console.log('[Photo] 🖱️ Clicking file input to trigger camera...')
+          input.click()
+          console.log('[Photo] ✅ File input clicked successfully')
+        } catch (clickError: any) {
+          handleError(`Failed to trigger file input: ${clickError?.message || clickError}`, 
+            'Failed to open camera. Please ensure camera permissions are granted in your browser settings.')
         }
       }, 100)
+    } catch (error: any) {
+      handleError(`Unexpected error in capturePhoto: ${error?.message || error}`, 
+        'An unexpected error occurred while trying to access the camera. Please try again.')
     }
-    
-    // Error handler
-    input.onerror = (error) => {
-      cancelled = true
-      if (cancelTimeout) {
-        clearTimeout(cancelTimeout)
-        cancelTimeout = null
-      }
-      cleanup()
-      console.error('[Photo] ❌ File input error:', error)
-      alert('Failed to access camera. Please check permissions and try again.')
-      resolve(null)
-    }
-    
-    // Use setTimeout to ensure input is in DOM before clicking (iOS Safari requirement)
-    setTimeout(() => {
-      try {
-        input.click()
-      } catch (error: any) {
-        cancelled = true
-        if (cancelTimeout) {
-          clearTimeout(cancelTimeout)
-          cancelTimeout = null
-        }
-        cleanup()
-        console.error('[Photo] ❌ Failed to trigger file input:', error)
-        alert('Failed to open camera. Please ensure camera permissions are granted.')
-        resolve(null)
-      }
-    }, 100)
   })
 }
 
@@ -332,16 +370,25 @@ export async function uploadEmergencyPhoto(
   userId: string,
   file: File
 ): Promise<EmergencyPhoto | null> {
+  console.log('[Photo] 🚀 uploadEmergencyPhoto called:', { 
+    fileName: file.name, 
+    fileSize: file.size,
+    fileType: file.type,
+    alertId,
+    userId
+  })
+  
   try {
     const supabase = createClient()
 
     if (!supabase) {
-      console.error('[Photo] ❌ Supabase client not available')
-      window.alert('Unable to upload photo: Server configuration error')
+      const errorMsg = 'Supabase client not available'
+      console.error(`[Photo] ❌ ${errorMsg}`)
+      window.alert('Unable to upload photo: Server configuration error. Please refresh the page and try again.')
       return null
     }
 
-    console.log('[Photo] 📸 Starting upload:', { 
+    console.log('[Photo] 📸 Starting upload process:', { 
       fileName: file.name, 
       fileSize: file.size,
       fileType: file.type,
@@ -354,20 +401,30 @@ export async function uploadEmergencyPhoto(
     try {
       console.log('[Photo] 🖼️ Starting image compression...')
       compressedBlob = await compressImage(file)
-      console.log('[Photo] ✅ Compressed:', { 
+      console.log('[Photo] ✅ Compression successful:', { 
         original: file.size, 
         compressed: compressedBlob.size,
         reduction: `${Math.round((1 - compressedBlob.size / file.size) * 100)}%`
       })
     } catch (compressError: any) {
-      console.error('[Photo] ❌ Compression failed:', {
+      const errorDetails = {
         error: compressError?.message || compressError,
         fileName: file.name,
         fileSize: file.size,
-        fileType: file.type
-      })
-      const errorMsg = compressError.message || 'Failed to process image'
-      window.alert(`${errorMsg}. Please try a smaller photo or different format.`)
+        fileType: file.type,
+        stack: compressError?.stack
+      }
+      console.error('[Photo] ❌ Compression failed:', errorDetails)
+      const errorMsg = compressError?.message || 'Failed to process image'
+      window.alert(`Image processing failed: ${errorMsg}\n\nPlease try:\n- A smaller photo\n- A different image format (JPEG or PNG)\n- Refreshing the page`)
+      return null
+    }
+
+    // Validate compressed blob
+    if (!compressedBlob || compressedBlob.size === 0) {
+      const errorMsg = 'Compression resulted in empty file'
+      console.error(`[Photo] ❌ ${errorMsg}`)
+      window.alert('Image processing failed: The compressed image is empty. Please try a different photo.')
       return null
     }
 
@@ -377,13 +434,24 @@ export async function uploadEmergencyPhoto(
       lastModified: Date.now()
     })
 
+    console.log('[Photo] 📦 Created compressed file:', {
+      name: compressedFile.name,
+      size: compressedFile.size,
+      type: compressedFile.type
+    })
+
     // Generate unique filename - will regenerate on retry if needed
     let photoId = crypto.randomUUID()
     let fileName = `${photoId}.jpg`
     let storagePath = `${alertId}/${fileName}`
 
     // Upload to Supabase Storage with retry logic and timeout protection
-    console.log('[Photo] 📤 Uploading to storage...', { storagePath, fileSize: compressedFile.size })
+    console.log('[Photo] 📤 Starting storage upload...', { 
+      storagePath, 
+      fileSize: compressedFile.size,
+      attempt: 1,
+      maxRetries: 4
+    })
     
     let uploadData: any = null
     let uploadError: any = null
@@ -394,6 +462,8 @@ export async function uploadEmergencyPhoto(
     // Retry loop for network errors
     while (retries <= maxRetries) {
       try {
+        console.log(`[Photo] 📤 Upload attempt ${retries + 1}/${maxRetries + 1}...`, { storagePath })
+        
         // Wrap upload in timeout to prevent hanging indefinitely
         const uploadPromise = supabase.storage
           .from('emergency-photos')
@@ -414,7 +484,7 @@ export async function uploadEmergencyPhoto(
         
         // Success - exit retry loop
         if (!uploadError) {
-          console.log(`[Photo] ✅ Upload successful on attempt ${retries + 1}`)
+          console.log(`[Photo] ✅ Upload successful on attempt ${retries + 1}`, { storagePath })
           break
         }
         
@@ -422,6 +492,13 @@ export async function uploadEmergencyPhoto(
         const errorMessage = uploadError.message || ''
         const errorName = (uploadError as any).name || ''
         const statusCode = uploadError.statusCode || (uploadError as any).status
+        
+        console.warn(`[Photo] ⚠️ Upload attempt ${retries + 1} failed:`, {
+          errorMessage,
+          errorName,
+          statusCode,
+          storagePath
+        })
         
         // Handle 409 - file already exists (might have been uploaded in previous attempt)
         if (statusCode === 409 || statusCode === '409' || errorMessage.includes('already exists')) {
@@ -460,8 +537,8 @@ export async function uploadEmergencyPhoto(
                 break
               }
             }
-          } catch (checkErr) {
-            console.error('[Photo] Error checking file existence:', checkErr)
+          } catch (checkErr: any) {
+            console.error('[Photo] ❌ Error checking file existence:', checkErr)
             // Generate new filename and retry
             photoId = crypto.randomUUID()
             fileName = `${photoId}.jpg`
@@ -491,7 +568,7 @@ export async function uploadEmergencyPhoto(
         
         // Don't retry permission errors or bucket not found
         if (statusCode === 403 || statusCode === 404 || !isRetryableError) {
-          console.log(`[Photo] ⚠️ Non-retryable error (${statusCode || 'unknown'}), not retrying`)
+          console.error(`[Photo] ❌ Non-retryable error (${statusCode || 'unknown'}), not retrying`)
           break // Exit retry loop - not retryable
         }
         
@@ -522,6 +599,12 @@ export async function uploadEmergencyPhoto(
         const errorMessage = err?.message || ''
         const errorName = err?.name || ''
         
+        console.error(`[Photo] ❌ Upload exception on attempt ${retries + 1}:`, {
+          error: errorMessage || errorName,
+          stack: err?.stack,
+          name: errorName
+        })
+        
         // Check if it's a timeout error
         const isTimeoutError = errorMessage.includes('timeout') || errorMessage.includes('Timeout')
         const isRetryableError = errorMessage.includes('Load failed') || 
@@ -537,7 +620,7 @@ export async function uploadEmergencyPhoto(
           storagePath = `${alertId}/${fileName}`
           
           const retryDelay = Math.min(1000 * Math.pow(2, retries - 1), 5000)
-          console.warn(`[Photo] ⚠️ Upload ${isTimeoutError ? 'timeout' : 'exception'} on attempt ${retries}, retrying with new filename in ${retryDelay}ms...`, err)
+          console.warn(`[Photo] ⚠️ Upload ${isTimeoutError ? 'timeout' : 'exception'} on attempt ${retries}, retrying with new filename in ${retryDelay}ms...`)
           await new Promise(resolve => setTimeout(resolve, retryDelay))
           continue
         }
@@ -547,24 +630,25 @@ export async function uploadEmergencyPhoto(
     }
 
     if (uploadError) {
-      console.error('[Photo] ❌ Storage error:', {
-        code: uploadError.statusCode,
-        message: uploadError.message,
-        error: uploadError,
-        status: (uploadError as any).status,
-        name: (uploadError as any).name,
-        stack: (uploadError as any).stack
-      })
-      
-      // Get error details for better debugging
       const errorMessage = uploadError.message || ''
       const errorName = (uploadError as any).name || ''
       const statusCode = uploadError.statusCode || (uploadError as any).status
       
+      console.error('[Photo] ❌ Storage upload failed after all retries:', {
+        code: statusCode,
+        message: errorMessage,
+        name: errorName,
+        error: uploadError,
+        status: (uploadError as any).status,
+        stack: (uploadError as any).stack,
+        retriesAttempted: retries
+      })
+      
       // Check for 403 first (permission denied) - most likely RLS/policy issue
       if (statusCode === '403' || statusCode === 403) {
+        const userMsg = `Permission denied (403). Storage policies may need to be configured.\n\nError: ${errorMessage || 'Unknown'}\n\nPlease check that storage policies were created correctly in Supabase.`
         console.error('[Photo] ❌ 403 Permission denied - storage policies may be blocking')
-        window.alert(`Permission denied (403). Storage policies may need to be configured or verified. Error: ${errorMessage || 'Unknown'}. Please check that storage policies were created correctly.`)
+        window.alert(userMsg)
         return null
       }
       
@@ -573,6 +657,7 @@ export async function uploadEmergencyPhoto(
           uploadError.message?.includes('does not exist') ||
           statusCode === '404' ||
           statusCode === 404) {
+        console.error('[Photo] ❌ Bucket not found (404)')
         window.alert('Photo storage not configured. Setting up now...')
         // Try to auto-setup bucket
         try {
@@ -588,33 +673,35 @@ export async function uploadEmergencyPhoto(
             window.alert(`Setup failed: ${setupResult.error || 'Unknown error'}. Please create the bucket manually in Supabase Storage.`)
           }
         } catch (setupError: any) {
-          console.error('[Photo] Failed to auto-setup bucket:', setupError)
+          console.error('[Photo] ❌ Failed to auto-setup bucket:', setupError)
           window.alert('Could not auto-setup storage. Please create "emergency-photos" bucket in Supabase Storage and run migrations/add-emergency-photos-storage-policies.sql')
         }
         return null
       }
       
-      // Check for network errors - but only if they're also permission-related
+      // Check for network errors
       const isNetworkError = errorMessage.includes('Load failed') || 
                            errorMessage.includes('Failed to fetch') ||
                            errorName === 'NetworkError'
       
       // Only treat as policy issue if it's a network error AND we don't have a specific status code
-      // This prevents false positives
       if (isNetworkError && !statusCode) {
+        const userMsg = `Upload failed: Network error.\n\nError: ${errorMessage || errorName}\n\nPlease check:\n- Your internet connection\n- Browser console for details\n- Storage policies are configured`
         console.error('[Photo] ❌ Network error detected (no status code) - may be CORS or policy issue')
-        window.alert(`Upload failed: Network error. Error: ${errorMessage || errorName}. Please check browser console for details and verify storage policies are configured.`)
+        window.alert(userMsg)
         return null
       }
       
       // Generic error fallback - show actual error message
-      window.alert(`Failed to upload: ${errorMessage || errorName || 'Unknown error'} (Status: ${statusCode || 'N/A'}). Please try again or check console for details.`)
+      const userMsg = `Failed to upload photo after ${retries + 1} attempt(s).\n\nError: ${errorMessage || errorName || 'Unknown error'}\nStatus: ${statusCode || 'N/A'}\n\nPlease try again or check console for details.`
+      window.alert(userMsg)
       return null
     }
 
     console.log('[Photo] ✅ Storage upload successful:', uploadData)
 
     // Save metadata to database
+    console.log('[Photo] 💾 Saving photo metadata to database...', { storagePath, fileName })
     const { data: photoData, error: dbError } = await supabase
       .from('emergency_photos')
       .insert({
@@ -629,45 +716,56 @@ export async function uploadEmergencyPhoto(
       .single()
 
     if (dbError) {
-      console.error('[Photo] ❌ Database error:', {
+      const errorDetails = {
         code: dbError.code,
         message: dbError.message,
-        details: dbError.details
-      })
+        details: dbError.details,
+        hint: dbError.hint
+      }
+      console.error('[Photo] ❌ Database insert failed:', errorDetails)
       
       // Try to delete uploaded file if database insert fails
       try {
+        console.log('[Photo] 🗑️ Attempting to cleanup uploaded file...')
         await supabase.storage.from('emergency-photos').remove([storagePath])
-        console.log('[Photo] 🗑️ Cleaned up uploaded file')
-      } catch (cleanupError) {
-        console.warn('[Photo] ⚠️ Failed to cleanup:', cleanupError)
+        console.log('[Photo] ✅ Cleaned up uploaded file')
+      } catch (cleanupError: any) {
+        console.warn('[Photo] ⚠️ Failed to cleanup uploaded file:', cleanupError)
       }
       
       // Check for specific errors
       if (dbError.code === '42P01' || dbError.message?.includes('does not exist')) {
-        window.alert('Photo feature not configured. Please run database migrations.')
+        const userMsg = 'Photo feature not configured.\n\nThe emergency_photos table does not exist.\n\nPlease run database migrations.'
+        window.alert(userMsg)
       } else if (dbError.code === '42501' || dbError.message?.includes('row-level security')) {
-        window.alert('Permission denied. Database policies may need to be configured.')
+        const userMsg = 'Permission denied.\n\nDatabase policies may need to be configured.\n\nError: ' + (dbError.message || 'Unknown')
+        window.alert(userMsg)
       } else {
-        window.alert(`Failed to save photo: ${dbError.message || 'Unknown error'}`)
+        const userMsg = `Failed to save photo metadata:\n\n${dbError.message || 'Unknown error'}\n\nCode: ${dbError.code || 'N/A'}`
+        window.alert(userMsg)
       }
       return null
     }
 
-    console.log('[Photo] ✅ Photo uploaded successfully:', {
+    console.log('[Photo] ✅ Photo uploaded and saved successfully:', {
       photoId: photoData.id,
       alertId,
       fileSize: compressedFile.size,
+      storagePath
     })
 
     return photoData as EmergencyPhoto
   } catch (error: any) {
-    console.error('[Photo] ❌ Unexpected error:', {
+    const errorDetails = {
       error: error?.message || error,
       stack: error?.stack,
-      name: error?.name
-    })
-    window.alert(`Failed to upload photo: ${error?.message || 'Unknown error'}. Please try again.`)
+      name: error?.name,
+      fileName: file.name,
+      fileSize: file.size
+    }
+    console.error('[Photo] ❌ Unexpected error in uploadEmergencyPhoto:', errorDetails)
+    const userMsg = `Failed to upload photo: ${error?.message || 'Unknown error'}\n\nPlease try again or check console for details.`
+    window.alert(userMsg)
     return null
   }
 }
