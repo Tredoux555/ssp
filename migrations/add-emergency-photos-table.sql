@@ -54,7 +54,7 @@ CREATE POLICY "Receivers can view photos for their alerts"
     EXISTS (
       SELECT 1 FROM emergency_alerts ea
       WHERE ea.id = emergency_photos.alert_id
-      AND auth.uid() = ANY(ea.contacts_notified)
+      AND auth.uid()::text = ANY(ea.contacts_notified)
     )
   );
 
