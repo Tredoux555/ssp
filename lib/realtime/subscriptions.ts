@@ -106,10 +106,13 @@ class SubscriptionManager {
             this.reconnectHistory.delete(key)
             this.cooldownPeriods.delete(key)
             
-            if (process.env.NODE_ENV === 'development') {
-              console.log(`[Realtime] ✅ Successfully subscribed to ${config.channel} (${config.table}, event: ${config.event || 'UPDATE'})`)
-              console.log(`[Realtime] 🔗 Connection established - ready to receive events`)
-            }
+            console.log(`[Realtime] ✅ Successfully subscribed to ${config.channel}`, {
+              table: config.table,
+              event: config.event || 'UPDATE',
+              filter: config.filter || 'none',
+              channel: config.channel
+            })
+            console.log(`[Realtime] 🔗 Connection established - ready to receive events`)
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
             // Only attempt reconnection if subscription still exists, not already reconnecting, not in cooldown, and circuit not open
             if (this.subscriptions.has(key) && !this.reconnecting.get(key) && !this.isInCooldown(key) && !this.isCircuitOpen(key)) {
@@ -117,10 +120,14 @@ class SubscriptionManager {
                                status === 'TIMED_OUT' ? 'Subscription timed out' : 
                                'Subscription closed'
               
-              // Only log in development to reduce noise
-              if (process.env.NODE_ENV === 'development') {
-                console.warn(`[Realtime] ⚠️ ${statusMsg} for ${config.channel} - attempting reconnection...`)
-              }
+              console.warn(`[Realtime] ⚠️ ${statusMsg} for ${config.channel}`, {
+                table: config.table,
+                event: config.event || 'UPDATE',
+                filter: config.filter || 'none',
+                error: err?.message || err,
+                errorDetails: err
+              })
+              console.warn(`[Realtime] ⚠️ Attempting reconnection...`)
               
               // Clear existing reconnection timeout if any
               const existingTimeout = this.reconnectTimeouts.get(key)
@@ -141,10 +148,15 @@ class SubscriptionManager {
               this.reconnectTimeouts.set(key, reconnectTimeout)
             }
           } else {
-            // Only log non-successful statuses in development
-            if (process.env.NODE_ENV === 'development') {
-              console.log(`[Realtime] Subscription status for ${config.channel}: ${status}`, err ? `Error: ${err}` : '')
-            }
+            // Log all subscription statuses for debugging
+            console.log(`[Realtime] Subscription status for ${config.channel}:`, {
+              status,
+              table: config.table,
+              event: config.event || 'UPDATE',
+              filter: config.filter || 'none',
+              error: err?.message || err,
+              errorDetails: err
+            })
           }
         })
 
@@ -562,13 +574,29 @@ export function subscribeToContactAlerts(
     event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
     callback: (payload) => {
       try {
+        console.log(`[Realtime] 📨 RAW EVENT RECEIVED for user ${contactUserId}:`, {
+          eventType: payload.eventType,
+          hasNew: !!payload.new,
+          hasOld: !!payload.old,
+          newAlertId: payload.new?.id,
+          oldAlertId: payload.old?.id,
+          newStatus: payload.new?.status,
+          oldStatus: payload.old?.status,
+          newContactsNotified: payload.new?.contacts_notified,
+          oldContactsNotified: payload.old?.contacts_notified,
+          payloadKeys: Object.keys(payload)
+        })
+        
         const alert = payload.new || payload.old
         
-        console.log(`[Realtime] 📨 Received event for user ${contactUserId}:`, {
+        console.log(`[Realtime] 📨 Processed alert for user ${contactUserId}:`, {
           event: payload.eventType,
           alertId: alert?.id,
           status: alert?.status,
-          contactsNotified: alert?.contacts_notified
+          contactsNotified: alert?.contacts_notified,
+          contactsNotifiedType: typeof alert?.contacts_notified,
+          contactsNotifiedIsArray: Array.isArray(alert?.contacts_notified),
+          contactsNotifiedLength: Array.isArray(alert?.contacts_notified) ? alert.contacts_notified.length : 'N/A'
         })
         
         // Only fire callback if this contact user is in the contacts_notified array

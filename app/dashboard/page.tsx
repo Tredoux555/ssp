@@ -241,8 +241,21 @@ export default function DashboardPage() {
       
       // Subscribe to emergency alerts for this contact user
       // This fires when someone in their contact list triggers an alert
+      console.log(`[Dashboard] 🔔 Setting up contact alert subscription for user: ${userId}`)
       const unsubscribe = subscribeToContactAlerts(userId, async (alert) => {
-        if (!isMounted) return // Prevent navigation if component unmounted
+        console.log(`[Dashboard] 📬 Subscription callback triggered for user ${userId}:`, {
+          alertId: alert?.id,
+          alertUserId: alert?.user_id,
+          alertStatus: alert?.status,
+          contactsNotified: alert?.contacts_notified,
+          isMounted,
+          currentPath: window.location.pathname
+        })
+        
+        if (!isMounted) {
+          console.log(`[Dashboard] ⏭️ Component unmounted, skipping alert`)
+          return // Prevent navigation if component unmounted
+        }
         
         // Skip if user is the sender (shouldn't happen due to subscription filter, but double-check)
         if (alert.user_id === userId) {
@@ -377,6 +390,7 @@ export default function DashboardPage() {
           }
           
           // Query alerts - RLS will automatically filter to only alerts where user is in contacts_notified
+            console.log(`[Dashboard] 🔍 Polling for alerts for user ${userId}...`)
             const { data: allAlerts, error: queryError } = await supabase
               .from('emergency_alerts')
               .select('*')
@@ -384,12 +398,34 @@ export default function DashboardPage() {
               .order('triggered_at', { ascending: false })
             .limit(5)
             
+            console.log(`[Dashboard] 📊 Polling result for user ${userId}:`, {
+              alertCount: allAlerts?.length || 0,
+              alerts: allAlerts?.map((a: any) => ({
+                id: a.id,
+                userId: a.user_id,
+                status: a.status,
+                contactsNotified: a.contacts_notified,
+                contactsNotifiedLength: Array.isArray(a.contacts_notified) ? a.contacts_notified.length : 'N/A'
+              })),
+              error: queryError ? {
+                code: queryError.code,
+                message: queryError.message,
+                details: queryError.details,
+                hint: queryError.hint
+              } : null
+            })
+            
           // If error is RLS-related (42501) or CORS-related, it means RLS is blocking
           // This is expected if the user has no alerts - don't spam the console
             if (queryError) {
             // Only log if it's not a CORS/RLS error (which is expected when user has no access)
             if (queryError.code !== '42501' && !queryError.message?.includes('row-level security') && !queryError.message?.includes('access control') && !queryError.message?.includes('Load failed')) {
               console.warn(`[Dashboard] ⚠️ Polling query error:`, queryError)
+            } else {
+              console.log(`[Dashboard] ℹ️ Polling query blocked by RLS (expected if user has no alerts):`, {
+                code: queryError.code,
+                message: queryError.message
+              })
             }
               return
             }
