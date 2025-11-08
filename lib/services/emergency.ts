@@ -3,7 +3,7 @@
 import { createClient } from '@/lib/supabase'
 import { EmergencyAlert } from '@/types/database'
 
-const TIMEOUT_MS = 30000 // 30 seconds timeout
+const TIMEOUT_MS = 15000 // 15 seconds timeout (reduced from 30s for faster feedback)
 
 /**
  * Create an emergency alert (client-side replacement for /api/emergency/create)
@@ -78,25 +78,9 @@ export async function createEmergencyAlert(
             verified: c.verified
           })))
           
-          // Verify bidirectional relationship exists
-          console.log(`[Alert] 🔗 Verifying contact relationships...`)
-          for (const contact of contacts) {
-            if (contact.contact_user_id) {
-              // Check if reverse contact exists (bidirectional)
-              const { data: reverseContact } = await supabase
-                .from('emergency_contacts')
-                .select('id, verified')
-                .eq('user_id', contact.contact_user_id)
-                .eq('contact_user_id', userId)
-                .maybeSingle()
-              
-              if (reverseContact) {
-                console.log(`[Alert] ✅ Bidirectional contact confirmed: ${userId} ↔ ${contact.contact_user_id}`)
-              } else {
-                console.warn(`[Alert] ⚠️ Bidirectional contact missing: ${contact.contact_user_id} does not have ${userId} as contact`)
-              }
-            }
-          }
+          // Skip bidirectional verification to speed up alert creation
+          // This check is non-critical and can slow down emergency alerts
+          // Contacts will still receive alerts via Realtime subscriptions
           
           // Filter and get contact USER IDs (not contact record IDs)
           // Add validation to filter out invalid self-references
@@ -136,10 +120,10 @@ export async function createEmergencyAlert(
       }
 
       // Use regular client (RLS should allow these operations for the user's own data)
-      // Auto-cancel any existing active alerts before creating new one
+      // Auto-cancel any existing active alerts before creating new one (with 3s timeout)
       let cancelledCount = 0
       try {
-        const { data: cancelledData, error: cancelError } = await supabase
+        const cancelPromise = supabase
           .from('emergency_alerts')
           .update({ 
             status: 'cancelled', 
@@ -149,7 +133,16 @@ export async function createEmergencyAlert(
           .eq('status', 'active')
           .select('id')
         
-        if (cancelError) {
+        const cancelTimeout = new Promise((resolve) => 
+          setTimeout(() => resolve({ data: null, error: { message: 'Timeout' } }), 3000)
+        )
+        
+        const { data: cancelledData, error: cancelError } = await Promise.race([
+          cancelPromise,
+          cancelTimeout
+        ]) as any
+        
+        if (cancelError && cancelError.message !== 'Timeout') {
           // Check if it's an RLS violation
           const isRLSError = cancelError.message?.includes('row-level security') || 
                             cancelError.code === '42501' || 
@@ -276,7 +269,7 @@ export async function createEmergencyAlert(
       return alert
     })(),
     new Promise<EmergencyAlert>((_, reject) => 
-      setTimeout(() => reject(new Error('Alert creation timed out after 30 seconds. Please check your connection and try again.')), TIMEOUT_MS)
+      setTimeout(() => reject(new Error('Alert creation timed out after 15 seconds. Please check your connection and try again.')), TIMEOUT_MS)
     )
   ]).then((alert) => {
     // Post-creation steps run asynchronously in background (truly non-blocking)
@@ -302,11 +295,17 @@ export async function createEmergencyAlert(
             let delay = 500
             while (retries > 0) {
               try {
-                const response = await fetch('/api/emergency/create-responses', {
+                // Use absolute URL to avoid CORS issues
+                const apiUrl = typeof window !== 'undefined' 
+                  ? `${window.location.origin}/api/emergency/create-responses`
+                  : '/api/emergency/create-responses'
+                
+                const response = await fetch(apiUrl, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
                   },
+                  credentials: 'include', // Include cookies for authentication
                   body: JSON.stringify({
                     alertId: alert.id,
                     contactIds: contactIds,
@@ -346,11 +345,16 @@ export async function createEmergencyAlert(
               contactIds.map(async (contactUserId: string) => {
                 try {
                   // Call the push notification API endpoint
-                  const response = await fetch('/api/push/send', {
+                  const pushUrl = typeof window !== 'undefined'
+                    ? `${window.location.origin}/api/push/send`
+                    : '/api/push/send'
+                  
+                  const response = await fetch(pushUrl, {
                     method: 'POST',
                     headers: {
                       'Content-Type': 'application/json',
                     },
+                    credentials: 'include', // Include cookies for authentication
                     body: JSON.stringify({
                       userId: contactUserId,
                       alertId: alert.id,

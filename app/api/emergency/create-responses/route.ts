@@ -8,12 +8,19 @@ import { createServerClient } from '@/lib/supabase-server'
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    // Add CORS headers for cross-origin requests (if needed)
-    const headers = {
+    // CORS headers - only needed for actual cross-origin requests
+    // For same-origin requests, Next.js handles this automatically
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    }
+    
+    // Only add CORS headers if this is actually a cross-origin request
+    const origin = request.headers.get('origin')
+    if (origin && origin !== request.nextUrl.origin) {
+      headers['Access-Control-Allow-Origin'] = origin
+      headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+      headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+      headers['Access-Control-Allow-Credentials'] = 'true'
     }
 
     // Handle OPTIONS request for CORS preflight

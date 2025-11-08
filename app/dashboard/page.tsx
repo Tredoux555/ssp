@@ -709,8 +709,15 @@ export default function DashboardPage() {
 
       // Navigate to emergency screen immediately using window.location to avoid React state updates
       if (emergencyAlert && emergencyAlert.id) {
+        // Set flag to prevent any further state updates
+        isMountedRef.current = false
+        
         // Use window.location.href for full page reload - prevents React error #321
-        window.location.href = `/emergency/active/${emergencyAlert.id}`
+        // Use setTimeout to ensure navigation happens after current execution completes
+        setTimeout(() => {
+          window.location.href = `/emergency/active/${emergencyAlert.id}`
+        }, 0)
+        
         // Don't update state after navigation - component will unmount
         return
       }
