@@ -169,10 +169,11 @@ function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality?: n
         reject(new Error('Failed to load image. Unsupported format (try JPEG or PNG).'))
       }
       
-      // Handle HEIC files - convert to data URL
+      // Handle HEIC files - iOS Safari should convert automatically, but log for debugging
       if (file.type === 'image/heic' || file.type === 'image/heif' || file.name.toLowerCase().endsWith('.heic')) {
-        // iOS Safari should convert HEIC automatically, but if not, show error
-        console.warn('[Photo] HEIC format detected - may need conversion')
+        console.log('[Photo] HEIC format detected - iOS Safari should convert automatically')
+        // iOS Safari typically converts HEIC to JPEG automatically when reading via FileReader
+        // If conversion fails, the img.onerror handler will catch it
       }
       
       img.src = e.target?.result as string
@@ -193,14 +194,57 @@ function compressImage(file: File, maxWidth: number = MAX_DIMENSION, quality?: n
  */
 export async function capturePhoto(): Promise<File | null> {
   return new Promise((resolve) => {
+    // Check if we're on iOS
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    
+    // Create input element
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = 'image/jpeg,image/jpg,image/png,image/heic,image/heif' // Include HEIC
-    input.capture = 'environment' // Prefer rear camera on mobile
-
+    input.accept = 'image/*' // Use wildcard for better iOS compatibility
+    input.style.display = 'none'
+    input.style.position = 'absolute'
+    input.style.opacity = '0'
+    input.style.width = '0'
+    input.style.height = '0'
+    
+    // iOS-specific: Use 'camera' instead of 'environment' for better compatibility
+    // Also, iOS Safari may ignore capture attribute, but we set it anyway
+    if (isIOS) {
+      input.setAttribute('capture', 'camera')
+    } else {
+      input.setAttribute('capture', 'environment') // Prefer rear camera on Android
+    }
+    
+    // Add to DOM temporarily (required for iOS Safari)
+    document.body.appendChild(input)
+    
+    // Cleanup function
+    const cleanup = () => {
+      if (input.parentNode) {
+        input.parentNode.removeChild(input)
+      }
+    }
+    
+    // Handle cancellation (iOS Safari) - use blur as fallback since oncancel isn't always fired
+    let cancelled = false
+    let cancelTimeout: NodeJS.Timeout | null = null
+    
+    // Set up change handler
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0]
+      
+      // Clear cancellation timeout since we got a file
+      if (cancelTimeout) {
+        clearTimeout(cancelTimeout)
+        cancelTimeout = null
+      }
+      
+      cancelled = true
+      cleanup()
+      
       if (!file) {
+        console.log('[Photo] ⚠️ No file selected or user cancelled')
         resolve(null)
         return
       }
@@ -208,7 +252,8 @@ export async function capturePhoto(): Promise<File | null> {
       console.log('[Photo] File selected:', {
         name: file.name,
         type: file.type,
-        size: file.size
+        size: file.size,
+        isIOS
       })
 
       // Check file size
@@ -220,8 +265,62 @@ export async function capturePhoto(): Promise<File | null> {
 
       resolve(file)
     }
-
-    input.click()
+    
+    // Set up cancellation timeout
+    cancelTimeout = setTimeout(() => {
+      if (!cancelled) {
+        cancelled = true
+        cleanup()
+        console.log('[Photo] ⚠️ Photo selection timeout')
+        resolve(null)
+      }
+    }, 60000) // 60 second timeout - if no file selected, assume cancelled
+    
+    input.onblur = () => {
+      // On iOS, blur might fire before change, so we wait a bit
+      setTimeout(() => {
+        if (!cancelled && (!input.files || input.files.length === 0)) {
+          cancelled = true
+          if (cancelTimeout) {
+            clearTimeout(cancelTimeout)
+            cancelTimeout = null
+          }
+          cleanup()
+          console.log('[Photo] ⚠️ User cancelled photo selection (blur)')
+          resolve(null)
+        }
+      }, 100)
+    }
+    
+    // Error handler
+    input.onerror = (error) => {
+      cancelled = true
+      if (cancelTimeout) {
+        clearTimeout(cancelTimeout)
+        cancelTimeout = null
+      }
+      cleanup()
+      console.error('[Photo] ❌ File input error:', error)
+      alert('Failed to access camera. Please check permissions and try again.')
+      resolve(null)
+    }
+    
+    // Use setTimeout to ensure input is in DOM before clicking (iOS Safari requirement)
+    setTimeout(() => {
+      try {
+        input.click()
+      } catch (error: any) {
+        cancelled = true
+        if (cancelTimeout) {
+          clearTimeout(cancelTimeout)
+          cancelTimeout = null
+        }
+        cleanup()
+        console.error('[Photo] ❌ Failed to trigger file input:', error)
+        alert('Failed to open camera. Please ensure camera permissions are granted.')
+        resolve(null)
+      }
+    }, 100)
   })
 }
 
