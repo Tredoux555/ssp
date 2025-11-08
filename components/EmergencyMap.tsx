@@ -46,9 +46,12 @@ function EmergencyMapComponent({
   })
 
   const [map, setMap] = useState<any>(null)
-  const [senderLocation, setSenderLocation] = useState<{ lat: number; lng: number }>({
-    lat: latitude,
-    lng: longitude,
+  // Initialize senderLocation with validation - ensure valid numbers
+  const [senderLocation, setSenderLocation] = useState<{ lat: number; lng: number }>(() => {
+    const validLat = latitude && !isNaN(latitude) ? latitude : 0
+    const validLng = longitude && !isNaN(longitude) ? longitude : 0
+    console.log('[Map] 🎬 Initializing senderLocation state:', { lat: validLat, lng: validLng, fromProps: { latitude, longitude } })
+    return { lat: validLat, lng: validLng }
   })
   const [senderLocationHistory, setSenderLocationHistory] = useState<LocationHistory[]>([])
   const [receiverLoc, setReceiverLoc] = useState<{ lat: number; lng: number } | null>(receiverLocation || null)
@@ -64,19 +67,30 @@ function EmergencyMapComponent({
   const lastDirectionsUpdateRef = useRef<{ origin: { lat: number; lng: number }; destination: { lat: number; lng: number } } | null>(null)
   const directionsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Update sender location when props change
+  // Update sender location when props change - with robust validation
   useEffect(() => {
-    if (latitude && longitude && !isNaN(latitude) && !isNaN(longitude)) {
+    if (latitude && longitude && !isNaN(latitude) && !isNaN(longitude) && 
+        typeof latitude === 'number' && typeof longitude === 'number' &&
+        latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+      const newLocation = { lat: latitude, lng: longitude }
       console.log('[Map] 📍 Updating sender location from props:', {
         lat: latitude,
         lng: longitude,
-        hasLatLng: true
+        hasLatLng: true,
+        previousLocation: senderLocation
       })
-      setSenderLocation({ lat: latitude, lng: longitude })
+      setSenderLocation(newLocation)
     } else {
-      console.warn('[Map] ⚠️ Invalid sender location props:', { latitude, longitude })
+      console.warn('[Map] ⚠️ Invalid sender location props:', { 
+        latitude, 
+        longitude,
+        latType: typeof latitude,
+        lngType: typeof longitude,
+        latIsNaN: isNaN(latitude as number),
+        lngIsNaN: isNaN(longitude as number)
+      })
     }
-  }, [latitude, longitude])
+  }, [latitude, longitude, senderLocation])
   
   // Update receiver location when props change
   useEffect(() => {
@@ -354,9 +368,30 @@ function EmergencyMapComponent({
     setMap(mapInstance)
     
     // Ensure map centers on sender location
-    if (senderLocation && senderLocation.lat && senderLocation.lng) {
+    if (senderLocation && senderLocation.lat && senderLocation.lng && 
+        !isNaN(senderLocation.lat) && !isNaN(senderLocation.lng)) {
       mapInstance.setCenter(senderLocation)
       console.log('[Map] 📍 Map centered on sender location:', senderLocation)
+      
+      // Verify marker will be visible
+      setTimeout(() => {
+        const bounds = mapInstance.getBounds()
+        if (bounds) {
+          const isVisible = bounds.contains(senderLocation)
+          console.log('[Map] 🔍 Marker visibility check:', {
+            senderLocation,
+            isVisible,
+            bounds: {
+              north: bounds.getNorthEast().lat(),
+              south: bounds.getSouthWest().lat(),
+              east: bounds.getNorthEast().lng(),
+              west: bounds.getSouthWest().lng()
+            }
+          })
+        }
+      }, 500)
+    } else {
+      console.warn('[Map] ⚠️ Cannot center map - invalid sender location:', senderLocation)
     }
   }, [senderLocation])
 
@@ -376,12 +411,16 @@ function EmergencyMapComponent({
     fullscreenControl: true,
   }), [])
 
-  // Memoize sender marker icon
+  // Memoize sender marker icon - always return a valid icon object
+  // Similar pattern to receiver marker but with fallback for when Google Maps isn't loaded
   const senderMarkerIcon = useMemo(() => {
     if (!isLoaded || !googleMaps) {
-      console.log('[Map] ⚠️ Google Maps not loaded yet for sender marker icon')
+      console.log('[Map] ⚠️ Google Maps not loaded yet - sender marker will use default icon')
+      // Return undefined to let Google Maps use default red marker
+      // This is safer than a custom path that might not render correctly
       return undefined
     }
+    
     console.log('[Map] ✅ Created sender marker icon (red, scale 10)')
     return {
       path: googleMaps.SymbolPath.CIRCLE,
@@ -631,19 +670,29 @@ function EmergencyMapComponent({
         options={mapOptions}
     >
         {/* Sender location marker (Emergency Location - Red) - Always visible */}
-        {senderLocation && senderLocation.lat && senderLocation.lng && (
-          <Marker
-            key={`sender-${senderLocation.lat}-${senderLocation.lng}`}
-            position={senderLocation}
-            title="Emergency Location (Sender)"
-            icon={senderMarkerIcon}
-            zIndex={1000}
-            visible={true}
-            onClick={() => {
-              console.log('[Map] 🎯 Sender marker clicked:', senderLocation)
-            }}
-          />
-        )}
+        {(() => {
+          console.log('[Map] 🎨 Rendering sender marker:', {
+            position: senderLocation,
+            icon: senderMarkerIcon ? 'defined' : 'undefined',
+            iconType: typeof senderMarkerIcon,
+            hasIcon: !!senderMarkerIcon,
+            isLoaded,
+            hasGoogleMaps: !!googleMaps
+          })
+          return (
+            <Marker
+              key={`sender-${senderLocation.lat}-${senderLocation.lng}`}
+              position={senderLocation}
+              title="Emergency Location (Sender)"
+              icon={senderMarkerIcon}
+              zIndex={1000}
+              visible={true}
+              onClick={() => {
+                console.log('[Map] 🎯 Sender marker clicked:', senderLocation)
+              }}
+            />
+          )
+        })()}
 
         {/* Receiver location marker (Responder Location - Blue) */}
         {receiverLoc && (
