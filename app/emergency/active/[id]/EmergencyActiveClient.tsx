@@ -50,6 +50,7 @@ export default function EmergencyActivePage() {
   const loadReceiverLocationsRef = useRef<(() => void) | null>(null)
   const loadingAlertRef = useRef(false) // Prevent concurrent loadAlert calls
   const addressRef = useRef<string>('') // Track address without causing re-renders
+  const isUnmountingRef = useRef(false) // Prevent state updates during unmount/cancel
 
   // Update addressRef when address changes (doesn't trigger loadAlert)
   useEffect(() => {
@@ -314,6 +315,8 @@ export default function EmergencyActivePage() {
           filter: `alert_id=eq.${alert.id}`,
         },
         (payload: any) => {
+          if (isUnmountingRef.current) return // Don't update state if unmounting
+          
           console.log('[Sender] ✅ Alert response update received:', {
             contactUserId: payload.new.contact_user_id,
             acknowledgedAt: payload.new.acknowledged_at,
@@ -366,7 +369,7 @@ export default function EmergencyActivePage() {
     // Poll every 3 seconds to check if anyone has accepted (more frequent for better responsiveness)
     // Uses API endpoint to bypass RLS
     const acceptancePollInterval = setInterval(async () => {
-      if (!alert || !user) return
+      if (!alert || !user || isUnmountingRef.current) return // Check unmounting flag
       
       try {
         // Use API endpoint instead of direct query (bypasses RLS)
@@ -395,6 +398,8 @@ export default function EmergencyActivePage() {
         const currentCount = data.count || 0
         
         if (currentCount !== acceptedResponderCount) {
+          if (isUnmountingRef.current) return // Don't update if unmounting
+          
           console.log('[Sender] ✅ Polling detected acceptance change via API:', {
             oldCount: acceptedResponderCount,
             newCount: currentCount,
@@ -405,6 +410,8 @@ export default function EmergencyActivePage() {
           // Immediately reload receiver locations when acceptance is detected (safely)
           safeLoadReceiverLocations()
         } else if (currentCount > 0) {
+          if (isUnmountingRef.current) return // Don't update if unmounting
+          
           // Even if count hasn't changed, periodically reload locations to get latest updates
           // This ensures we get location updates even if subscription is working
           console.log('[Sender] 🔄 Periodic location refresh via API (polling fallback):', {
@@ -423,6 +430,8 @@ export default function EmergencyActivePage() {
 
     // Subscribe to receiver location updates (only from accepted responders)
     const unsubscribeReceiverLocations = subscribeToLocationHistory(alert.id, async (newLocation) => {
+      if (isUnmountingRef.current) return // Don't update state if unmounting
+      
       console.log('[Sender] Location update received:', {
         userId: newLocation.user_id,
         senderUserId: user.id,
@@ -516,6 +525,8 @@ export default function EmergencyActivePage() {
       user.id,
       alert.id,
       async (loc) => {
+        if (isUnmountingRef.current) return // Don't update state if unmounting
+        
         setLocation(loc)
         setLastLocationUpdate(new Date())
         setLocationTrackingActive(true)
@@ -645,7 +656,10 @@ export default function EmergencyActivePage() {
     }
     
     return () => {
-      // Cleanup subscriptions
+      // Set unmounting flag IMMEDIATELY to prevent any state updates
+      isUnmountingRef.current = true
+      
+      // Cleanup subscriptions FIRST (before any state updates)
       unsubscribeReceiverLocations()
       unsubscribeAcceptance?.unsubscribe()
       
@@ -670,11 +684,11 @@ export default function EmergencyActivePage() {
         clearInterval(vibrationInterval)
       }
       
-      // Stop location tracking
+      // Stop location tracking (NO STATE UPDATES IN CLEANUP!)
       if (stopTracking) {
         stopTracking()
       }
-      setLocationTrackingActive(false)
+      // REMOVED: setLocationTrackingActive(false) - this causes React error #321
     }
   }, [alert, user, permissionStatus]) // Removed 'address' from dependencies to prevent infinite loop
 
@@ -684,9 +698,11 @@ export default function EmergencyActivePage() {
 
     // Load existing photos
     const loadPhotos = async () => {
-      if (alert.id) {
+      if (alert.id && !isUnmountingRef.current) {
         const alertPhotos = await getAlertPhotos(alert.id)
-        setPhotos(alertPhotos)
+        if (!isUnmountingRef.current) {
+          setPhotos(alertPhotos)
+        }
       }
     }
     loadPhotos()
@@ -704,6 +720,8 @@ export default function EmergencyActivePage() {
           filter: `alert_id=eq.${alert.id}`,
         },
         (payload: { new: EmergencyPhoto }) => {
+          if (isUnmountingRef.current) return // Don't update state if unmounting
+          
           console.log('[Photo] ✅ New photo received:', payload.new)
           setPhotos((prev) => [payload.new as EmergencyPhoto, ...prev])
         }
@@ -711,18 +729,22 @@ export default function EmergencyActivePage() {
       .subscribe()
 
     return () => {
+      isUnmountingRef.current = true // Set flag before cleanup
       photoSubscription.unsubscribe()
     }
   }, [alert, user])
 
   const handleCancel = async () => {
-    if (!user || !alert) return
+    if (!user || !alert || isUnmountingRef.current) return
 
     const confirmed = window.confirm(
       'Are you sure you want to cancel this emergency alert?'
     )
 
     if (!confirmed) return
+
+    // Set unmounting flag IMMEDIATELY to prevent any state updates
+    isUnmountingRef.current = true
 
     try {
       const { cancelEmergencyAlert } = await import('@/lib/services/emergency')
@@ -735,6 +757,9 @@ export default function EmergencyActivePage() {
       // This ensures no state updates happen during navigation
       window.location.href = '/dashboard'
     } catch (error: any) {
+      // Reset unmounting flag on error so user can try again
+      isUnmountingRef.current = false
+      
       console.error('Cancel alert error:', error)
       const errorMessage = error?.message || 'Failed to cancel alert. Please try again.'
       
