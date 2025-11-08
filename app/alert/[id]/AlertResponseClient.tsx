@@ -665,6 +665,11 @@ export default function AlertResponsePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alert?.id, user?.id, router, permissionStatus, hasAccepted])
 
+  // Ensure overlay is hidden when on alert page
+  useEffect(() => {
+    hideEmergencyAlert()
+  }, [])
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-sa-green via-sa-blue to-sa-gold flex items-center justify-center">
@@ -707,9 +712,22 @@ export default function AlertResponsePage() {
             </div>
           </div>
           <Button 
-            onClick={() => {
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              
+              console.log('[Receiver] X button clicked - START', {
+                isClosing: isClosing,
+                isClosingRef: isClosingRef.current,
+                hasRouter: !!router
+              })
+              
               // Prevent multiple close attempts
-              if (isClosingRef.current) return
+              if (isClosingRef.current) {
+                console.log('[Receiver] Already closing, ignoring click')
+                return
+              }
+              
               setIsClosing(true)
               isClosingRef.current = true
               
@@ -740,12 +758,14 @@ export default function AlertResponsePage() {
               hideEmergencyAlert()
               
               // Navigate immediately - use replace to prevent back navigation
+              console.log('[Receiver] Navigating to dashboard...')
               router.replace('/dashboard')
             }} 
             variant="secondary" 
             size="sm"
-            className="flex-shrink-0"
+            className="flex-shrink-0 relative z-50"
             disabled={isClosing}
+            type="button"
           >
             <X className="w-4 h-4" />
           </Button>
