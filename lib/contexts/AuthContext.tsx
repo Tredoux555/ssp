@@ -117,12 +117,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!supabase) {
-      console.warn('Supabase client not available - setting loading to false')
+      console.warn('[Auth] Supabase client not available - setting loading to false')
       setLoading(false)
       setUser(null)
       setProfile(null)
       return
     }
+
+    // Log client initialization for debugging
+    console.log('[Auth] Initializing auth state listener:', {
+      hasClient: !!supabase,
+      hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+      hasKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      urlPrefix: process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 30) || 'missing'
+    })
 
     let mounted = true
     let initialTimeoutId: NodeJS.Timeout | null = null
@@ -179,18 +187,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       try {
         console.log('[Auth] Checking initial session...')
-        const { data: { session }, error } = await supabase.auth.getSession()
+        
+        // Add timeout wrapper to prevent hanging (getSession can hang on network issues)
+        const sessionPromise = supabase.auth.getSession()
+        const timeoutPromise = new Promise<{ data: { session: null }, error: { message: string } }>((resolve) => {
+          setTimeout(() => {
+            console.warn('[Auth] ⏱️ Session check timed out after 5 seconds')
+            resolve({ 
+              data: { session: null }, 
+              error: { message: 'Session check timed out after 5 seconds' } 
+            })
+          }, 5000) // 5 second timeout
+        })
+        
+        const sessionResult: any = await Promise.race([sessionPromise, timeoutPromise])
+        const { data: { session }, error } = sessionResult
         
         if (!mounted) return
         
         if (error) {
           console.warn('[Auth] Error getting initial session:', error)
-          // Continue - onAuthStateChange will handle it
+          // Set loading to false on error/timeout so user can proceed
+          // onAuthStateChange will handle it if session exists
+          setLoading(false)
           return
         }
         
         if (session) {
-          console.log('[Auth] ✅ Initial session found:', { userId: session.user?.id })
+          console.log('[Auth] ✅ Initial session found:', { userId: session.user?.id, email: session.user?.email })
           // Clear timeout since we have a session
           if (initialTimeoutId) {
             clearTimeout(initialTimeoutId)
