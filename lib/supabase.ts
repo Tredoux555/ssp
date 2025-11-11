@@ -19,6 +19,30 @@ export const createClient = () => {
 
   try {
     const client = createBrowserClient(supabaseUrl, supabaseAnonKey, {
+      cookies: {
+        get(name: string) {
+          // Get cookie from document.cookie
+          const value = `; ${document.cookie}`
+          const parts = value.split(`; ${name}=`)
+          if (parts.length === 2) return parts.pop()?.split(';').shift()
+          return undefined
+        },
+        set(name: string, value: string, options: any) {
+          // Set cookie with proper options for session persistence
+          const cookieOptions = [
+            `${name}=${value}`,
+            'path=/',
+            options?.maxAge ? `max-age=${options.maxAge}` : '',
+            options?.secure ? 'secure' : '',
+            options?.sameSite ? `samesite=${options.sameSite}` : 'samesite=lax',
+          ].filter(Boolean).join('; ')
+          document.cookie = cookieOptions
+        },
+        remove(name: string, options: any) {
+          // Remove cookie
+          document.cookie = `${name}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;`
+        },
+      },
       realtime: {
         params: {
           eventsPerSecond: 10, // Limit events per second

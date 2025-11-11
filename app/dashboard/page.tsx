@@ -165,7 +165,8 @@ export default function DashboardPage() {
         // Double-check user is still not set before redirecting
         // This prevents redirect loops if user state updates during delay
         if (!user) {
-          router.push('/auth/login')
+          // Use window.location.href for consistency with mobile and better reliability
+          window.location.href = '/auth/login'
         }
       }, delay)
       

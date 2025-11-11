@@ -125,11 +125,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Log client initialization for debugging
+    const isMobile = typeof window !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
     console.log('[Auth] Initializing auth state listener:', {
       hasClient: !!supabase,
       hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
       hasKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-      urlPrefix: process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 30) || 'missing'
+      urlPrefix: process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 30) || 'missing',
+      isMobile,
+      userAgent: typeof window !== 'undefined' ? navigator.userAgent : 'server',
+      cookieEnabled: typeof navigator !== 'undefined' ? navigator.cookieEnabled : false,
+      hasLocalStorage: typeof Storage !== 'undefined'
     })
 
     let mounted = true
@@ -192,12 +197,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const sessionPromise = supabase.auth.getSession()
         const timeoutPromise = new Promise<{ data: { session: null }, error: { message: string } }>((resolve) => {
           setTimeout(() => {
-            console.warn('[Auth] ⏱️ Session check timed out after 5 seconds')
+            console.warn('[Auth] ⏱️ Session check timed out after 10 seconds')
             resolve({ 
               data: { session: null }, 
-              error: { message: 'Session check timed out after 5 seconds' } 
+              error: { message: 'Session check timed out after 10 seconds' } 
             })
-          }, 5000) // 5 second timeout
+          }, 10000) // 10 second timeout (increased for desktop browsers)
         })
         
         const sessionResult: any = await Promise.race([sessionPromise, timeoutPromise])

@@ -32,9 +32,9 @@ export default function LoginPage() {
     setWaitingForAuth(true)
     console.log(`[Login] Starting auth state polling for mobile: ${isMobile}`)
     
-    // Poll for auth state update with timeout (longer on mobile)
-    const maxWaitTime = isMobile ? 25000 : 15000 // 25s mobile, 15s desktop
-    const checkInterval = isMobile ? 1000 : 500 // Check every 1s mobile, 500ms desktop
+    // Poll for auth state update with timeout (same for both mobile and desktop)
+    const maxWaitTime = 25000 // 25s for both mobile and desktop
+    const checkInterval = 1000 // Check every 1s for both mobile and desktop
     const maxChecks = maxWaitTime / checkInterval
     
     let checks = 0
@@ -145,7 +145,12 @@ export default function LoginPage() {
     setWaitingForAuth(false)
 
     try {
-      console.log(`[Login] 🚀 Starting sign-in... (mobile: ${isMobile})`)
+      console.log(`[Login] 🚀 Starting sign-in... (mobile: ${isMobile})`, {
+        isMobile,
+        cookieEnabled: navigator.cookieEnabled,
+        hasLocalStorage: typeof Storage !== 'undefined',
+        userAgent: navigator.userAgent.substring(0, 50)
+      })
       
       // Add retry logic for network errors (more retries on mobile)
       let retries = 0
