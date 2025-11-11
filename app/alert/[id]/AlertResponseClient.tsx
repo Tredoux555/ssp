@@ -46,14 +46,19 @@ export default function AlertResponsePage() {
   const [declining, setDeclining] = useState(false)
   const [isClosing, setIsClosing] = useState(false) // Prevent multiple close attempts
   const [photos, setPhotos] = useState<EmergencyPhoto[]>([])
+  const [allReceiverLocations, setAllReceiverLocations] = useState<Map<string, LocationHistory[]>>(new Map())
+  const [allReceiverUserIds, setAllReceiverUserIds] = useState<string[]>([])
+  const [acceptedResponderCount, setAcceptedResponderCount] = useState(0)
   const isClosingRef = useRef(false) // Ref version for use in callbacks
   const subscriptionsSetupRef = useRef<string | null>(null) // Track which alert ID subscriptions are set up for
   const loadAlertCalledRef = useRef<string | null>(null) // Track if loadAlert has been called for this alertId
+  const loadingReceiverLocationsRef = useRef(false) // Prevent concurrent API calls
   const cleanupRefs = useRef<{
     unsubscribeLocation?: () => void
     unsubscribeAlert?: () => void
     pollInterval?: NodeJS.Timeout
     statusPollInterval?: NodeJS.Timeout
+    receiverLocationsPollInterval?: NodeJS.Timeout
     stopReceiverTracking?: () => void
   }>({})
 
@@ -332,6 +337,167 @@ export default function AlertResponsePage() {
     }
   }, [user, alertId, router])
 
+  // Load all receiver locations (for showing all responders on map)
+  const loadAllReceiverLocations = useCallback(async () => {
+    if (!alert || !alert.id || !user || isClosingRef.current) {
+      return
+    }
+
+    // Prevent concurrent calls
+    if (loadingReceiverLocationsRef.current) {
+      console.log('[Receiver] ⏸️ Already loading receiver locations, skipping')
+      return
+    }
+
+    loadingReceiverLocationsRef.current = true
+
+    try {
+      console.log('[Receiver] 📍 Loading all receiver locations for alert:', alert.id)
+
+      // Step 1: Fetch accepted responders
+      const acceptedResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
+      })
+
+      if (!acceptedResponse.ok && acceptedResponse.status !== 304) {
+        const status = acceptedResponse.status
+        let errorData: any = {}
+        try {
+          const responseText = await acceptedResponse.text()
+          if (responseText && responseText.trim()) {
+            errorData = JSON.parse(responseText)
+          }
+        } catch (parseError) {
+          console.warn('[Receiver] Failed to parse error response:', parseError)
+        }
+
+        console.error('[Receiver] ❌ Failed to fetch accepted responders:', {
+          status,
+          error: errorData.error || `HTTP ${status}`,
+          alertId: alert.id
+        })
+
+        setAllReceiverLocations(new Map())
+        setAllReceiverUserIds([])
+        setAcceptedResponderCount(0)
+        loadingReceiverLocationsRef.current = false
+        return
+      }
+
+      const acceptedData = await acceptedResponse.json()
+      const acceptedResponses = acceptedData.acceptedResponders || []
+      const acceptedCount = acceptedData.count || 0
+
+      setAcceptedResponderCount(acceptedCount)
+
+      if (acceptedCount === 0) {
+        console.log('[Receiver] ℹ️ No accepted responders yet')
+        setAllReceiverLocations(new Map())
+        setAllReceiverUserIds([])
+        loadingReceiverLocationsRef.current = false
+        return
+      }
+
+      const acceptedUserIds = acceptedResponses.map((r: { contact_user_id: string }) => r.contact_user_id)
+      console.log('[Receiver] ✅ Found accepted responders:', {
+        count: acceptedCount,
+        userIds: acceptedUserIds
+      })
+
+      // Step 2: Fetch all receiver locations
+      const locationsResponse = await fetch(`/api/emergency/${alert.id}/receiver-locations`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
+      })
+
+      if (!locationsResponse.ok && locationsResponse.status !== 304) {
+        const errorData = await locationsResponse.json().catch(() => ({}))
+        console.error('[Receiver] ❌ Failed to fetch receiver locations:', {
+          status: locationsResponse.status,
+          error: errorData.error || 'Unknown error',
+          alertId: alert.id
+        })
+        setAllReceiverLocations(new Map())
+        setAllReceiverUserIds([])
+        loadingReceiverLocationsRef.current = false
+        return
+      }
+
+      const locationsData = await locationsResponse.json()
+      const groupedByUser = locationsData.groupedByUser || {}
+      const allLocations = locationsData.receiverLocations || []
+
+      console.log('[Receiver] 📍 Received location data from API:', {
+        totalLocations: allLocations.length,
+        groupedByUserKeys: Object.keys(groupedByUser),
+        groupedByUserSize: Object.keys(groupedByUser).length,
+        acceptedUserIds: acceptedUserIds
+      })
+
+      if (allLocations && allLocations.length > 0) {
+        // Convert groupedByUser object to Map
+        const receiverMap = new Map<string, LocationHistory[]>()
+        const userIds = new Set<string>()
+
+        Object.entries(groupedByUser).forEach(([receiverId, locations]: [string, any]) => {
+          const locationArray = Array.isArray(locations) ? locations : []
+          
+          // Sort by created_at ascending (oldest first, newest last)
+          const sortedLocations = [...locationArray].sort((a: LocationHistory, b: LocationHistory) => {
+            return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          })
+          
+          userIds.add(receiverId)
+          receiverMap.set(receiverId, sortedLocations as LocationHistory[])
+          console.log('[Receiver] 📍 Added receiver to map:', {
+            receiverId: receiverId,
+            locationCount: sortedLocations.length,
+            latestLocation: sortedLocations.length > 0 ? {
+              lat: sortedLocations[sortedLocations.length - 1].latitude,
+              lng: sortedLocations[sortedLocations.length - 1].longitude,
+              id: sortedLocations[sortedLocations.length - 1].id
+            } : null
+          })
+        })
+
+        console.log('[Receiver] 📍 Setting receiver locations state:', {
+          mapSize: receiverMap.size,
+          userIds: Array.from(userIds),
+          receiverIds: Array.from(receiverMap.keys()),
+          totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0)
+        })
+
+        setAllReceiverLocations(receiverMap)
+        setAllReceiverUserIds(Array.from(userIds))
+      } else {
+        console.warn('[Receiver] ⚠️ No receiver locations found yet:', {
+          acceptedUserIds: acceptedUserIds,
+          alertId: alert.id,
+          acceptedCount: acceptedCount
+        })
+        setAllReceiverLocations(new Map())
+        setAllReceiverUserIds([])
+      }
+    } catch (error: any) {
+      console.error('[Receiver] ❌ Error loading receiver locations:', {
+        error: error,
+        message: error?.message,
+        stack: error?.stack,
+        alertId: alert.id,
+        userId: user.id
+      })
+      setAllReceiverLocations(new Map())
+      setAllReceiverUserIds([])
+    } finally {
+      loadingReceiverLocationsRef.current = false
+    }
+  }, [alert, user])
+
   // Load photos and subscribe to photo updates
   useEffect(() => {
     if (!alert || !user) return
@@ -435,6 +601,9 @@ export default function AlertResponsePage() {
       setAccepting(false)
       console.log('[Alert] ✅ User accepted to respond')
       
+      // Load all receiver locations when user accepts (to show other responders)
+      loadAllReceiverLocations()
+      
       // Immediately save receiver's location to location_history when they accept
       // This ensures the sender can see the receiver's location right away
       try {
@@ -534,7 +703,7 @@ export default function AlertResponsePage() {
       window.alert('An error occurred. Please try again.')
       setAccepting(false)
     }
-  }, [user, alert, accepting])
+  }, [user, alert, accepting, loadAllReceiverLocations])
 
   useEffect(() => {
     // Wait for auth to finish loading before checking user
@@ -620,7 +789,7 @@ export default function AlertResponsePage() {
         location: { lat: newLocation.latitude, lng: newLocation.longitude }
       })
       
-      // Check if this is sender's location or receiver's location
+      // Check if this is sender's location, own location, or another receiver's location
       if (newLocation.user_id === alert.user_id) {
         // This is sender's location
         console.log('[Receiver] ✅ Updating sender location from subscription:', {
@@ -631,7 +800,7 @@ export default function AlertResponsePage() {
         setLocationHistory((prev) => [...prev, newLocation])
         setLocation(newLocation)
       } else if (newLocation.user_id === user.id) {
-        // This is receiver's location
+        // This is receiver's own location
         console.log('[Receiver] ✅ Updating own location from subscription:', {
           lat: newLocation.latitude,
           lng: newLocation.longitude,
@@ -644,10 +813,61 @@ export default function AlertResponsePage() {
         })
         setReceiverLastUpdate(new Date())
       } else {
-        console.warn('[Receiver] ⚠️ Received location update for unknown user:', {
-          userId: newLocation.user_id,
-          alertUserId: alert.user_id,
-          receiverUserId: user.id
+        // This is another receiver's location - add to allReceiverLocations
+        console.log('[Receiver] ✅ Updating other receiver location from subscription:', {
+          receiverId: newLocation.user_id,
+          lat: newLocation.latitude,
+          lng: newLocation.longitude,
+          timestamp: newLocation.created_at
+        })
+        
+        // Update allReceiverLocations Map
+        setAllReceiverLocations((prev) => {
+          const updated = new Map(prev)
+          const receiverId = newLocation.user_id
+          
+          // Add receiver to map if not already present
+          if (!updated.has(receiverId)) {
+            updated.set(receiverId, [])
+            setAllReceiverUserIds((prevIds) => {
+              if (!prevIds.includes(receiverId)) {
+                console.log('[Receiver] ✅ Added new receiver to map:', receiverId)
+                return [...prevIds, receiverId]
+              }
+              return prevIds
+            })
+          }
+          
+          // Get existing locations for this receiver
+          const receiverHistory = updated.get(receiverId) || []
+          
+          // Check if this location already exists (avoid duplicates)
+          const exists = receiverHistory.some(loc => loc.id === newLocation.id)
+          if (!exists) {
+            // Add new location and sort by created_at (ascending - oldest first, newest last)
+            const updatedHistory = [...receiverHistory, newLocation].sort((a, b) => {
+              return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            })
+            updated.set(receiverId, updatedHistory)
+            
+            console.log('[Receiver] ✅ Updated receiver locations:', {
+              receiverId,
+              previousCount: receiverHistory.length,
+              newCount: updatedHistory.length,
+              latestLocation: updatedHistory.length > 0 ? {
+                lat: updatedHistory[updatedHistory.length - 1].latitude,
+                lng: updatedHistory[updatedHistory.length - 1].longitude,
+                id: updatedHistory[updatedHistory.length - 1].id
+              } : null
+            })
+          } else {
+            console.log('[Receiver] ⚠️ Location already exists, skipping:', {
+              receiverId,
+              locationId: newLocation.id
+            })
+          }
+          
+          return updated
         })
       }
     })
@@ -752,12 +972,33 @@ export default function AlertResponsePage() {
       }
     }, 5000) // Poll every 5 seconds
 
+    // Add polling fallback to refresh all receiver locations (in case subscription fails)
+    // Poll every 45 seconds to refresh receiver locations
+    const receiverLocationsPollInterval = setInterval(async () => {
+      if (!alert || !user || isClosingRef.current) return
+      
+      try {
+        console.log('[Receiver] 🔄 Polling: Refreshing all receiver locations...')
+        await loadAllReceiverLocations()
+      } catch (pollErr) {
+        // Silently ignore polling errors
+        console.warn('[Receiver] Polling error refreshing receiver locations (non-critical):', pollErr)
+      }
+    }, 45000) // Poll every 45 seconds
+
+    // Load all receiver locations initially and when user accepts
+    if (hasAccepted) {
+      // Load immediately if user has accepted
+      loadAllReceiverLocations()
+    }
+
     // Store cleanup functions in ref for X button handler
     cleanupRefs.current = {
       unsubscribeLocation,
       unsubscribeAlert: unsubscribeAlert?.unsubscribe.bind(unsubscribeAlert),
       pollInterval,
       statusPollInterval,
+      receiverLocationsPollInterval,
       stopReceiverTracking: stopReceiverTracking || undefined
     }
 
@@ -781,13 +1022,28 @@ export default function AlertResponsePage() {
       if (statusPollInterval) {
         clearInterval(statusPollInterval)
       }
+      if (receiverLocationsPollInterval) {
+        clearInterval(receiverLocationsPollInterval)
+      }
       hideEmergencyAlert()
       // Clear cleanup refs
       cleanupRefs.current = {}
     }
     // Only depend on alert.id and user.id, not the full alert object
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alert?.id, user?.id, router, permissionStatus, hasAccepted])
+  }, [alert?.id, user?.id, router, permissionStatus, hasAccepted, loadAllReceiverLocations])
+
+  // Load receiver locations when alert is loaded (even before acceptance, to see who else is responding)
+  useEffect(() => {
+    if (alert && alert.id && user && !isClosingRef.current) {
+      // Load receiver locations after a short delay to ensure alert is fully loaded
+      const timer = setTimeout(() => {
+        loadAllReceiverLocations()
+      }, 1000) // 1 second delay to ensure alert state is stable
+      
+      return () => clearTimeout(timer)
+    }
+  }, [alert?.id, user?.id, loadAllReceiverLocations])
 
   // Ensure overlay is hidden when on alert page
   useEffect(() => {
@@ -1032,11 +1288,13 @@ export default function AlertResponsePage() {
               longitude={location?.longitude || alert.location_lng || 0}
               alertId={alert.id}
               user_id={alert.user_id}
-                receiverLocation={receiverLocation}
-                receiverLocationHistory={receiverLocationHistory}
-                receiverUserId={user.id}
-                senderUserId={alert.user_id}
-              />
+              receiverLocation={receiverLocation}
+              receiverLocationHistory={receiverLocationHistory}
+              receiverUserId={user.id}
+              senderUserId={alert.user_id}
+              receiverLocations={allReceiverLocations}
+              receiverUserIds={allReceiverUserIds}
+            />
             </div>
             {receiverLocation && location && (
               <div className="mt-4">
