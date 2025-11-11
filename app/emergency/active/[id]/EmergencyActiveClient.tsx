@@ -167,14 +167,57 @@ export default function EmergencyActivePage() {
         url: `/api/emergency/${alert.id}/accepted-responders`
       })
       
+      // Helper function to add timeout to fetch calls
+      const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number = 10000): Promise<Response> => {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => {
+          controller.abort()
+        }, timeoutMs)
+        
+        try {
+          const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+          })
+          clearTimeout(timeoutId)
+          return response
+        } catch (error: any) {
+          clearTimeout(timeoutId)
+          if (error.name === 'AbortError') {
+            throw new Error(`Request timeout after ${timeoutMs}ms: ${url}`)
+          }
+          throw error
+        }
+      }
+      
       try {
+        const fetchStartTime = Date.now()
+        console.log('[Sender] 🌐 Fetching accepted responders...', {
+          url: `/api/emergency/${alert.id}/accepted-responders`,
+          timeout: '10s'
+        })
+        
         // Use API endpoint to get accepted responders (bypasses RLS)
         // Use no-store to prevent caching - we need real-time data
-        const acceptedResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`, {
-          cache: 'no-store',
-          headers: {
-            'Cache-Control': 'no-cache'
-          }
+        // Add 10 second timeout to prevent indefinite hanging
+        const acceptedResponse = await fetchWithTimeout(
+          `/api/emergency/${alert.id}/accepted-responders`,
+          {
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache'
+            }
+          },
+          10000 // 10 second timeout
+        )
+        
+        const fetchDuration = Date.now() - fetchStartTime
+        console.log('[Sender] ✅ Fetch completed:', {
+          status: acceptedResponse.status,
+          statusText: acceptedResponse.statusText,
+          ok: acceptedResponse.ok,
+          duration: `${fetchDuration}ms`,
+          url: `/api/emergency/${alert.id}/accepted-responders`
         })
         
         // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
@@ -269,11 +312,30 @@ export default function EmergencyActivePage() {
 
         // Use API endpoint to get receiver locations (bypasses RLS)
         // Use no-store to prevent caching - we need real-time data
-        const locationsResponse = await fetch(`/api/emergency/${alert.id}/receiver-locations`, {
-          cache: 'no-store',
-          headers: {
-            'Cache-Control': 'no-cache'
-          }
+        const locationsFetchStartTime = Date.now()
+        console.log('[Sender] 🌐 Fetching receiver locations...', {
+          url: `/api/emergency/${alert.id}/receiver-locations`,
+          timeout: '10s'
+        })
+        
+        const locationsResponse = await fetchWithTimeout(
+          `/api/emergency/${alert.id}/receiver-locations`,
+          {
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache'
+            }
+          },
+          10000 // 10 second timeout
+        )
+        
+        const locationsFetchDuration = Date.now() - locationsFetchStartTime
+        console.log('[Sender] ✅ Receiver locations fetch completed:', {
+          status: locationsResponse.status,
+          statusText: locationsResponse.statusText,
+          ok: locationsResponse.ok,
+          duration: `${locationsFetchDuration}ms`,
+          url: `/api/emergency/${alert.id}/receiver-locations`
         })
         
         // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
@@ -377,15 +439,28 @@ export default function EmergencyActivePage() {
           setReceiverUserIds([])
         }
       } catch (error: any) {
-        console.error('[Sender] Error loading receiver locations via API:', {
+        console.error('[Sender] ❌ Error loading receiver locations via API:', {
           error: error,
           message: error?.message,
+          name: error?.name,
           stack: error?.stack,
           alertId: alert.id,
-          userId: user.id
+          userId: user.id,
+          errorType: error instanceof TypeError ? 'NetworkError' : error instanceof Error ? 'Error' : 'Unknown',
+          isTimeout: error?.message?.includes('timeout') || error?.message?.includes('Timeout'),
+          isAbort: error?.name === 'AbortError'
         })
-        setReceiverLocations(new Map())
-        setReceiverUserIds([])
+        
+        // If it's a timeout or network error, don't clear the state - might be temporary
+        // Only clear if it's a permanent error (404, 401, etc.)
+        if (error?.message?.includes('timeout') || error?.name === 'AbortError') {
+          console.warn('[Sender] ⚠️ Request timed out - will retry on next poll/subscription update')
+          // Don't clear state - keep existing data and retry later
+        } else {
+          // For other errors, clear state
+          setReceiverLocations(new Map())
+          setReceiverUserIds([])
+        }
       }
     }
     
