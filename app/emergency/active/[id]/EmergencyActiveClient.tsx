@@ -102,7 +102,21 @@ export default function EmergencyActivePage() {
   }, [user, alertId, loadAlert])
 
   useEffect(() => {
-    if (!alert || !user) return
+    console.log('[Sender] 🔄 useEffect for receiver locations triggered:', {
+      hasAlert: !!alert,
+      alertId: alert?.id,
+      hasUser: !!user,
+      userId: user?.id,
+      urlAlertId: alertId
+    })
+    
+    if (!alert || !user) {
+      console.log('[Sender] ⏭️ Skipping receiver locations load - missing alert or user', {
+        hasAlert: !!alert,
+        hasUser: !!user
+      })
+      return
+    }
 
     // Check location permission before starting tracking
     if (permissionStatus === 'denied' || permissionStatus === 'prompt') {
@@ -114,9 +128,17 @@ export default function EmergencyActivePage() {
     // Query all receiver locations from location_history (only from accepted responders)
     // Uses server-side API endpoints to bypass RLS
     const loadReceiverLocations = async () => {
+      console.log('[Sender] 🔄 loadReceiverLocations called:', {
+        hasAlert: !!alert,
+        alertId: alert?.id,
+        urlAlertId: alertId,
+        userId: user?.id,
+        uploadingPhoto: uploadingPhotoRef.current
+      })
+      
       // Enhanced guard check - ensure alert exists AND ID matches URL
       if (!alert || !alert.id) {
-        console.warn('[Sender] Cannot load receiver locations - alert not available', {
+        console.warn('[Sender] ⚠️ Cannot load receiver locations - alert not available', {
           hasAlert: !!alert,
           alertId: alert?.id,
           urlAlertId: alertId
@@ -126,7 +148,7 @@ export default function EmergencyActivePage() {
       
       // Verify alert ID matches URL parameter
       if (alert.id !== alertId) {
-        console.warn('[Sender] Alert ID mismatch - waiting for correct alert', {
+        console.warn('[Sender] ⚠️ Alert ID mismatch - waiting for correct alert', {
           alertId: alert.id,
           urlAlertId: alertId
         })
@@ -135,10 +157,15 @@ export default function EmergencyActivePage() {
       
       // Don't reload locations if photo upload is in progress
       if (uploadingPhotoRef.current) {
-        console.log('[Photo] ⏸️ Deferring location reload - photo upload in progress')
+        console.log('[Sender] ⏸️ Deferring location reload - photo upload in progress')
         loadLocationsQueuedRef.current = true
         return
       }
+      
+      console.log('[Sender] ✅ Starting to fetch receiver locations from API...', {
+        alertId: alert.id,
+        url: `/api/emergency/${alert.id}/accepted-responders`
+      })
       
       try {
         // Use API endpoint to get accepted responders (bypasses RLS)
@@ -375,10 +402,14 @@ export default function EmergencyActivePage() {
         return
       }
       if (loadReceiverLocationsRef.current) {
+        console.log('[Sender] 🔄 Calling loadReceiverLocations via safe wrapper')
         loadReceiverLocationsRef.current()
+      } else {
+        console.warn('[Sender] ⚠️ loadReceiverLocationsRef.current is null - cannot load locations')
       }
     }
 
+    console.log('[Sender] 🚀 Calling loadReceiverLocations on initial load...')
     loadReceiverLocations()
 
     // Subscribe to alert_responses updates to detect when responders accept
