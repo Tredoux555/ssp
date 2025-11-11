@@ -127,16 +127,92 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let mounted = true
     let initialTimeoutId: NodeJS.Timeout | null = null
     let hasReceivedAuthEvent = false
+    let hasCheckedInitialSession = false
+
+    // Helper function to update auth state
+    const updateAuthState = async (session: { user: User | null } | null, event?: string) => {
+      if (!mounted) return
+      
+      console.log('[Auth] Updating auth state:', { 
+        event, 
+        hasUser: !!session?.user, 
+        userId: session?.user?.id 
+      })
+      
+      // Single source of truth for user state
+      setUser(session?.user ?? null)
+      
+      if (session?.user && session) {
+        // Fetch profile in background - truly non-blocking (has timeout wrapper)
+        // Never throws errors, always returns null on failure
+        fetchProfile(session.user.id)
+          .then((userProfile) => {
+            if (mounted) setProfile(userProfile)
+          })
+          // fetchProfile never throws, but add catch for safety
+          .catch(() => {
+            if (mounted) setProfile(null)
+          })
+      } else {
+        setProfile(null)
+      }
+      
+      // Single source of truth for loading state - set here only
+      setLoading(false)
+    }
 
     // Single timeout for initial auth state (10 seconds absolute failsafe)
     // This ensures we don't hang forever if auth state change never fires
     initialTimeoutId = setTimeout(() => {
       if (mounted && !hasReceivedAuthEvent) {
-        console.warn('Initial auth state timeout (10s) - setting loading to false')
+        console.warn('[Auth] Initial auth state timeout (10s) - setting loading to false')
         setLoading(false)
         // Don't set user/profile - let onAuthStateChange handle it when it fires
       }
     }, 10000)
+
+    // Check initial session immediately (don't wait for onAuthStateChange)
+    // This ensures we get the session right away if it exists
+    const checkInitialSession = async () => {
+      if (hasCheckedInitialSession) return
+      hasCheckedInitialSession = true
+      
+      try {
+        console.log('[Auth] Checking initial session...')
+        const { data: { session }, error } = await supabase.auth.getSession()
+        
+        if (!mounted) return
+        
+        if (error) {
+          console.warn('[Auth] Error getting initial session:', error)
+          // Continue - onAuthStateChange will handle it
+          return
+        }
+        
+        if (session) {
+          console.log('[Auth] ✅ Initial session found:', { userId: session.user?.id })
+          // Clear timeout since we have a session
+          if (initialTimeoutId) {
+            clearTimeout(initialTimeoutId)
+            initialTimeoutId = null
+          }
+          hasReceivedAuthEvent = true
+          await updateAuthState(session, 'INITIAL_SESSION')
+        } else {
+          console.log('[Auth] No initial session found')
+          // Set loading to false if no session - user is not logged in
+          setLoading(false)
+        }
+      } catch (error) {
+        console.error('[Auth] Error checking initial session:', error)
+        if (mounted) {
+          setLoading(false)
+        }
+      }
+    }
+
+    // Check initial session immediately
+    checkInitialSession()
 
     // Single source of truth: onAuthStateChange listener
     // This fires immediately with current session and on any auth changes
@@ -144,6 +220,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event: string, session: { user: User | null } | null) => {
       if (!mounted) return
+      
+      console.log('[Auth] onAuthStateChange event:', { event, hasUser: !!session?.user })
       
       // Clear initial timeout once we receive first auth event
       if (!hasReceivedAuthEvent && initialTimeoutId) {
@@ -153,28 +231,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       
       try {
-        // Single source of truth for user state
-        setUser(session?.user ?? null)
-        
-        if (session?.user && session) {
-          // Fetch profile in background - truly non-blocking (has timeout wrapper)
-          // Never throws errors, always returns null on failure
-          fetchProfile(session.user.id)
-            .then((userProfile) => {
-              if (mounted) setProfile(userProfile)
-            })
-            // fetchProfile never throws, but add catch for safety
-            .catch(() => {
-              if (mounted) setProfile(null)
-            })
-        } else {
-          setProfile(null)
-        }
-        
-        // Single source of truth for loading state - set here only
-        setLoading(false)
+        await updateAuthState(session, event)
       } catch (error) {
-        console.error('Error in auth state change handler:', error)
+        console.error('[Auth] Error in auth state change handler:', error)
         if (mounted) {
           setLoading(false)
         }
