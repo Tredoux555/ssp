@@ -866,26 +866,26 @@ export default function AlertResponsePage() {
           }
         }, 1000)
       } catch (locationError: any) {
-          console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Exception', {
-            error: locationError?.message || locationError,
-            alertId: alert.id,
-            userId: user.id,
-            timestamp: new Date().toISOString()
-          })
-          
-          // Still start tracking even if initial save failed
-          startLocationTracking(
-            user.id,
-            alert.id,
-            async (loc) => {
-              setReceiverLocation(loc)
-              setReceiverLastUpdate(new Date())
-              setReceiverTrackingActive(true)
-            },
-            20000
-          )
-          setReceiverTrackingActive(true)
-        }
+        console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Exception', {
+          error: locationError?.message || locationError,
+          alertId: alert.id,
+          userId: user.id,
+          timestamp: new Date().toISOString()
+        })
+        
+        // Still start tracking even if initial save failed
+        startLocationTracking(
+          user.id,
+          alert.id,
+          async (loc) => {
+            setReceiverLocation(loc)
+            setReceiverLastUpdate(new Date())
+            setReceiverTrackingActive(true)
+          },
+          20000
+        )
+        setReceiverTrackingActive(true)
+      }
     } catch (error: any) {
       console.error('[Alert] Error accepting response:', error)
       window.alert('An error occurred. Please try again.')
