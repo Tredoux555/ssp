@@ -29,54 +29,19 @@ export const createClient = () => {
         },
         set(name: string, value: string, options: any) {
           // Set cookie with proper options for session persistence
-          // Enhanced for mobile compatibility
-          const isMobile = typeof window !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+          // Use lax for all cases - works reliably on both mobile and desktop
+          // Supabase auth uses same-origin requests, so lax is sufficient
           const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:'
-          
-          // CRITICAL FIX: samesite=none REQUIRES secure flag to be true
-          // If not HTTPS, use samesite=lax instead (works on mobile without secure)
-          const sameSite = options?.sameSite || (isMobile && isSecure ? 'none' : 'lax')
           
           const cookieOptions = [
             `${name}=${value}`,
             'path=/',
             options?.maxAge ? `max-age=${options.maxAge}` : 'max-age=31536000', // 1 year default
-            sameSite === 'none' ? 'secure' : (isSecure ? 'secure' : ''), // secure required for none, optional for others
-            `samesite=${sameSite}`,
+            isSecure ? 'secure' : '', // Set secure on HTTPS
+            options?.sameSite ? `samesite=${options.sameSite}` : 'samesite=lax', // Always use lax for reliability
           ].filter(Boolean).join('; ')
           
-          console.log('[DIAG] [Supabase] Setting cookie:', {
-            name,
-            hasValue: !!value,
-            isMobile,
-            isSecure,
-            sameSite,
-            options: cookieOptions,
-            timestamp: new Date().toISOString()
-          })
-          
           document.cookie = cookieOptions
-          
-          // Verify cookie was set (especially important on mobile)
-          const verifyCookie = document.cookie.split('; ').find(row => row.startsWith(`${name}=`))
-          if (!verifyCookie && value) {
-            console.warn('[DIAG] [Supabase] ⚠️ Cookie may not have been set:', {
-              name,
-              cookieEnabled: navigator.cookieEnabled,
-              isMobile,
-              isSecure,
-              sameSite,
-              timestamp: new Date().toISOString()
-            })
-          } else if (verifyCookie) {
-            console.log('[DIAG] [Supabase] ✅ Cookie verified as set:', {
-              name,
-              isMobile,
-              isSecure,
-              sameSite,
-              timestamp: new Date().toISOString()
-            })
-          }
         },
         remove(name: string, options: any) {
           // Remove cookie
