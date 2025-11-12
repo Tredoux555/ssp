@@ -992,117 +992,80 @@ export default function EmergencyActivePage() {
     scheduleNextPoll()
 
     // Subscribe to receiver location updates (only from accepted responders)
+    // FINAL FIX: Make Realtime subscription the primary source
+    // Trust that if a location appears in location_history, the user has accepted
+    // (The API endpoint already checks acceptance before saving)
     const unsubscribeReceiverLocations = subscribeToLocationHistory(alert.id, async (newLocation) => {
       if (isUnmountingRef.current) return // Don't update state if unmounting
       
-      console.log('[Sender] Location update received:', {
+      console.log('[Sender] 📍 Location update received from Realtime subscription:', {
         userId: newLocation.user_id,
         senderUserId: user.id,
-        isSender: newLocation.user_id === user.id
+        isSender: newLocation.user_id === user.id,
+        locationId: newLocation.id,
+        location: { lat: newLocation.latitude, lng: newLocation.longitude }
       })
       
       // Only process receiver locations (not sender's own location)
       if (newLocation.user_id !== user.id) {
-        // Use API to check if this user has accepted to respond (bypasses RLS)
-        try {
-          // Use no-store to prevent caching - we need real-time data
-          const acceptanceResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`, {
-            cache: 'no-store',
-            headers: {
-              'Cache-Control': 'no-cache'
-            }
-          })
+        // Trust the subscription - if location is in location_history, user has accepted
+        // (The save-receiver-location API endpoint already verifies acceptance)
+        console.log('[Sender] ✅ Adding receiver location from subscription (trusting acceptance):', {
+          receiverId: newLocation.user_id,
+          location: { lat: newLocation.latitude, lng: newLocation.longitude },
+          timestamp: newLocation.created_at,
+          locationId: newLocation.id
+        })
+        
+        setReceiverLocations((prev) => {
+          // Create a new Map instance to ensure React detects the change
+          const updated = new Map(prev)
+          const receiverId = newLocation.user_id
           
-          // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
-          if (acceptanceResponse.ok || acceptanceResponse.status === 304) {
-            // 304 responses have no body, so we need to handle it differently
-            let acceptanceData: any
-            if (acceptanceResponse.status === 304) {
-              // For 304, we'll reload all locations to get fresh data (safely)
-              safeLoadReceiverLocations()
-              return
-            } else {
-              acceptanceData = await acceptanceResponse.json()
-            }
-            const acceptedUserIds = acceptanceData.acceptedResponders?.map((r: { contact_user_id: string }) => r.contact_user_id) || []
-            const hasAccepted = acceptedUserIds.includes(newLocation.user_id)
-            
-            if (hasAccepted) {
-              console.log('[Sender] ✅ Adding accepted responder location from subscription:', {
-                receiverId: newLocation.user_id,
-                location: { lat: newLocation.latitude, lng: newLocation.longitude },
-                timestamp: newLocation.created_at,
-                locationId: newLocation.id
-              })
-              setReceiverLocations((prev) => {
-                // Create a new Map instance to ensure React detects the change
-                const updated = new Map(prev)
-                const receiverId = newLocation.user_id
-                
-                if (!updated.has(receiverId)) {
-                  updated.set(receiverId, [])
-                  setReceiverUserIds((prevIds) => {
-                    if (!prevIds.includes(receiverId)) {
-                      console.log('[Sender] ✅ Added new receiver to map:', receiverId)
-                      return [...prevIds, receiverId]
-                    }
-                    return prevIds
-                  })
-                }
-                
-                // Get existing locations and add new one
-                const receiverHistory = updated.get(receiverId) || []
-                
-                // Check if this location already exists (avoid duplicates)
-                const exists = receiverHistory.some(loc => loc.id === newLocation.id)
-                if (!exists) {
-                  // Add new location and sort by created_at (ascending - oldest first, newest last)
-                  const updatedHistory = [...receiverHistory, newLocation].sort((a, b) => {
-                    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                  })
-                  updated.set(receiverId, updatedHistory)
-                  
-                  console.log('[Sender] ✅ Updated receiver locations:', {
-                    receiverId,
-                    previousCount: receiverHistory.length,
-                    newCount: updatedHistory.length,
-                    latestLocation: updatedHistory.length > 0 ? {
-                      lat: updatedHistory[updatedHistory.length - 1].latitude,
-                      lng: updatedHistory[updatedHistory.length - 1].longitude,
-                      id: updatedHistory[updatedHistory.length - 1].id
-                    } : null
-                  })
-                } else {
-                  console.log('[Sender] ⚠️ Location already exists, skipping:', {
-                    receiverId,
-                    locationId: newLocation.id
-                  })
-                }
-                
-                return updated
-              })
-            } else {
-              // User hasn't accepted yet - ignore this location update
-              if (process.env.NODE_ENV === 'development') {
-                console.log('[Sender] ⏭️ Ignoring location update from non-accepted user:', newLocation.user_id)
+          if (!updated.has(receiverId)) {
+            updated.set(receiverId, [])
+            setReceiverUserIds((prevIds) => {
+              if (!prevIds.includes(receiverId)) {
+                console.log('[Sender] ✅ Added new receiver to map:', receiverId)
+                return [...prevIds, receiverId]
               }
-            }
+              return prevIds
+            })
+          }
+          
+          // Get existing locations and add new one
+          const receiverHistory = updated.get(receiverId) || []
+          
+          // Check if this location already exists (avoid duplicates)
+          const exists = receiverHistory.some(loc => loc.id === newLocation.id)
+          if (!exists) {
+            // Add new location and sort by created_at (ascending - oldest first, newest last)
+            const updatedHistory = [...receiverHistory, newLocation].sort((a, b) => {
+              return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            })
+            updated.set(receiverId, updatedHistory)
+            
+            console.log('[Sender] ✅ Updated receiver locations from subscription:', {
+              receiverId,
+              previousCount: receiverHistory.length,
+              newCount: updatedHistory.length,
+              latestLocation: updatedHistory.length > 0 ? {
+                lat: updatedHistory[updatedHistory.length - 1].latitude,
+                lng: updatedHistory[updatedHistory.length - 1].longitude,
+                id: updatedHistory[updatedHistory.length - 1].id
+              } : null
+            })
           } else {
-            // API call failed - fallback: reload all locations
-            if (process.env.NODE_ENV === 'development') {
-              console.warn('[Sender] ⚠️ Failed to check acceptance via API, reloading all locations')
-            }
-            safeLoadReceiverLocations()
+            console.log('[Sender] ⚠️ Location already exists, skipping:', {
+              receiverId,
+              locationId: newLocation.id
+            })
           }
-        } catch (apiError) {
-          // API call failed - fallback: reload all locations
-          if (process.env.NODE_ENV === 'development') {
-            console.warn('[Sender] ⚠️ Error checking acceptance via API:', apiError)
-          }
-          safeLoadReceiverLocations()
-        }
+          
+          return updated
+        })
       } else {
-        console.log('[Sender] Ignoring own location update')
+        console.log('[Sender] ⏭️ Ignoring own location update')
       }
     })
 

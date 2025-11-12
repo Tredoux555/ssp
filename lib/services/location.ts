@@ -208,6 +208,101 @@ export async function confirmLocation(
 }
 
 /**
+ * Get the best location by watching position for a short period
+ * Collects multiple readings and returns the one with best accuracy
+ */
+export async function getBestLocation(
+  maxWaitTime: number = 10000, // 10 seconds max
+  minReadings: number = 2, // Need at least 2 readings
+  maxReadings: number = 5 // Max 5 readings
+): Promise<{ lat: number; lng: number; accuracy?: number } | null> {
+  return new Promise((resolve) => {
+    const readings: Array<{ lat: number; lng: number; accuracy?: number; timestamp: number }> = []
+    let watchId: string | null = null
+    let timeoutId: NodeJS.Timeout | null = null
+    let isResolved = false
+
+    const finish = () => {
+      if (isResolved) return
+      isResolved = true
+
+      if (watchId) {
+        clearWatch(watchId).catch(() => {})
+      }
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+
+      if (readings.length === 0) {
+        // No readings - fallback to getCurrentLocation
+        getCurrentLocation().then(resolve)
+        return
+      }
+
+      // Find the reading with best accuracy (lowest accuracy value = best)
+      const bestReading = readings.reduce((best, current) => {
+        const bestAccuracy = best.accuracy || Infinity
+        const currentAccuracy = current.accuracy || Infinity
+        return currentAccuracy < bestAccuracy ? current : best
+      })
+
+      console.log('[Location] ✅ Best location selected:', {
+        totalReadings: readings.length,
+        bestAccuracy: bestReading.accuracy,
+        allAccuracies: readings.map(r => r.accuracy),
+        location: { lat: bestReading.lat, lng: bestReading.lng }
+      })
+
+      resolve({
+        lat: bestReading.lat,
+        lng: bestReading.lng,
+        accuracy: bestReading.accuracy
+      })
+    }
+
+    // Start watching position
+    watchPosition((position) => {
+      if (isResolved) return
+
+      readings.push({
+        ...position,
+        timestamp: Date.now()
+      })
+
+      console.log('[Location] 📍 Location reading collected:', {
+        reading: readings.length,
+        accuracy: position.accuracy,
+        location: { lat: position.lat, lng: position.lng }
+      })
+
+      // If we have enough readings and one is good (accuracy < 100m), finish early
+      if (readings.length >= minReadings) {
+        const hasGoodReading = readings.some(r => (r.accuracy || Infinity) < 100)
+        if (hasGoodReading || readings.length >= maxReadings) {
+          finish()
+          return
+        }
+      }
+    }).then((id) => {
+      if (id) {
+        watchId = id
+      } else {
+        // watchPosition failed - fallback to getCurrentLocation
+        getCurrentLocation().then(resolve)
+      }
+    }).catch(() => {
+      // watchPosition failed - fallback to getCurrentLocation
+      getCurrentLocation().then(resolve)
+    })
+
+    // Timeout after maxWaitTime
+    timeoutId = setTimeout(() => {
+      finish()
+    }, maxWaitTime)
+  })
+}
+
+/**
  * Update location in database (client-side replacement for /api/location/update)
  * Rate limited for automatic updates
  */

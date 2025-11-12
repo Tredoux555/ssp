@@ -629,91 +629,44 @@ export default function AlertResponsePage() {
       
       // Save receiver's location to location_history when they accept
       // This ensures the sender can see the receiver's location right away
-      // FIXED: Use API endpoint instead of client-side update (bypasses RLS)
+      // FINAL FIX: Hybrid strategy - use getBestLocation + try API first, fallback to client-side
       try {
         const locationSaveStartTime = Date.now()
+        const { getBestLocation } = await import('@/lib/services/location')
+        const { updateLocation: updateLocationService } = await import('@/lib/services/location')
         
-        // CRITICAL FIX: Retry logic with better location accuracy
-        const saveLocationWithRetry = async (retryCount = 0): Promise<boolean> => {
-          const maxRetries = 3
-          const maxAccuracyMeters = 1000 // Reject locations with accuracy > 1km
+        console.log('[DIAG] [Receiver] 📍 Checkpoint 7.1 - Location Save: Starting (using getBestLocation)', {
+          userId: user.id,
+          alertId: alert.id,
+          timestamp: new Date().toISOString()
+        })
+        
+        // Use getBestLocation to collect multiple readings and get the best one
+        const currentLoc = await getBestLocation(10000, 2, 5) // 10s max, min 2 readings, max 5
+        
+        if (!currentLoc) {
+          console.warn('[DIAG] [Receiver] ⚠️ Could not get location after getBestLocation')
+          // Still start tracking - it will get location later
+        } else {
+          const accuracyMeters = currentLoc.accuracy || 0
+          const isPoorAccuracy = accuracyMeters > 100
           
+          console.log('[DIAG] [Receiver] 📍 Checkpoint 7.1 - Location Save: Got best location', {
+            location: currentLoc,
+            accuracy: accuracyMeters,
+            accuracyMeters: `${accuracyMeters.toFixed(1)}m`,
+            isPoorAccuracy: isPoorAccuracy,
+            warning: isPoorAccuracy ? '⚠️ Location accuracy is poor - may show incorrect position' : '✅ Location accuracy is good',
+            userId: user.id,
+            alertId: alert.id,
+            timestamp: new Date().toISOString()
+          })
+          
+          // HYBRID SAVE STRATEGY: Try API first, fallback to client-side
+          let saveSuccess = false
+          
+          // Try API endpoint first (bypasses RLS)
           try {
-            console.log('[DIAG] [Receiver] 📍 Checkpoint 7.1 - Location Save: Starting', {
-              userId: user.id,
-              alertId: alert.id,
-              attempt: retryCount + 1,
-              maxRetries: maxRetries,
-              timestamp: new Date().toISOString()
-            })
-            
-            // Get location with retry for better accuracy
-            let currentLoc = await getCurrentLocation()
-            
-            // If accuracy is poor, wait and retry getting location
-            if (currentLoc && currentLoc.accuracy && currentLoc.accuracy > maxAccuracyMeters) {
-              console.warn('[DIAG] [Receiver] ⚠️ Location accuracy too poor, waiting for better GPS fix...', {
-                accuracy: `${currentLoc.accuracy.toFixed(1)}m`,
-                maxAllowed: `${maxAccuracyMeters}m`,
-                attempt: retryCount + 1
-              })
-              
-              // Wait 2 seconds for GPS to get better fix
-              await new Promise(resolve => setTimeout(resolve, 2000))
-              currentLoc = await getCurrentLocation()
-            }
-            
-            if (!currentLoc) {
-              console.warn('[DIAG] [Receiver] ⚠️ Could not get location', {
-                attempt: retryCount + 1,
-                willRetry: retryCount < maxRetries - 1
-              })
-              if (retryCount < maxRetries - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1000))
-                return saveLocationWithRetry(retryCount + 1)
-              }
-              return false
-            }
-            
-            // Validate location accuracy
-            const accuracyMeters = currentLoc.accuracy || 0
-            const isPoorAccuracy = accuracyMeters > 100
-            const isUnacceptableAccuracy = accuracyMeters > maxAccuracyMeters
-            
-            console.log('[DIAG] [Receiver] 📍 Checkpoint 7.1 - Location Save: Got location', {
-              location: currentLoc,
-              accuracy: accuracyMeters,
-              accuracyMeters: `${accuracyMeters.toFixed(1)}m`,
-              isPoorAccuracy: isPoorAccuracy,
-              isUnacceptableAccuracy: isUnacceptableAccuracy,
-              warning: isPoorAccuracy ? '⚠️ Location accuracy is poor - may show incorrect position' : '✅ Location accuracy is good',
-              userId: user.id,
-              alertId: alert.id,
-              attempt: retryCount + 1,
-              timestamp: new Date().toISOString()
-            })
-            
-            if (isUnacceptableAccuracy && retryCount < maxRetries - 1) {
-              console.warn('[DIAG] [Receiver] ⚠️ Location accuracy unacceptable, retrying...', {
-                accuracy: `${accuracyMeters.toFixed(1)}m`,
-                maxAllowed: `${maxAccuracyMeters}m`,
-                attempt: retryCount + 1,
-                willRetry: true
-              })
-              await new Promise(resolve => setTimeout(resolve, 2000))
-              return saveLocationWithRetry(retryCount + 1)
-            }
-            
-            if (isPoorAccuracy) {
-              console.warn('[DIAG] [Receiver] ⚠️ Poor location accuracy detected (but acceptable):', {
-                accuracy: `${accuracyMeters.toFixed(1)}m`,
-                suggestion: 'Enable high accuracy GPS mode in device settings',
-                location: currentLoc
-              })
-            }
-            
-            // Use API endpoint instead of client-side update (bypasses RLS)
-            // Add retry logic for 403 errors (race condition)
             let saveResponse: Response | null = null
             let lastError: any = null
             
@@ -730,6 +683,7 @@ export default function AlertResponsePage() {
                 })
                 
                 if (saveResponse.ok) {
+                  saveSuccess = true
                   break // Success, exit retry loop
                 }
                 
@@ -757,84 +711,94 @@ export default function AlertResponsePage() {
                 }
               }
             }
-
-            if (saveResponse && saveResponse.ok) {
+            
+            if (saveSuccess && saveResponse) {
               const saveData = await saveResponse.json()
               const locationSaveDuration = Date.now() - locationSaveStartTime
-              console.log('[DIAG] [Receiver] ✅ Checkpoint 7.1 - Location Save: Completed', {
+              console.log('[DIAG] [Receiver] ✅ Checkpoint 7.1 - Location Save: Completed via API', {
                 location: currentLoc,
                 locationId: saveData.location?.id,
                 alertId: alert.id,
                 userId: user.id,
                 timestamp: new Date().toISOString(),
-                duration: `${locationSaveDuration}ms`,
-                attempts: retryCount + 1
+                duration: `${locationSaveDuration}ms`
               })
-              
-              // Also update local state so map shows immediately
-              setReceiverLocation(currentLoc)
-              setReceiverLastUpdate(new Date())
-              return true
             } else {
-              const errorData = lastError || (saveResponse ? await saveResponse.json().catch(() => ({})) : {})
-              const locationSaveDuration = Date.now() - locationSaveStartTime
-              console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Failed', {
+              // API failed - try client-side fallback
+              console.warn('[DIAG] [Receiver] ⚠️ API save failed, trying client-side fallback...', {
                 status: saveResponse?.status,
-                error: errorData.error || errorData.details,
-                location: currentLoc,
+                error: lastError?.error || lastError?.details,
                 alertId: alert.id,
-                userId: user.id,
-                timestamp: new Date().toISOString(),
-                duration: `${locationSaveDuration}ms`,
-                attempts: retryCount + 1,
-                apiRetries: 3
+                userId: user.id
               })
               
-              // Retry if not last attempt
-              if (retryCount < maxRetries - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1000))
-                return saveLocationWithRetry(retryCount + 1)
+              try {
+                await updateLocationService(user.id, alert.id, currentLoc)
+                saveSuccess = true
+                console.log('[DIAG] [Receiver] ✅ Checkpoint 7.1 - Location Save: Completed via client-side fallback', {
+                  location: currentLoc,
+                  alertId: alert.id,
+                  userId: user.id,
+                  timestamp: new Date().toISOString()
+                })
+              } catch (clientError) {
+                console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Both API and client-side failed', {
+                  apiError: lastError?.error || lastError?.details,
+                  clientError: clientError,
+                  location: currentLoc,
+                  alertId: alert.id,
+                  userId: user.id,
+                  timestamp: new Date().toISOString()
+                })
+                saveSuccess = false
               }
-              return false
             }
-          } catch (locationError: any) {
+          } catch (saveError: any) {
             console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Exception', {
-              error: locationError?.message || locationError,
+              error: saveError?.message || saveError,
               alertId: alert.id,
               userId: user.id,
-              attempt: retryCount + 1,
               timestamp: new Date().toISOString()
             })
-            
-            // Retry if not last attempt
-            if (retryCount < maxRetries - 1) {
-              await new Promise(resolve => setTimeout(resolve, 1000))
-              return saveLocationWithRetry(retryCount + 1)
-            }
-            return false
+            saveSuccess = false
           }
-        }
-        
-        // Call the retry function
-        const saveSuccess = await saveLocationWithRetry()
-        
-        // Start continuous location tracking regardless of initial save success
-        // This ensures the sender gets live location updates
-        startLocationTracking(
-          user.id,
-          alert.id,
-          async (loc) => {
-            setReceiverLocation(loc)
-            setReceiverLastUpdate(new Date())
-            setReceiverTrackingActive(true)
-          },
-          20000 // Update every 20 seconds
-        )
-        console.log('[Receiver] ✅ Started continuous location tracking after acceptance')
-        setReceiverTrackingActive(true)
-        
-        if (!saveSuccess) {
-          console.warn('[DIAG] [Receiver] ⚠️ Initial location save failed, but tracking started - location will be saved via tracking')
+          
+          // Update local state so map shows immediately (regardless of save success)
+          setReceiverLocation(currentLoc)
+          setReceiverLastUpdate(new Date())
+          
+          // Start continuous location tracking regardless of initial save success
+          // This ensures the sender gets live location updates
+          startLocationTracking(
+            user.id,
+            alert.id,
+            async (loc) => {
+              setReceiverLocation(loc)
+              setReceiverLastUpdate(new Date())
+              setReceiverTrackingActive(true)
+            },
+            20000 // Update every 20 seconds
+          )
+          console.log('[Receiver] ✅ Started continuous location tracking after acceptance')
+          setReceiverTrackingActive(true)
+          
+          if (!saveSuccess) {
+            console.warn('[DIAG] [Receiver] ⚠️ Initial location save failed, but tracking started - location will be saved via tracking')
+          }
+        } else {
+          // No location but still start tracking - it will get location later
+          startLocationTracking(
+            user.id,
+            alert.id,
+            async (loc) => {
+              setReceiverLocation(loc)
+              setReceiverLastUpdate(new Date())
+              setReceiverTrackingActive(true)
+            },
+            20000
+          )
+          console.log('[Receiver] ✅ Started continuous location tracking (no initial location yet)')
+          setReceiverTrackingActive(true)
         }
         
         // Optional: Verify location was saved by querying it back
