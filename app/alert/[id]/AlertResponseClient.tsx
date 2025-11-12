@@ -814,58 +814,58 @@ export default function AlertResponsePage() {
             return false
           }
         }
-          
-          // Call the retry function
-          const saveSuccess = await saveLocationWithRetry()
-          
-          // Start continuous location tracking regardless of initial save success
-          // This ensures the sender gets live location updates
-          startLocationTracking(
-            user.id,
-            alert.id,
-            async (loc) => {
-              setReceiverLocation(loc)
-              setReceiverLastUpdate(new Date())
-              setReceiverTrackingActive(true)
-            },
-            20000 // Update every 20 seconds
-          )
-          console.log('[Receiver] ✅ Started continuous location tracking after acceptance')
-          setReceiverTrackingActive(true)
-          
-          if (!saveSuccess) {
-            console.warn('[DIAG] [Receiver] ⚠️ Initial location save failed, but tracking started - location will be saved via tracking')
-          }
-          
-          // Optional: Verify location was saved by querying it back
-          setTimeout(async () => {
-            try {
-              const supabase = createClient()
-              const { data: savedLocation } = await supabase
-                .from('location_history')
-                .select('id, latitude, longitude, alert_id, user_id, created_at')
-                .eq('alert_id', alert.id)
-                .eq('user_id', user.id)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle()
-              
-              if (savedLocation) {
-                console.log('[Receiver] ✅ Verified location saved in database:', {
-                  locationId: savedLocation.id,
-                  alertId: savedLocation.alert_id,
-                  userId: savedLocation.user_id,
-                  location: { lat: savedLocation.latitude, lng: savedLocation.longitude },
-                  timestamp: savedLocation.created_at
-                })
-              } else {
-                console.warn('[Receiver] ⚠️ Location not found in database after save - may be a timing issue')
-              }
-            } catch (verifyError) {
-              console.warn('[Receiver] ⚠️ Could not verify location save:', verifyError)
+        
+        // Call the retry function
+        const saveSuccess = await saveLocationWithRetry()
+        
+        // Start continuous location tracking regardless of initial save success
+        // This ensures the sender gets live location updates
+        startLocationTracking(
+          user.id,
+          alert.id,
+          async (loc) => {
+            setReceiverLocation(loc)
+            setReceiverLastUpdate(new Date())
+            setReceiverTrackingActive(true)
+          },
+          20000 // Update every 20 seconds
+        )
+        console.log('[Receiver] ✅ Started continuous location tracking after acceptance')
+        setReceiverTrackingActive(true)
+        
+        if (!saveSuccess) {
+          console.warn('[DIAG] [Receiver] ⚠️ Initial location save failed, but tracking started - location will be saved via tracking')
+        }
+        
+        // Optional: Verify location was saved by querying it back
+        setTimeout(async () => {
+          try {
+            const supabase = createClient()
+            const { data: savedLocation } = await supabase
+              .from('location_history')
+              .select('id, latitude, longitude, alert_id, user_id, created_at')
+              .eq('alert_id', alert.id)
+              .eq('user_id', user.id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+            
+            if (savedLocation) {
+              console.log('[Receiver] ✅ Verified location saved in database:', {
+                locationId: savedLocation.id,
+                alertId: savedLocation.alert_id,
+                userId: savedLocation.user_id,
+                location: { lat: savedLocation.latitude, lng: savedLocation.longitude },
+                timestamp: savedLocation.created_at
+              })
+            } else {
+              console.warn('[Receiver] ⚠️ Location not found in database after save - may be a timing issue')
             }
-          }, 1000)
-        } catch (locationError: any) {
+          } catch (verifyError) {
+            console.warn('[Receiver] ⚠️ Could not verify location save:', verifyError)
+          }
+        }, 1000)
+      } catch (locationError: any) {
           console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Exception', {
             error: locationError?.message || locationError,
             alertId: alert.id,
