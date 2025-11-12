@@ -651,6 +651,11 @@ export default function EmergencyActivePage() {
     loadReceiverLocations()
 
     // Subscribe to alert_responses updates to detect when responders accept
+    console.log('[DIAG] [Sender] 🔔 Setting up alert_responses subscription for acceptance detection:', {
+      alertId: alert.id,
+      timestamp: new Date().toISOString()
+    })
+    
     const unsubscribeAcceptance = createClient()
       ?.channel(`alert-responses-${alert.id}`)
       .on(
@@ -807,29 +812,40 @@ export default function EmergencyActivePage() {
         }
       )
       .subscribe((status: any, err?: any) => {
+        console.log('[DIAG] [Sender] 🔔 alert_responses subscription status:', {
+          status,
+          alertId: alert.id,
+          error: err,
+          timestamp: new Date().toISOString()
+        })
+        
         if (status === 'SUBSCRIBED') {
-          console.log('[Sender] ✅ Successfully subscribed to alert_responses updates')
+          console.log('[DIAG] [Sender] ✅ Successfully subscribed to alert_responses for acceptance detection:', {
+            alertId: alert.id,
+            timestamp: new Date().toISOString()
+          })
         } else if (status === 'CHANNEL_ERROR' || status === 'CLOSED' || status === 'TIMED_OUT') {
-          // Network or other error - log in development only
-          if (process.env.NODE_ENV === 'development') {
-            console.warn('[Sender] ⚠️ Subscription error:', {
-              status,
-              error: err,
-              note: 'Using polling fallback'
-            })
-          }
+          console.error('[DIAG] [Sender] ❌ alert_responses subscription failed:', {
+            status,
+            error: err,
+            alertId: alert.id,
+            note: 'Using polling fallback',
+            timestamp: new Date().toISOString()
+          })
           // Immediately trigger polling fallback when subscription fails
           safeLoadReceiverLocations()
         } else {
-          // Only log non-critical statuses in development
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[Sender] Alert responses subscription status:', status)
-          }
+          console.log('[DIAG] [Sender] ⚠️ alert_responses subscription status (non-critical):', {
+            status,
+            alertId: alert.id,
+            timestamp: new Date().toISOString()
+          })
           // If subscription closes for any reason, trigger polling
           if (status === 'CLOSED') {
-            if (process.env.NODE_ENV === 'development') {
-              console.warn('[Sender] ⚠️ Subscription closed - triggering immediate polling check')
-            }
+            console.warn('[DIAG] [Sender] ⚠️ Subscription closed - triggering immediate polling check:', {
+              alertId: alert.id,
+              timestamp: new Date().toISOString()
+            })
             loadReceiverLocations()
           }
         }
@@ -892,14 +908,45 @@ export default function EmergencyActivePage() {
               return
             }
             
-            console.log('[Sender] ✅ Polling detected acceptance change via API:', {
+            console.log('[DIAG] [Sender] ✅ Polling detected acceptance change via API:', {
               oldCount: acceptedResponderCount,
               newCount: currentCount,
               acceptedUserIds: data.acceptedResponders?.map((r: { contact_user_id: string }) => r.contact_user_id),
               alertId: alert.id,
-              pollingMode: mode
+              pollingMode: mode,
+              timestamp: new Date().toISOString()
             })
             setAcceptedResponderCount(currentCount)
+            
+            // Trigger the same acceptance handling as subscription would
+            const acceptedUserIds = data.acceptedResponders?.map((r: { contact_user_id: string }) => r.contact_user_id) || []
+            if (acceptedUserIds.length > 0) {
+              // Find the newly accepted user (one that wasn't in previous count)
+              const newlyAcceptedUserId = acceptedUserIds.find((id: string) => 
+                !receiverUserIds.includes(id)
+              )
+              
+              if (newlyAcceptedUserId) {
+                const acceptanceTimestamp = Date.now()
+                console.log('[DIAG] [Sender] ✅ Polling detected NEW acceptance - triggering location reload:', {
+                  newlyAcceptedUserId,
+                  alertId: alert.id,
+                  timestamp: new Date().toISOString()
+                })
+                
+                // Track this acceptance
+                recentAcceptancesRef.current.set(newlyAcceptedUserId, acceptanceTimestamp)
+                
+                // Enable enhanced polling
+                enhancedPollingRef.current = true
+                enhancedPollingStartTimeRef.current = Date.now()
+                
+                // Immediate load + retries
+                safeLoadReceiverLocations()
+                setTimeout(() => safeLoadReceiverLocations(), 1000)
+              }
+            }
+            
             // Immediately reload receiver locations when acceptance is detected (safely)
             safeLoadReceiverLocations()
           } else if (currentCount > 0) {
