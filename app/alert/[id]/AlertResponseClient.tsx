@@ -753,26 +753,13 @@ export default function AlertResponsePage() {
               console.warn('[Receiver] ⚠️ Could not verify location save:', verifyError)
             }
           }, 1000)
-          // Also update local state so map shows immediately
-          setReceiverLocation(currentLoc)
-          setReceiverLastUpdate(new Date())
-          
-          // Start continuous location tracking immediately after acceptance
-          // This ensures the sender gets live location updates
-          startLocationTracking(
-            user.id,
-            alert.id,
-            async (loc) => {
-              setReceiverLocation(loc)
-              setReceiverLastUpdate(new Date())
-              setReceiverTrackingActive(true)
-            },
-            20000 // Update every 20 seconds
-          )
-          console.log('[Receiver] ✅ Started continuous location tracking after acceptance')
-          setReceiverTrackingActive(true)
         } else {
-          console.warn('[Receiver] ⚠️ Could not get current location to save after acceptance')
+          console.warn('[DIAG] [Receiver] ⚠️ Checkpoint 7.1 - Location Save: Could not get location', {
+            alertId: alert.id,
+            userId: user.id,
+            timestamp: new Date().toISOString()
+          })
+          
           // Still start tracking even if initial location failed
           startLocationTracking(
             user.id,
@@ -786,7 +773,7 @@ export default function AlertResponsePage() {
           )
           setReceiverTrackingActive(true)
         }
-      } catch (locError) {
+      } catch (locationError: any) {
         console.warn('[Receiver] ⚠️ Could not save initial location after acceptance:', locError)
         // Don't block acceptance if location save fails, but still try to start tracking
         try {
