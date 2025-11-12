@@ -51,6 +51,19 @@ export default function EmergencyActivePage() {
   const loadingAlertRef = useRef(false) // Prevent concurrent loadAlert calls
   const addressRef = useRef<string>('') // Track address without causing re-renders
   const isUnmountingRef = useRef(false) // Prevent state updates during unmount/cancel
+  
+  // Refs for delayed retry mechanism (Phase 1)
+  const acceptanceRetryTimeout1Ref = useRef<NodeJS.Timeout | null>(null) // 2-second retry
+  const acceptanceRetryTimeout2Ref = useRef<NodeJS.Timeout | null>(null) // 5-second retry
+  
+  // Refs for enhanced polling mode (Phase 2)
+  const enhancedPollingRef = useRef(false) // Boolean flag for enhanced mode
+  const enhancedPollingTimeoutRef = useRef<NodeJS.Timeout | null>(null) // Timeout to disable enhanced mode
+  const enhancedPollingStartTimeRef = useRef<number | null>(null) // Track when enhanced mode started
+  const acceptancePollTimeoutRef = useRef<NodeJS.Timeout | null>(null) // Recursive polling timeout
+  
+  // Phase 5: Track recent acceptances to prevent duplicate retries
+  const recentAcceptancesRef = useRef<Map<string, number>>(new Map()) // Map of user ID -> timestamp
 
   // Update addressRef when address changes (doesn't trigger loadAlert)
   useEffect(() => {
@@ -421,8 +434,19 @@ export default function EmergencyActivePage() {
             mapSize: receiverMap.size,
             userIds: Array.from(userIds),
             receiverIds: Array.from(receiverMap.keys()),
-            totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0)
+            totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0),
+            timestamp: new Date().toISOString()
           })
+          
+          // Phase 3: Log successful location load (helps track which retry succeeded)
+          if (receiverMap.size > 0) {
+            console.log('[Sender] ✅ Phase 3 - Successfully loaded receiver locations after acceptance:', {
+              receiverCount: receiverMap.size,
+              receiverIds: Array.from(userIds),
+              totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0),
+              timestamp: new Date().toISOString()
+            })
+          }
 
           setReceiverLocations(receiverMap)
           setReceiverUserIds(Array.from(userIds))
@@ -439,7 +463,11 @@ export default function EmergencyActivePage() {
           setReceiverUserIds([])
         }
       } catch (error: any) {
-        console.error('[Sender] ❌ Error loading receiver locations via API:', {
+        const isTimeout = error?.message?.includes('timeout') || error?.message?.includes('Timeout')
+        const isAbort = error?.name === 'AbortError'
+        const isNetworkError = error instanceof TypeError && error.message?.includes('fetch')
+        
+        console.error('[Sender] ❌ Phase 3 - Error loading receiver locations via API:', {
           error: error,
           message: error?.message,
           name: error?.name,
@@ -447,17 +475,27 @@ export default function EmergencyActivePage() {
           alertId: alert.id,
           userId: user.id,
           errorType: error instanceof TypeError ? 'NetworkError' : error instanceof Error ? 'Error' : 'Unknown',
-          isTimeout: error?.message?.includes('timeout') || error?.message?.includes('Timeout'),
-          isAbort: error?.name === 'AbortError'
+          isTimeout: isTimeout,
+          isAbort: isAbort,
+          isNetworkError: isNetworkError,
+          timestamp: new Date().toISOString(),
+          recoverySuggestion: isTimeout || isAbort 
+            ? 'Will retry automatically via delayed retries and enhanced polling'
+            : isNetworkError
+            ? 'Network issue - will retry on next poll'
+            : 'Check API endpoint and authentication'
         })
         
-        // If it's a timeout or network error, don't clear the state - might be temporary
-        // Only clear if it's a permanent error (404, 401, etc.)
-        if (error?.message?.includes('timeout') || error?.name === 'AbortError') {
-          console.warn('[Sender] ⚠️ Request timed out - will retry on next poll/subscription update')
+        // Phase 3: Enhanced error handling - distinguish timeout vs permanent errors
+        if (isTimeout || isAbort) {
+          console.warn('[Sender] ⚠️ Phase 3 - Request timed out - will retry on next poll/subscription update or delayed retry')
           // Don't clear state - keep existing data and retry later
+        } else if (isNetworkError) {
+          console.warn('[Sender] ⚠️ Phase 3 - Network error - will retry on next poll')
+          // Don't clear state - network issues are temporary
         } else {
-          // For other errors, clear state
+          // For permanent errors (404, 401, 500), clear state
+          console.warn('[Sender] ⚠️ Phase 3 - Permanent error detected - clearing receiver locations state')
           setReceiverLocations(new Map())
           setReceiverUserIds([])
         }
@@ -509,14 +547,124 @@ export default function EmergencyActivePage() {
           })
           // When someone accepts, reload receiver locations and update count
           if (payload.new.acknowledged_at) {
+            const contactUserId = payload.new.contact_user_id
+            const acceptanceTimestamp = Date.now()
+            
+            // Phase 5: Check if this is a recent acceptance (within last 15 seconds)
+            const recentAcceptanceTime = recentAcceptancesRef.current.get(contactUserId)
+            const isRecentAcceptance = recentAcceptanceTime && (acceptanceTimestamp - recentAcceptanceTime) < 15000
+            
+            if (isRecentAcceptance) {
+              console.log('[Sender] ⏭️ Phase 5 - Skipping duplicate acceptance handling (recently processed):', {
+                contactUserId: contactUserId,
+                previousTimestamp: new Date(recentAcceptanceTime).toISOString(),
+                currentTimestamp: new Date(acceptanceTimestamp).toISOString(),
+                elapsedSeconds: Math.round((acceptanceTimestamp - recentAcceptanceTime) / 1000)
+              })
+              return // Skip duplicate processing
+            }
+            
+            // Phase 5: Track this acceptance
+            recentAcceptancesRef.current.set(contactUserId, acceptanceTimestamp)
+            
+            // Phase 5: Clean up old acceptances (older than 15 seconds)
+            const fifteenSecondsAgo = acceptanceTimestamp - 15000
+            for (const [userId, timestamp] of recentAcceptancesRef.current.entries()) {
+              if (timestamp < fifteenSecondsAgo) {
+                recentAcceptancesRef.current.delete(userId)
+              }
+            }
+            
             console.log('[Sender] ✅ Responder accepted - reloading locations:', {
-              contactUserId: payload.new.contact_user_id,
-              alertId: alert.id
+              contactUserId: contactUserId,
+              alertId: alert.id,
+              timestamp: new Date(acceptanceTimestamp).toISOString(),
+              recentAcceptancesCount: recentAcceptancesRef.current.size
             })
+            
+            // Clear any existing retry timeouts to prevent duplicates
+            if (acceptanceRetryTimeout1Ref.current) {
+              clearTimeout(acceptanceRetryTimeout1Ref.current)
+              acceptanceRetryTimeout1Ref.current = null
+            }
+            if (acceptanceRetryTimeout2Ref.current) {
+              clearTimeout(acceptanceRetryTimeout2Ref.current)
+              acceptanceRetryTimeout2Ref.current = null
+            }
+            
+            // Phase 2: Enable enhanced polling mode
+            if (enhancedPollingTimeoutRef.current) {
+              clearTimeout(enhancedPollingTimeoutRef.current)
+              enhancedPollingTimeoutRef.current = null
+            }
+            enhancedPollingRef.current = true
+            enhancedPollingStartTimeRef.current = Date.now()
+            console.log('[Sender] 🚀 Phase 2 - Enhanced polling mode activated (1s interval for 10s)')
+            
+            // Phase 2: Disable enhanced polling after 10 seconds
+            enhancedPollingTimeoutRef.current = setTimeout(() => {
+              if (!isUnmountingRef.current) {
+                enhancedPollingRef.current = false
+                enhancedPollingStartTimeRef.current = null
+                console.log('[Sender] 🔄 Phase 2 - Enhanced polling mode deactivated (returning to 3s interval)')
+              }
+            }, 10000)
+            
             // Update count immediately
             setAcceptedResponderCount((prev) => prev + 1)
-            // Reload receiver locations (safely - won't interrupt uploads)
+            
+            // Phase 1: Immediate load attempt
+            const acceptanceTimestampISO = new Date(acceptanceTimestamp).toISOString()
+            console.log('[Sender] 🔄 Phase 1 - Immediate load attempt for accepted responder:', {
+              contactUserId: contactUserId,
+              timestamp: acceptanceTimestampISO,
+              attempt: 'immediate'
+            })
             safeLoadReceiverLocations()
+            
+            // Phase 1: Delayed retry after 2 seconds (gives time for location save)
+            acceptanceRetryTimeout1Ref.current = setTimeout(() => {
+              if (!isUnmountingRef.current) {
+                // Phase 5: Verify this acceptance is still recent before retrying
+                const currentAcceptanceTime = recentAcceptancesRef.current.get(contactUserId)
+                if (!currentAcceptanceTime || (Date.now() - currentAcceptanceTime) > 15000) {
+                  console.log('[Sender] ⏭️ Phase 5 - Skipping retry 1 (acceptance no longer recent):', contactUserId)
+                  return
+                }
+                
+                const retryTimestamp = new Date().toISOString()
+                const elapsed = Math.round((Date.now() - acceptanceTimestamp) / 1000)
+                console.log('[Sender] 🔄 Phase 1 - Retry attempt 1 (2s delay) for accepted responder:', {
+                  contactUserId: contactUserId,
+                  timestamp: retryTimestamp,
+                  elapsedSeconds: elapsed,
+                  attempt: 'retry-1'
+                })
+                safeLoadReceiverLocations()
+              }
+            }, 2000)
+            
+            // Phase 1: Final retry after 5 seconds (handles network delays)
+            acceptanceRetryTimeout2Ref.current = setTimeout(() => {
+              if (!isUnmountingRef.current) {
+                // Phase 5: Verify this acceptance is still recent before retrying
+                const currentAcceptanceTime = recentAcceptancesRef.current.get(contactUserId)
+                if (!currentAcceptanceTime || (Date.now() - currentAcceptanceTime) > 15000) {
+                  console.log('[Sender] ⏭️ Phase 5 - Skipping retry 2 (acceptance no longer recent):', contactUserId)
+                  return
+                }
+                
+                const retryTimestamp = new Date().toISOString()
+                const elapsed = Math.round((Date.now() - acceptanceTimestamp) / 1000)
+                console.log('[Sender] 🔄 Phase 1 - Retry attempt 2 (5s delay) for accepted responder:', {
+                  contactUserId: contactUserId,
+                  timestamp: retryTimestamp,
+                  elapsedSeconds: elapsed,
+                  attempt: 'retry-2'
+                })
+                safeLoadReceiverLocations()
+              }
+            }, 5000)
           }
         }
       )
@@ -549,68 +697,106 @@ export default function EmergencyActivePage() {
         }
       })
     
-    // Add polling fallback to check for accepted responders (in case subscription fails)
-    // Poll every 3 seconds to check if anyone has accepted (more frequent for better responsiveness)
+    // Phase 2: Add polling fallback with enhanced mode support
+    // Uses recursive setTimeout to allow dynamic interval adjustment
+    // Poll every 1 second when enhanced mode active, 3 seconds otherwise
     // Uses API endpoint to bypass RLS
-    const acceptancePollInterval = setInterval(async () => {
-      if (!alert || !user || isUnmountingRef.current) return // Check unmounting flag
+    const scheduleNextPoll = () => {
+      if (isUnmountingRef.current) return // Don't schedule if unmounting
       
-      try {
-        // Use API endpoint instead of direct query (bypasses RLS)
-        // Use no-store to prevent caching - we need real-time data
-        const response = await fetch(`/api/emergency/${alert.id}/accepted-responders`, {
-          cache: 'no-store',
-          headers: {
-            'Cache-Control': 'no-cache'
-          }
-        })
-        
-        // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
-        if (!response.ok && response.status !== 304) {
-          // Silently handle errors - API might be temporarily unavailable
-          if (process.env.NODE_ENV === 'development') {
-            const errorData = await response.json().catch(() => ({}))
-            console.warn('[Sender] ⚠️ Polling API error:', {
-              status: response.status,
-              error: errorData.error
-            })
-          }
+      // Phase 2: Determine polling interval based on enhanced mode
+      const pollInterval = enhancedPollingRef.current ? 1000 : 3000
+      const mode = enhancedPollingRef.current ? 'enhanced (1s)' : 'normal (3s)'
+      
+      if (process.env.NODE_ENV === 'development' && enhancedPollingRef.current) {
+        const elapsed = enhancedPollingStartTimeRef.current 
+          ? Math.round((Date.now() - enhancedPollingStartTimeRef.current) / 1000)
+          : 0
+        console.log(`[Sender] 🔄 Phase 2 - Polling in ${mode} mode (${elapsed}s elapsed)`)
+      }
+      
+      acceptancePollTimeoutRef.current = setTimeout(async () => {
+        if (!alert || !user || isUnmountingRef.current) {
+          acceptancePollTimeoutRef.current = null
           return
         }
         
-        const data = await response.json()
-        const currentCount = data.count || 0
-        
-        if (currentCount !== acceptedResponderCount) {
-          if (isUnmountingRef.current) return // Don't update if unmounting
-          
-          console.log('[Sender] ✅ Polling detected acceptance change via API:', {
-            oldCount: acceptedResponderCount,
-            newCount: currentCount,
-            acceptedUserIds: data.acceptedResponders?.map((r: { contact_user_id: string }) => r.contact_user_id),
-            alertId: alert.id
+        try {
+          // Use API endpoint instead of direct query (bypasses RLS)
+          // Use no-store to prevent caching - we need real-time data
+          const response = await fetch(`/api/emergency/${alert.id}/accepted-responders`, {
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache'
+            }
           })
-          setAcceptedResponderCount(currentCount)
-          // Immediately reload receiver locations when acceptance is detected (safely)
-          safeLoadReceiverLocations()
-        } else if (currentCount > 0) {
-          if (isUnmountingRef.current) return // Don't update if unmounting
           
-          // Even if count hasn't changed, periodically reload locations to get latest updates
-          // This ensures we get location updates even if subscription is working
-          console.log('[Sender] 🔄 Periodic location refresh via API (polling fallback):', {
-            acceptedCount: currentCount,
-            alertId: alert.id
-          })
-          safeLoadReceiverLocations()
+          // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
+          if (!response.ok && response.status !== 304) {
+            // Silently handle errors - API might be temporarily unavailable
+            if (process.env.NODE_ENV === 'development') {
+              const errorData = await response.json().catch(() => ({}))
+              console.warn('[Sender] ⚠️ Polling API error:', {
+                status: response.status,
+                error: errorData.error
+              })
+            }
+            scheduleNextPoll() // Continue polling despite error
+            return
+          }
+          
+          const data = await response.json()
+          const currentCount = data.count || 0
+          
+          if (currentCount !== acceptedResponderCount) {
+            if (isUnmountingRef.current) {
+              acceptancePollTimeoutRef.current = null
+              return
+            }
+            
+            console.log('[Sender] ✅ Polling detected acceptance change via API:', {
+              oldCount: acceptedResponderCount,
+              newCount: currentCount,
+              acceptedUserIds: data.acceptedResponders?.map((r: { contact_user_id: string }) => r.contact_user_id),
+              alertId: alert.id,
+              pollingMode: mode
+            })
+            setAcceptedResponderCount(currentCount)
+            // Immediately reload receiver locations when acceptance is detected (safely)
+            safeLoadReceiverLocations()
+          } else if (currentCount > 0) {
+            if (isUnmountingRef.current) {
+              acceptancePollTimeoutRef.current = null
+              return
+            }
+            
+            // Even if count hasn't changed, periodically reload locations to get latest updates
+            // This ensures we get location updates even if subscription is working
+            if (process.env.NODE_ENV === 'development') {
+              console.log('[Sender] 🔄 Periodic location refresh via API (polling fallback):', {
+                acceptedCount: currentCount,
+                alertId: alert.id,
+                pollingMode: mode
+              })
+            }
+            safeLoadReceiverLocations()
+          }
+          
+          // Schedule next poll
+          scheduleNextPoll()
+        } catch (pollErr) {
+          // Silently handle polling errors - non-critical
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[Sender] Polling error (non-critical):', pollErr)
+          }
+          // Continue polling despite error
+          scheduleNextPoll()
         }
-      } catch (pollErr) {
-        // Silently handle polling errors - non-critical
-        if (process.env.NODE_ENV === 'development') {
-          console.warn('[Sender] Polling error (non-critical):', pollErr)
-        }
-      }
-    }, 3000) // Poll every 3 seconds for better responsiveness
+      }, pollInterval)
+    }
+    
+    // Start polling
+    scheduleNextPoll()
 
     // Subscribe to receiver location updates (only from accepted responders)
     const unsubscribeReceiverLocations = subscribeToLocationHistory(alert.id, async (newLocation) => {
@@ -870,10 +1056,35 @@ export default function EmergencyActivePage() {
       unsubscribeReceiverLocations()
       unsubscribeAcceptance?.unsubscribe()
       
-      // Cleanup polling intervals
-      if (acceptancePollInterval) {
-        clearInterval(acceptancePollInterval)
+      // Phase 2: Cleanup polling (using recursive setTimeout pattern)
+      if (acceptancePollTimeoutRef.current) {
+        clearTimeout(acceptancePollTimeoutRef.current)
+        acceptancePollTimeoutRef.current = null
       }
+      
+      // Phase 2: Cleanup enhanced polling timeout
+      if (enhancedPollingTimeoutRef.current) {
+        clearTimeout(enhancedPollingTimeoutRef.current)
+        enhancedPollingTimeoutRef.current = null
+      }
+      enhancedPollingRef.current = false
+      enhancedPollingStartTimeRef.current = null
+      console.log('[Sender] 🧹 Phase 2 - Cleaned up enhanced polling')
+      
+      // Phase 1: Cleanup retry timeouts
+      if (acceptanceRetryTimeout1Ref.current) {
+        clearTimeout(acceptanceRetryTimeout1Ref.current)
+        acceptanceRetryTimeout1Ref.current = null
+      }
+      if (acceptanceRetryTimeout2Ref.current) {
+        clearTimeout(acceptanceRetryTimeout2Ref.current)
+        acceptanceRetryTimeout2Ref.current = null
+      }
+      console.log('[Sender] 🧹 Phase 1 - Cleaned up retry timeouts')
+      
+      // Phase 5: Cleanup recent acceptances tracking
+      recentAcceptancesRef.current.clear()
+      console.log('[Sender] 🧹 Phase 5 - Cleaned up recent acceptances tracking')
       
       // Cleanup audio
       if (audio) {
