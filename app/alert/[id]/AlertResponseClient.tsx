@@ -647,6 +647,18 @@ export default function AlertResponsePage() {
         if (!currentLoc) {
           console.warn('[DIAG] [Receiver] ⚠️ Could not get location after getBestLocation')
           // Still start tracking - it will get location later
+          startLocationTracking(
+            user.id,
+            alert.id,
+            async (loc) => {
+              setReceiverLocation(loc)
+              setReceiverLastUpdate(new Date())
+              setReceiverTrackingActive(true)
+            },
+            20000
+          )
+          console.log('[Receiver] ✅ Started continuous location tracking (no initial location yet)')
+          setReceiverTrackingActive(true)
         } else {
           const accuracyMeters = currentLoc.accuracy || 0
           const isPoorAccuracy = accuracyMeters > 100
@@ -785,20 +797,6 @@ export default function AlertResponsePage() {
           if (!saveSuccess) {
             console.warn('[DIAG] [Receiver] ⚠️ Initial location save failed, but tracking started - location will be saved via tracking')
           }
-        } else {
-          // No location but still start tracking - it will get location later
-          startLocationTracking(
-            user.id,
-            alert.id,
-            async (loc) => {
-              setReceiverLocation(loc)
-              setReceiverLastUpdate(new Date())
-              setReceiverTrackingActive(true)
-            },
-            20000
-          )
-          console.log('[Receiver] ✅ Started continuous location tracking (no initial location yet)')
-          setReceiverTrackingActive(true)
         }
         
         // Optional: Verify location was saved by querying it back
