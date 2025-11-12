@@ -21,27 +21,64 @@ export const createClient = () => {
     const client = createBrowserClient(supabaseUrl, supabaseAnonKey, {
       cookies: {
         get(name: string) {
-          // Get cookie from document.cookie
+          // Get cookie from document.cookie - enhanced for mobile reliability
+          if (typeof document === 'undefined') return undefined
+          
           const value = `; ${document.cookie}`
           const parts = value.split(`; ${name}=`)
-          if (parts.length === 2) return parts.pop()?.split(';').shift()
+          if (parts.length === 2) {
+            const cookieValue = parts.pop()?.split(';').shift()
+            // Log for debugging on mobile
+            if (cookieValue) {
+              console.log('[DIAG] [Supabase] Cookie read:', { name, hasValue: true, length: cookieValue.length })
+            }
+            return cookieValue
+          }
+          
+          // Log when cookie not found (helps debug mobile issues)
+          console.log('[DIAG] [Supabase] Cookie not found:', { name, allCookies: document.cookie.substring(0, 100) })
           return undefined
         },
         set(name: string, value: string, options: any) {
           // Set cookie with proper options for session persistence
-          // Use lax for all cases - works reliably on both mobile and desktop
-          // Supabase auth uses same-origin requests, so lax is sufficient
+          // Respect Supabase's sameSite option if provided, otherwise use lax
           const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:'
+          const sameSite = options?.sameSite || 'lax'
+          
+          // CRITICAL: samesite=none REQUIRES secure flag
+          // If Supabase requests none but we're not on HTTPS, fall back to lax
+          const finalSameSite = (sameSite === 'none' && !isSecure) ? 'lax' : sameSite
+          const needsSecure = finalSameSite === 'none' || isSecure
           
           const cookieOptions = [
             `${name}=${value}`,
             'path=/',
             options?.maxAge ? `max-age=${options.maxAge}` : 'max-age=31536000', // 1 year default
-            isSecure ? 'secure' : '', // Set secure on HTTPS
-            options?.sameSite ? `samesite=${options.sameSite}` : 'samesite=lax', // Always use lax for reliability
+            needsSecure ? 'secure' : '',
+            `samesite=${finalSameSite}`,
           ].filter(Boolean).join('; ')
           
+          console.log('[DIAG] [Supabase] Setting cookie:', {
+            name,
+            hasValue: !!value,
+            sameSite: finalSameSite,
+            secure: needsSecure,
+            isHTTPS: isSecure
+          })
+          
           document.cookie = cookieOptions
+          
+          // Verify cookie was set (critical for mobile)
+          setTimeout(() => {
+            const verifyCookie = document.cookie.split('; ').find(row => row.startsWith(`${name}=`))
+            if (!verifyCookie && value) {
+              console.warn('[DIAG] [Supabase] ⚠️ Cookie may not have been set:', {
+                name,
+                cookieEnabled: navigator.cookieEnabled,
+                timestamp: new Date().toISOString()
+              })
+            }
+          }, 50)
         },
         remove(name: string, options: any) {
           // Remove cookie

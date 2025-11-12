@@ -158,14 +158,33 @@ export default function DashboardPage() {
     
     // Only redirect if auth loading is complete and no user
     if (!user) {
-      // Longer delay on mobile to prevent redirect loops
-      // Mobile networks may be slower to update auth state
-      const delay = typeof window !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ? 1000 : 500
-      const redirectTimeout = setTimeout(() => {
+      // CRITICAL FIX: On mobile, check session directly before redirecting
+      // Sometimes auth state doesn't update quickly enough on mobile
+      const isMobile = typeof window !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+      const delay = isMobile ? 2000 : 1000 // Longer delay on mobile
+      
+      const redirectTimeout = setTimeout(async () => {
         // Double-check user is still not set before redirecting
-        // This prevents redirect loops if user state updates during delay
         if (!user) {
+          // Last resort: Check session directly (especially important on mobile)
+          if (isMobile) {
+            try {
+              const { createClient } = await import('@/lib/supabase')
+              const supabase = createClient()
+              if (supabase) {
+                const { data: { session } } = await supabase.auth.getSession()
+                if (session?.user) {
+                  console.log('[Dashboard] ✅ Session found on mobile - not redirecting')
+                  return // Session exists, don't redirect
+                }
+              }
+            } catch (err) {
+              console.warn('[Dashboard] Session check failed:', err)
+            }
+          }
+          
           // Use window.location.href for consistency with mobile and better reliability
+          console.log('[Dashboard] No user found - redirecting to login')
           window.location.href = '/auth/login'
         }
       }, delay)
