@@ -161,7 +161,9 @@ export default function EmergencyActivePage() {
     // Uses server-side API endpoints to bypass RLS
     const loadReceiverLocations = async () => {
       const diagStartTime = Date.now()
-      console.log('[DIAG] [Sender] 🔄 loadReceiverLocations called:', {
+      const timingCheckpoints: Record<string, number> = { start: diagStartTime }
+      
+      console.log('[DIAG] [Sender] 🔄 Checkpoint 8 - Timing Analysis: loadReceiverLocations started', {
         hasAlert: !!alert,
         alertId: alert?.id,
         urlAlertId: alertId,
@@ -228,12 +230,14 @@ export default function EmergencyActivePage() {
       
       try {
         const fetchStartTime = Date.now()
+        timingCheckpoints.acceptedRespondersStart = fetchStartTime
         console.log('[DIAG] [Sender] 🌐 Checkpoint 1.2 - API Call: accepted-responders', {
           url: `/api/emergency/${alert.id}/accepted-responders`,
           timeout: '10s',
           timestamp: new Date().toISOString(),
           alertId: alert.id,
-          userId: user.id
+          userId: user.id,
+          timeSinceStart: `${fetchStartTime - diagStartTime}ms`
         })
         
         // Use API endpoint to get accepted responders (bypasses RLS)
@@ -250,14 +254,19 @@ export default function EmergencyActivePage() {
           10000 // 10 second timeout
         )
         
-        const fetchDuration = Date.now() - fetchStartTime
+        const fetchEndTime = Date.now()
+        const fetchDuration = fetchEndTime - fetchStartTime
+        timingCheckpoints.acceptedRespondersEnd = fetchEndTime
+        timingCheckpoints.acceptedRespondersDuration = fetchDuration
+        
         console.log('[DIAG] [Sender] ✅ Checkpoint 1.2 - API Response: accepted-responders', {
           status: acceptedResponse.status,
           statusText: acceptedResponse.statusText,
           ok: acceptedResponse.ok,
           duration: `${fetchDuration}ms`,
           url: `/api/emergency/${alert.id}/accepted-responders`,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          timeSinceStart: `${fetchEndTime - diagStartTime}ms`
         })
         
         // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
@@ -361,12 +370,15 @@ export default function EmergencyActivePage() {
         // Use API endpoint to get receiver locations (bypasses RLS)
         // Use no-store to prevent caching - we need real-time data
         const locationsFetchStartTime = Date.now()
+        timingCheckpoints.receiverLocationsStart = locationsFetchStartTime
         console.log('[DIAG] [Sender] 🌐 Checkpoint 1.2 - API Call: receiver-locations', {
           url: `/api/emergency/${alert.id}/receiver-locations`,
           timeout: '10s',
           timestamp: new Date().toISOString(),
           alertId: alert.id,
-          acceptedUserIds: acceptedUserIds
+          acceptedUserIds: acceptedUserIds,
+          timeSinceStart: `${locationsFetchStartTime - diagStartTime}ms`,
+          timeSinceAcceptedResponders: `${locationsFetchStartTime - fetchEndTime}ms`
         })
         
         const locationsResponse = await fetchWithTimeout(
@@ -380,14 +392,19 @@ export default function EmergencyActivePage() {
           10000 // 10 second timeout
         )
         
-        const locationsFetchDuration = Date.now() - locationsFetchStartTime
+        const locationsFetchEndTime = Date.now()
+        const locationsFetchDuration = locationsFetchEndTime - locationsFetchStartTime
+        timingCheckpoints.receiverLocationsEnd = locationsFetchEndTime
+        timingCheckpoints.receiverLocationsDuration = locationsFetchDuration
+        
         console.log('[DIAG] [Sender] ✅ Checkpoint 1.2 - API Response: receiver-locations', {
           status: locationsResponse.status,
           statusText: locationsResponse.statusText,
           ok: locationsResponse.ok,
           duration: `${locationsFetchDuration}ms`,
           url: `/api/emergency/${alert.id}/receiver-locations`,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          timeSinceStart: `${locationsFetchEndTime - diagStartTime}ms`
         })
         
         // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
@@ -407,6 +424,18 @@ export default function EmergencyActivePage() {
         const locationsData = await locationsResponse.json()
         const groupedByUser = locationsData.groupedByUser || {}
         const allLocations = locationsData.receiverLocations || []
+
+        // Phase 9: Data validation
+        const validationErrors: string[] = []
+        if (!Array.isArray(allLocations)) {
+          validationErrors.push('receiverLocations is not an array')
+        }
+        if (typeof groupedByUser !== 'object' || groupedByUser === null) {
+          validationErrors.push('groupedByUser is not an object')
+        }
+        if (acceptedUserIds.length > 0 && allLocations.length === 0) {
+          validationErrors.push('WARNING: Accepted responders exist but no locations found')
+        }
 
         console.log('[DIAG] [Sender] 📍 Checkpoint 1.2 - API Data Parsed: receiver-locations', {
           rawResponse: locationsData,
@@ -428,6 +457,18 @@ export default function EmergencyActivePage() {
           })),
           timestamp: new Date().toISOString()
         })
+        
+        // Phase 9: Log validation results
+        if (validationErrors.length > 0) {
+          console.warn('[DIAG] [Sender] ⚠️ Checkpoint 9 - Data Validation: Errors found', {
+            errors: validationErrors,
+            timestamp: new Date().toISOString()
+          })
+        } else {
+          console.log('[DIAG] [Sender] ✅ Checkpoint 9 - Data Validation: Passed', {
+            timestamp: new Date().toISOString()
+          })
+        }
 
         if (allLocations && allLocations.length > 0) {
           console.log('[Sender] ✅ Loaded receiver locations via API:', {
@@ -493,13 +534,34 @@ export default function EmergencyActivePage() {
           })
           
           // Phase 3: Log successful location load (helps track which retry succeeded)
+          const stateUpdateTime = Date.now()
+          timingCheckpoints.stateUpdate = stateUpdateTime
+          timingCheckpoints.totalDuration = stateUpdateTime - diagStartTime
+          
           if (receiverMap.size > 0) {
             console.log('[DIAG] [Sender] ✅ Checkpoint 1.3 - Successfully loaded receiver locations:', {
               receiverCount: receiverMap.size,
               receiverIds: Array.from(userIds),
               totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0),
               timestamp: new Date().toISOString(),
-              elapsedTime: `${Date.now() - diagStartTime}ms`
+              elapsedTime: `${stateUpdateTime - diagStartTime}ms`
+            })
+            
+            // Phase 8: Comprehensive timing analysis
+            console.log('[DIAG] [Sender] ⏱️ Checkpoint 8 - Timing Analysis Summary:', {
+              totalDuration: `${timingCheckpoints.totalDuration}ms`,
+              acceptedRespondersDuration: `${timingCheckpoints.acceptedRespondersDuration}ms`,
+              receiverLocationsDuration: `${timingCheckpoints.receiverLocationsDuration}ms`,
+              timeBetweenCalls: `${timingCheckpoints.receiverLocationsStart - timingCheckpoints.acceptedRespondersEnd}ms`,
+              checkpoints: {
+                start: timingCheckpoints.start,
+                acceptedRespondersStart: timingCheckpoints.acceptedRespondersStart,
+                acceptedRespondersEnd: timingCheckpoints.acceptedRespondersEnd,
+                receiverLocationsStart: timingCheckpoints.receiverLocationsStart,
+                receiverLocationsEnd: timingCheckpoints.receiverLocationsEnd,
+                stateUpdate: timingCheckpoints.stateUpdate
+              },
+              timestamp: new Date().toISOString()
             })
           }
 
