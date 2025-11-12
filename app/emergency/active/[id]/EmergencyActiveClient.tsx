@@ -628,56 +628,72 @@ export default function EmergencyActivePage() {
         }
       })
     
-    // Phase 2: Add polling fallback with enhanced mode support
-    // Uses recursive setTimeout to allow dynamic interval adjustment
-    // Poll every 1 second when enhanced mode active, 3 seconds otherwise
-    // Uses API endpoint to bypass RLS
+    // COMPREHENSIVE FIX: Exponential backoff polling with direct Supabase queries
+    // Polls at: 1s, 2s, 4s, 8s, then 10s (max) - resets to 1s when change detected
+    const pollingAttemptRef = useRef(0)
+    const basePollInterval = 1000 // Start with 1 second
+    const maxPollInterval = 10000 // Max 10 seconds
+    
     const scheduleNextPoll = () => {
-      if (isUnmountingRef.current) return // Don't schedule if unmounting
+      if (isUnmountingRef.current) return
       
-      // Phase 2: Determine polling interval based on enhanced mode
-      const pollInterval = enhancedPollingRef.current ? 1000 : 3000
-      const mode = enhancedPollingRef.current ? 'enhanced (1s)' : 'normal (3s)'
+      // Calculate exponential backoff interval
+      const pollInterval = Math.min(
+        basePollInterval * Math.pow(2, Math.min(pollingAttemptRef.current, 3)), // 1s, 2s, 4s, 8s
+        maxPollInterval // Cap at 10s
+      )
       
-      if (process.env.NODE_ENV === 'development' && enhancedPollingRef.current) {
-        const elapsed = enhancedPollingStartTimeRef.current 
-          ? Math.round((Date.now() - enhancedPollingStartTimeRef.current) / 1000)
-          : 0
-        console.log(`[Sender] 🔄 Phase 2 - Polling in ${mode} mode (${elapsed}s elapsed)`)
+      // Reset attempt counter after max interval (we're in steady state)
+      if (pollInterval >= maxPollInterval) {
+        pollingAttemptRef.current = 0
       }
       
+      console.log('[DIAG] [Sender] 🔄 COMPREHENSIVE FIX - Scheduling next poll:', {
+        attempt: pollingAttemptRef.current + 1,
+        pollInterval: `${pollInterval}ms`,
+        timestamp: new Date().toISOString()
+      })
+      
       acceptancePollTimeoutRef.current = setTimeout(async () => {
-        if (!alert || !user || isUnmountingRef.current) {
+        if (isUnmountingRef.current) {
           acceptancePollTimeoutRef.current = null
           return
         }
         
+        if (!alert || !user) {
+          scheduleNextPoll()
+          return
+        }
+        
+        pollingAttemptRef.current++
+        
+        console.log('[DIAG] [Sender] 🔍 COMPREHENSIVE FIX - Polling for receiver locations (direct Supabase query):', {
+          attempt: pollingAttemptRef.current,
+          timestamp: new Date().toISOString()
+        })
+        
         try {
-          // Use API endpoint instead of direct query (bypasses RLS)
-          // Use no-store to prevent caching - we need real-time data
-          const response = await fetch(`/api/emergency/${alert.id}/accepted-responders`, {
-            cache: 'no-store',
-            headers: {
-              'Cache-Control': 'no-cache'
-            }
-          })
+          // COMPREHENSIVE FIX: Direct Supabase query (no API calls)
+          const supabase = createClient()
+          const { data: currentResponses, error: pollError } = await supabase
+            .from('alert_responses')
+            .select('contact_user_id')
+            .eq('alert_id', alert.id)
+            .not('acknowledged_at', 'is', null)
+            .is('declined_at', null)
           
-          // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
-          if (!response.ok && response.status !== 304) {
-            // Silently handle errors - API might be temporarily unavailable
-            if (process.env.NODE_ENV === 'development') {
-              const errorData = await response.json().catch(() => ({}))
-              console.warn('[Sender] ⚠️ Polling API error:', {
-                status: response.status,
-                error: errorData.error
-              })
-            }
-            scheduleNextPoll() // Continue polling despite error
+          if (pollError) {
+            console.warn('[DIAG] [Sender] ⚠️ COMPREHENSIVE FIX - Polling query error:', {
+              error: pollError,
+              attempt: pollingAttemptRef.current,
+              timestamp: new Date().toISOString()
+            })
+            scheduleNextPoll()
             return
           }
           
-          const data = await response.json()
-          const currentCount = data.count || 0
+          const currentCount = currentResponses?.length || 0
+          const currentUserIds = currentResponses?.map((r: any) => r.contact_user_id) || []
           
           if (currentCount !== acceptedResponderCount) {
             if (isUnmountingRef.current) {
@@ -685,73 +701,63 @@ export default function EmergencyActivePage() {
               return
             }
             
-            console.log('[DIAG] [Sender] ✅ Polling detected acceptance change via API:', {
-              oldCount: acceptedResponderCount,
-              newCount: currentCount,
-              acceptedUserIds: data.acceptedResponders?.map((r: { contact_user_id: string }) => r.contact_user_id),
-              alertId: alert.id,
-              pollingMode: mode,
+            console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Polling detected acceptance change:', {
+              previousCount: acceptedResponderCount,
+              currentCount: currentCount,
+              change: currentCount - acceptedResponderCount,
+              currentUserIds: currentUserIds,
               timestamp: new Date().toISOString()
             })
+            
+            // Reset polling attempt (we found a change, go back to fast polling)
+            pollingAttemptRef.current = 0
+            
+            // Update count
             setAcceptedResponderCount(currentCount)
             
-            // Trigger the same acceptance handling as subscription would
-            const acceptedUserIds = data.acceptedResponders?.map((r: { contact_user_id: string }) => r.contact_user_id) || []
-            if (acceptedUserIds.length > 0) {
-              // Find the newly accepted user (one that wasn't in previous count)
-              const newlyAcceptedUserId = acceptedUserIds.find((id: string) => 
-                !receiverUserIds.includes(id)
-              )
-              
-              if (newlyAcceptedUserId) {
-                const acceptanceTimestamp = Date.now()
-                console.log('[DIAG] [Sender] ✅ Polling detected NEW acceptance - triggering location reload:', {
-                  newlyAcceptedUserId,
-                  alertId: alert.id,
-                  timestamp: new Date().toISOString()
-                })
-                
-                // Track this acceptance
-                recentAcceptancesRef.current.set(newlyAcceptedUserId, acceptanceTimestamp)
-                
-                // Enable enhanced polling
-                enhancedPollingRef.current = true
-                enhancedPollingStartTimeRef.current = Date.now()
-                
-                // Immediate load + retries
-                safeLoadReceiverLocations()
-                setTimeout(() => safeLoadReceiverLocations(), 1000)
-              }
-            }
+            // Find newly accepted user
+            const newlyAcceptedUserId = currentUserIds.find((id: string) => 
+              !receiverUserIds.includes(id)
+            )
             
-            // Immediately reload receiver locations when acceptance is detected (safely)
-            safeLoadReceiverLocations()
-          } else if (currentCount > 0) {
-            if (isUnmountingRef.current) {
-              acceptancePollTimeoutRef.current = null
-              return
-            }
-            
-            // Even if count hasn't changed, periodically reload locations to get latest updates
-            // This ensures we get location updates even if subscription is working
-            if (process.env.NODE_ENV === 'development') {
-              console.log('[Sender] 🔄 Periodic location refresh via API (polling fallback):', {
-                acceptedCount: currentCount,
+            if (newlyAcceptedUserId) {
+              const acceptanceTimestamp = Date.now()
+              console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Polling detected NEW acceptance:', {
+                newlyAcceptedUserId,
                 alertId: alert.id,
-                pollingMode: mode
+                timestamp: new Date().toISOString()
               })
+              
+              // Track this acceptance
+              recentAcceptancesRef.current.set(newlyAcceptedUserId, acceptanceTimestamp)
             }
+            
+            // Trigger full reload
+            safeLoadReceiverLocations()
+          } else if (currentCount > 0 && receiverLocations.size === 0) {
+            // We have accepted responders but no locations - reload
+            console.log('[DIAG] [Sender] ⚠️ COMPREHENSIVE FIX - Polling detected missing locations:', {
+              acceptedCount: currentCount,
+              locationsCount: receiverLocations.size,
+              timestamp: new Date().toISOString()
+            })
+            
+            // Reset polling attempt
+            pollingAttemptRef.current = 0
+            
+            // Trigger reload
             safeLoadReceiverLocations()
           }
           
-          // Schedule next poll
+          // Continue polling
           scheduleNextPoll()
         } catch (pollErr) {
-          // Silently handle polling errors - non-critical
-          if (process.env.NODE_ENV === 'development') {
-            console.warn('[Sender] Polling error (non-critical):', pollErr)
-          }
-          // Continue polling despite error
+          console.warn('[DIAG] [Sender] ⚠️ COMPREHENSIVE FIX - Polling error:', {
+            error: pollErr,
+            attempt: pollingAttemptRef.current,
+            timestamp: new Date().toISOString()
+          })
+          // Continue polling despite error (with backoff)
           scheduleNextPoll()
         }
       }, pollInterval)
