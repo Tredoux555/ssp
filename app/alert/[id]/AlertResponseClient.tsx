@@ -774,7 +774,7 @@ export default function AlertResponsePage() {
           setReceiverTrackingActive(true)
         }
       } catch (locationError: any) {
-        console.warn('[Receiver] ⚠️ Could not save initial location after acceptance:', locError)
+        console.warn('[Receiver] ⚠️ Could not save initial location after acceptance:', locationError)
         // Don't block acceptance if location save fails, but still try to start tracking
         try {
           startLocationTracking(
