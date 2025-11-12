@@ -635,12 +635,28 @@ export default function AlertResponsePage() {
         
         const currentLoc = await getCurrentLocation()
         if (currentLoc) {
+          // Validate location accuracy - warn if accuracy is poor (> 100m)
+          const accuracyMeters = currentLoc.accuracy || 0
+          const isPoorAccuracy = accuracyMeters > 100
+          
           console.log('[DIAG] [Receiver] 📍 Checkpoint 7.1 - Location Save: Got location', {
             location: currentLoc,
+            accuracy: accuracyMeters,
+            accuracyMeters: `${accuracyMeters.toFixed(1)}m`,
+            isPoorAccuracy: isPoorAccuracy,
+            warning: isPoorAccuracy ? '⚠️ Location accuracy is poor - may show incorrect position' : '✅ Location accuracy is good',
             userId: user.id,
             alertId: alert.id,
             timestamp: new Date().toISOString()
           })
+          
+          if (isPoorAccuracy) {
+            console.warn('[DIAG] [Receiver] ⚠️ Poor location accuracy detected:', {
+              accuracy: `${accuracyMeters.toFixed(1)}m`,
+              suggestion: 'Enable high accuracy GPS mode in device settings',
+              location: currentLoc
+            })
+          }
           
           // Use API endpoint instead of client-side update (bypasses RLS)
           const saveResponse = await fetch(`/api/emergency/${alert.id}/save-receiver-location`, {

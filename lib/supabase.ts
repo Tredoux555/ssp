@@ -28,15 +28,17 @@ export const createClient = () => {
           const parts = value.split(`; ${name}=`)
           if (parts.length === 2) {
             const cookieValue = parts.pop()?.split(';').shift()
-            // Log for debugging on mobile
-            if (cookieValue) {
-              console.log('[DIAG] [Supabase] Cookie read:', { name, hasValue: true, length: cookieValue.length })
+            // Only log main auth token cookie reads (not chunked cookies which are expected to not exist)
+            if (cookieValue && name.includes('auth-token') && !name.includes('auth-token.') && !name.includes('code-verifier')) {
+              console.log('[DIAG] [Supabase] ✅ Cookie read:', { name, hasValue: true, length: cookieValue.length })
             }
             return cookieValue
           }
           
-          // Log when cookie not found (helps debug mobile issues)
-          console.log('[DIAG] [Supabase] Cookie not found:', { name, allCookies: document.cookie.substring(0, 100) })
+          // Only log missing cookies if they're critical (main auth token), not chunked cookies
+          if (name.includes('auth-token') && !name.includes('auth-token.') && !name.includes('code-verifier')) {
+            console.warn('[DIAG] [Supabase] ⚠️ Critical cookie not found:', { name, allCookies: document.cookie.substring(0, 100) })
+          }
           return undefined
         },
         set(name: string, value: string, options: any) {
@@ -58,13 +60,16 @@ export const createClient = () => {
             `samesite=${finalSameSite}`,
           ].filter(Boolean).join('; ')
           
-          console.log('[DIAG] [Supabase] Setting cookie:', {
-            name,
-            hasValue: !!value,
-            sameSite: finalSameSite,
-            secure: needsSecure,
-            isHTTPS: isSecure
-          })
+          // Only log main auth token cookie sets (reduce noise)
+          if (name.includes('auth-token') && !name.includes('auth-token.') && !name.includes('code-verifier')) {
+            console.log('[DIAG] [Supabase] Setting cookie:', {
+              name,
+              hasValue: !!value,
+              sameSite: finalSameSite,
+              secure: needsSecure,
+              isHTTPS: isSecure
+            })
+          }
           
           document.cookie = cookieOptions
           

@@ -754,8 +754,38 @@ function EmergencyMapComponent({
       receiverLocationsSize: allReceiverLocations.size,
       receiverUserIds: allReceiverUserIds,
       senderLocation: { lat: senderLocation.lat, lng: senderLocation.lng },
+      isLoaded: isLoaded,
+      hasGoogleMaps: !!googleMaps,
       timestamp: new Date().toISOString()
     })
+    
+    // CRITICAL DIAGNOSTIC: Log detailed receiver location data
+    if (allReceiverLocations.size === 0) {
+      console.warn('[DIAG] [Map] ⚠️ CRITICAL: No receiver locations in state!', {
+        allReceiverLocationsSize: allReceiverLocations.size,
+        receiverUserIdsLength: allReceiverUserIds.length,
+        receiverUserIds: allReceiverUserIds,
+        propsReceiverLocationsSize: receiverLocations?.size || 0,
+        propsReceiverUserIds: receiverUserIds || [],
+        timestamp: new Date().toISOString()
+      })
+    } else {
+      console.log('[DIAG] [Map] ✅ Receiver locations found in state:', {
+        totalReceivers: allReceiverLocations.size,
+        receiverIds: Array.from(allReceiverLocations.keys()),
+        locationsDetail: Array.from(allReceiverLocations.entries()).map(([id, locs]) => ({
+          receiverId: id,
+          locationCount: locs.length,
+          locations: locs.map(loc => ({
+            id: loc.id,
+            lat: loc.latitude,
+            lng: loc.longitude,
+            timestamp: loc.created_at
+          }))
+        })),
+        timestamp: new Date().toISOString()
+      })
+    }
     
     console.log('[DIAG] [Map] 🔍 Checkpoint 5.3 - Processing receiver locations:', {
       totalReceivers: allReceiverLocations.size,
@@ -764,25 +794,55 @@ function EmergencyMapComponent({
     })
 
     Array.from(allReceiverLocations.entries()).forEach(([receiverId, locations]) => {
-      console.log('[Map] 🔍 Processing receiver:', {
+      console.log('[DIAG] [Map] 🔍 Processing receiver for marker:', {
         receiverId,
         locationCount: locations.length,
-        hasLocations: locations.length > 0
+        hasLocations: locations.length > 0,
+        allLocationIds: locations.map(loc => loc.id),
+        allLocations: locations.map(loc => ({
+          id: loc.id,
+          lat: loc.latitude,
+          lng: loc.longitude,
+          timestamp: loc.created_at
+        }))
       })
 
       if (locations.length === 0) {
-        console.log('[Map] ⚠️ Skipping receiver with no locations:', receiverId)
+        console.warn('[DIAG] [Map] ⚠️ Skipping receiver with no locations:', {
+          receiverId,
+          reason: 'locations array is empty',
+          allReceiverLocationsSize: allReceiverLocations.size
+        })
         return
       }
       const latestLocation = locations[locations.length - 1]
       
-      console.log('[Map] ✅ Creating marker for receiver:', {
+      // Validate location data
+      if (!latestLocation || !latestLocation.latitude || !latestLocation.longitude) {
+        console.error('[DIAG] [Map] ❌ Invalid location data for receiver:', {
+          receiverId,
+          latestLocation,
+          hasLatitude: !!latestLocation?.latitude,
+          hasLongitude: !!latestLocation?.longitude,
+          latitude: latestLocation?.latitude,
+          longitude: latestLocation?.longitude
+        })
+        return
+      }
+      
+      console.log('[DIAG] [Map] ✅ Creating marker for receiver:', {
         receiverId,
         locationCount: locations.length,
         latestLocation: {
           lat: latestLocation.latitude,
           lng: latestLocation.longitude,
-          timestamp: latestLocation.created_at
+          id: latestLocation.id,
+          timestamp: latestLocation.created_at,
+          accuracy: latestLocation.accuracy
+        },
+        markerPosition: {
+          lat: latestLocation.latitude,
+          lng: latestLocation.longitude
         }
       })
       
