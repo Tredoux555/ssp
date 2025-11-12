@@ -101,6 +101,35 @@ export default function EmergencyActivePage() {
     try {
       const activeAlert = await getActiveEmergency(user.id)
       if (activeAlert && activeAlert.id === alertId) {
+        // PHANTOM ALERT FIX: Check if alert is stale (older than 24 hours) and auto-cancel
+        const alertAge = activeAlert.triggered_at ? new Date(activeAlert.triggered_at).getTime() : 0
+        const now = Date.now()
+        const ageInHours = (now - alertAge) / (1000 * 60 * 60)
+        const MAX_ALERT_AGE_HOURS = 24 // Cancel alerts older than 24 hours
+        
+        if (ageInHours > MAX_ALERT_AGE_HOURS) {
+          console.warn('[Emergency Active] ⚠️ PHANTOM ALERT DETECTED: Stale alert found, auto-cancelling:', {
+            id: activeAlert.id,
+            ageInHours: ageInHours.toFixed(2),
+            triggeredAt: activeAlert.triggered_at,
+            maxAge: MAX_ALERT_AGE_HOURS
+          })
+          
+          // Auto-cancel the stale alert
+          try {
+            const { cancelEmergencyAlert } = await import('@/lib/services/emergency')
+            await cancelEmergencyAlert(activeAlert.id)
+            console.log('[Emergency Active] ✅ Successfully cancelled stale alert, redirecting to dashboard')
+            router.push('/dashboard')
+            return
+          } catch (cancelError: any) {
+            console.error('[Emergency Active] ❌ Failed to auto-cancel stale alert:', cancelError)
+            // If cancellation fails, redirect to dashboard anyway
+            router.push('/dashboard')
+            return
+          }
+        }
+        
         setAlert(activeAlert)
         if (activeAlert.location_lat && activeAlert.location_lng) {
           setLocation({
