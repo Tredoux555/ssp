@@ -157,13 +157,13 @@ export default function EmergencyActivePage() {
       setShowPermissionPrompt(false)
     }
 
-    // Query all receiver locations from location_history (only from accepted responders)
-    // Uses server-side API endpoints to bypass RLS
+    // COMPREHENSIVE FIX: Query receiver locations directly from Supabase (no API calls)
+    // This eliminates network errors and is more reliable
     const loadReceiverLocations = async () => {
       const diagStartTime = Date.now()
       const timingCheckpoints: Record<string, number> = { start: diagStartTime }
       
-      console.log('[DIAG] [Sender] 🔄 Checkpoint 8 - Timing Analysis: loadReceiverLocations started', {
+      console.log('[DIAG] [Sender] 🔄 COMPREHENSIVE FIX - loadReceiverLocations started (direct Supabase query)', {
         hasAlert: !!alert,
         alertId: alert?.id,
         urlAlertId: alertId,
@@ -200,156 +200,58 @@ export default function EmergencyActivePage() {
         return
       }
       
-      console.log('[Sender] ✅ Starting to fetch receiver locations from API...', {
-        alertId: alert.id,
-        url: `/api/emergency/${alert.id}/accepted-responders`
-      })
-      
-      // Helper function to add timeout to fetch calls
-      const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number = 10000): Promise<Response> => {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => {
-          controller.abort()
-        }, timeoutMs)
-        
-        try {
-          const response = await fetch(url, {
-            ...options,
-            signal: controller.signal
-          })
-          clearTimeout(timeoutId)
-          return response
-        } catch (error: any) {
-          clearTimeout(timeoutId)
-          if (error.name === 'AbortError') {
-            throw new Error(`Request timeout after ${timeoutMs}ms: ${url}`)
-          }
-          throw error
-        }
-      }
-      
       try {
-        const fetchStartTime = Date.now()
-        timingCheckpoints.acceptedRespondersStart = fetchStartTime
-        console.log('[DIAG] [Sender] 🌐 Checkpoint 1.2 - API Call: accepted-responders', {
-          url: `/api/emergency/${alert.id}/accepted-responders`,
-          timeout: '10s',
-          timestamp: new Date().toISOString(),
+        const supabase = createClient()
+        const queryStartTime = Date.now()
+        timingCheckpoints.queryStart = queryStartTime
+        
+        console.log('[DIAG] [Sender] 🔍 COMPREHENSIVE FIX - Step 1: Query accepted responders directly from Supabase', {
           alertId: alert.id,
           userId: user.id,
-          timeSinceStart: `${fetchStartTime - diagStartTime}ms`
-        })
-        
-        // Use API endpoint to get accepted responders (bypasses RLS)
-        // Use no-store to prevent caching - we need real-time data
-        // Add 10 second timeout to prevent indefinite hanging
-        const acceptedResponse = await fetchWithTimeout(
-          `/api/emergency/${alert.id}/accepted-responders`,
-          {
-            cache: 'no-store',
-            headers: {
-              'Cache-Control': 'no-cache'
-            }
-          },
-          10000 // 10 second timeout
-        )
-        
-        const fetchEndTime = Date.now()
-        const fetchDuration = fetchEndTime - fetchStartTime
-        timingCheckpoints.acceptedRespondersEnd = fetchEndTime
-        timingCheckpoints.acceptedRespondersDuration = fetchDuration
-        
-        console.log('[DIAG] [Sender] ✅ Checkpoint 1.2 - API Response: accepted-responders', {
-          status: acceptedResponse.status,
-          statusText: acceptedResponse.statusText,
-          ok: acceptedResponse.ok,
-          duration: `${fetchDuration}ms`,
-          url: `/api/emergency/${alert.id}/accepted-responders`,
-          timestamp: new Date().toISOString(),
-          timeSinceStart: `${fetchEndTime - diagStartTime}ms`
-        })
-        
-        // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
-        if (!acceptedResponse.ok && acceptedResponse.status !== 304) {
-          // Always log the status code, even if parsing fails
-          const status = acceptedResponse.status
-          const statusText = acceptedResponse.statusText
-          
-          let errorData: any = {}
-          let responseText = ''
-          
-          try {
-            responseText = await acceptedResponse.text()
-            if (responseText && responseText.trim()) {
-              errorData = JSON.parse(responseText)
-            }
-          } catch (parseError) {
-            console.warn('[Sender] Failed to parse error response:', parseError, 'Raw text:', responseText.substring(0, 100))
-          }
-          
-          console.error('[Sender] ❌ API endpoint failed:', {
-            url: `/api/emergency/${alert?.id}/accepted-responders`,
-            status: status,
-            statusText: statusText,
-            error: errorData.error || `HTTP ${status} ${statusText}`,
-            details: errorData.details || `Server returned ${status} ${statusText}`,
-            rawResponse: responseText || '(empty response)',
-            alertId: alert?.id,
-            hasAlert: !!alert,
-            headers: {
-              contentType: acceptedResponse.headers.get('content-type'),
-            }
-          })
-          
-          // Show user-friendly error if it's a known issue
-          if (status === 401) {
-            console.error('[Sender] ⚠️ Authentication error - user may need to log in again')
-          } else if (status === 404) {
-            console.error('[Sender] ⚠️ Alert not found - it may have been deleted or the alert ID is invalid')
-            console.error('[Sender] ⚠️ Alert details:', {
-              alertId: alert?.id,
-              urlAlertId: alertId,
-              alertExists: !!alert,
-              alertStatus: alert?.status,
-              alertUserId: alert?.user_id,
-              currentUserId: user?.id,
-              alertIdMatch: alert?.id === alertId
-            })
-            
-            // If alert exists locally but API can't find it, try reloading alert
-            // This handles timing issues where alert was just created
-            if (alert && alert.id && alert.id === alertId) {
-              console.log('[Sender] 🔄 Alert exists locally but not in API - reloading alert in 1 second...')
-              setTimeout(() => {
-                if (!isUnmountingRef.current && alert && alert.id === alertId) {
-                  loadAlert()
-                }
-              }, 1000)
-            }
-          } else if (status === 500) {
-            console.error('[Sender] ⚠️ Server error - check API logs in Vercel')
-          }
-          
-          setReceiverLocations(new Map())
-          setReceiverUserIds([])
-          return
-        }
-
-        const acceptedData = await acceptedResponse.json()
-        const acceptedResponses = acceptedData.acceptedResponders || []
-        const acceptedCount = acceptedData.count || 0
-
-        console.log('[DIAG] [Sender] 📊 Checkpoint 1.2 - API Data Parsed: accepted-responders', {
-          rawResponse: acceptedData,
-          acceptedResponses: acceptedResponses,
-          acceptedCount: acceptedCount,
-          acceptedUserIds: acceptedResponses.map((r: { contact_user_id: string }) => r.contact_user_id),
           timestamp: new Date().toISOString()
         })
-
+        
+        // Step 1: Get accepted responders directly from Supabase (client-side query)
+        const { data: acceptedResponses, error: responsesError } = await supabase
+          .from('alert_responses')
+          .select('contact_user_id, acknowledged_at, declined_at')
+          .eq('alert_id', alert.id)
+          .not('acknowledged_at', 'is', null)
+          .is('declined_at', null)
+          .order('acknowledged_at', { ascending: false })
+        
+        const queryEndTime = Date.now()
+        timingCheckpoints.queryEnd = queryEndTime
+        timingCheckpoints.queryDuration = queryEndTime - queryStartTime
+        
+        console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Step 1 Result: accepted responders query', {
+          success: !responsesError,
+          error: responsesError?.message,
+          count: acceptedResponses?.length || 0,
+          responderIds: acceptedResponses?.map((r: any) => r.contact_user_id) || [],
+          duration: `${queryEndTime - queryStartTime}ms`,
+          timestamp: new Date().toISOString()
+        })
+        
+        if (responsesError) {
+          console.error('[Sender] ❌ COMPREHENSIVE FIX - Error querying accepted responders:', {
+            error: responsesError,
+            code: responsesError.code,
+            message: responsesError.message,
+            alertId: alert.id,
+            userId: user.id,
+            timestamp: new Date().toISOString()
+          })
+          // Don't clear state - keep existing data
+          return
+        }
+        
+        const acceptedCount = acceptedResponses?.length || 0
+        const acceptedUserIds = acceptedResponses?.map((r: any) => r.contact_user_id) || []
+        
         // Update accepted responder count
         setAcceptedResponderCount(acceptedCount)
-
+        
         // If no accepted responders, clear the map
         if (acceptedCount === 0) {
           console.log('[DIAG] [Sender] ⚠️ No accepted responders - clearing locations state', {
@@ -359,148 +261,96 @@ export default function EmergencyActivePage() {
           setReceiverUserIds([])
           return
         }
-
-        const acceptedUserIds = acceptedResponses.map((r: { contact_user_id: string }) => r.contact_user_id)
-        console.log('[DIAG] [Sender] ✅ Found accepted responders via API:', {
-          count: acceptedCount,
-          userIds: acceptedUserIds,
+        
+        console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Step 2: Query locations for accepted responders', {
+          acceptedUserIds: acceptedUserIds,
+          acceptedCount: acceptedCount,
+          alertId: alert.id,
           timestamp: new Date().toISOString()
         })
-
-        // Use API endpoint to get receiver locations (bypasses RLS)
-        // Use no-store to prevent caching - we need real-time data
-        const locationsFetchStartTime = Date.now()
-        timingCheckpoints.receiverLocationsStart = locationsFetchStartTime
-        console.log('[DIAG] [Sender] 🌐 Checkpoint 1.2 - API Call: receiver-locations', {
-          url: `/api/emergency/${alert.id}/receiver-locations`,
-          timeout: '10s',
-          timestamp: new Date().toISOString(),
-          alertId: alert.id,
-          acceptedUserIds: acceptedUserIds,
-          timeSinceStart: `${locationsFetchStartTime - diagStartTime}ms`,
-          timeSinceAcceptedResponders: `${locationsFetchStartTime - fetchEndTime}ms`
+        
+        // Step 2: Get locations for accepted responders directly from Supabase
+        const locationsQueryStartTime = Date.now()
+        timingCheckpoints.locationsQueryStart = locationsQueryStartTime
+        
+        const { data: locations, error: locationsError } = await supabase
+          .from('location_history')
+          .select('*')
+          .eq('alert_id', alert.id)
+          .in('user_id', acceptedUserIds)
+          .order('created_at', { ascending: false })
+          .limit(100) // Limit to last 100 locations per alert
+        
+        const locationsQueryEndTime = Date.now()
+        timingCheckpoints.locationsQueryEnd = locationsQueryEndTime
+        timingCheckpoints.locationsQueryDuration = locationsQueryEndTime - locationsQueryStartTime
+        
+        console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Step 2 Result: locations query', {
+          success: !locationsError,
+          error: locationsError?.message,
+          locationCount: locations?.length || 0,
+          duration: `${locationsQueryEndTime - locationsQueryStartTime}ms`,
+          locations: locations?.map((loc: any) => ({
+            id: loc.id,
+            userId: loc.user_id,
+            lat: loc.latitude,
+            lng: loc.longitude,
+            timestamp: loc.created_at
+          })) || [],
+          timestamp: new Date().toISOString()
         })
         
-        const locationsResponse = await fetchWithTimeout(
-          `/api/emergency/${alert.id}/receiver-locations`,
-          {
-            cache: 'no-store',
-            headers: {
-              'Cache-Control': 'no-cache'
-            }
-          },
-          10000 // 10 second timeout
-        )
-        
-        const locationsFetchEndTime = Date.now()
-        const locationsFetchDuration = locationsFetchEndTime - locationsFetchStartTime
-        timingCheckpoints.receiverLocationsEnd = locationsFetchEndTime
-        timingCheckpoints.receiverLocationsDuration = locationsFetchDuration
-        
-        console.log('[DIAG] [Sender] ✅ Checkpoint 1.2 - API Response: receiver-locations', {
-          status: locationsResponse.status,
-          statusText: locationsResponse.statusText,
-          ok: locationsResponse.ok,
-          duration: `${locationsFetchDuration}ms`,
-          url: `/api/emergency/${alert.id}/receiver-locations`,
-          timestamp: new Date().toISOString(),
-          timeSinceStart: `${locationsFetchEndTime - diagStartTime}ms`
-        })
-        
-        // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
-        if (!locationsResponse.ok && locationsResponse.status !== 304) {
-          const errorData = await locationsResponse.json().catch(() => ({}))
-          console.error('[Sender] Failed to fetch receiver locations:', {
-            status: locationsResponse.status,
-            error: errorData.error || 'Unknown error',
-            alertId: alert.id
+        if (locationsError) {
+          console.error('[Sender] ❌ COMPREHENSIVE FIX - Error querying locations:', {
+            error: locationsError,
+            code: locationsError.code,
+            message: locationsError.message,
+            alertId: alert.id,
+            userId: user.id,
+            timestamp: new Date().toISOString()
           })
-          // Don't clear - keep accepted count, just no locations yet
-          setReceiverLocations(new Map())
-          setReceiverUserIds([])
+          // Don't clear state - keep existing data
           return
         }
-
-        const locationsData = await locationsResponse.json()
-        const groupedByUser = locationsData.groupedByUser || {}
-        const allLocations = locationsData.receiverLocations || []
-
-        // Phase 9: Data validation
-        const validationErrors: string[] = []
-        if (!Array.isArray(allLocations)) {
-          validationErrors.push('receiverLocations is not an array')
-        }
-        if (typeof groupedByUser !== 'object' || groupedByUser === null) {
-          validationErrors.push('groupedByUser is not an object')
-        }
-        if (acceptedUserIds.length > 0 && allLocations.length === 0) {
-          validationErrors.push('WARNING: Accepted responders exist but no locations found')
-        }
-
-        console.log('[DIAG] [Sender] 📍 Checkpoint 1.2 - API Data Parsed: receiver-locations', {
-          rawResponse: locationsData,
-          totalLocations: allLocations.length,
-          groupedByUserKeys: Object.keys(groupedByUser),
-          groupedByUserSize: Object.keys(groupedByUser).length,
-          acceptedUserIds: acceptedUserIds,
-          locationsDataKeys: Object.keys(locationsData),
-          groupedByUserStructure: Object.entries(groupedByUser).map(([id, locs]: [string, any]) => ({
-            receiverId: id,
-            locationCount: Array.isArray(locs) ? locs.length : 0,
-            isArray: Array.isArray(locs),
-            latestLocation: Array.isArray(locs) && locs.length > 0 ? {
-              lat: locs[0].latitude,
-              lng: locs[0].longitude,
-              id: locs[0].id,
-              timestamp: locs[0].created_at
+        
+        // Step 3: Group locations by user_id
+        const groupedByUser: Record<string, LocationHistory[]> = {}
+        locations?.forEach((loc: LocationHistory) => {
+          const receiverId = loc.user_id
+          if (!groupedByUser[receiverId]) {
+            groupedByUser[receiverId] = []
+          }
+          groupedByUser[receiverId].push(loc)
+        })
+        
+        console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Step 3: Grouped locations by user', {
+          totalLocations: locations?.length || 0,
+          uniqueReceivers: Object.keys(groupedByUser).length,
+          receivers: Object.keys(groupedByUser).map(receiverId => ({
+            receiverId,
+            locationCount: groupedByUser[receiverId].length,
+            latestLocation: groupedByUser[receiverId][0] ? {
+              lat: groupedByUser[receiverId][0].latitude,
+              lng: groupedByUser[receiverId][0].longitude,
+              timestamp: groupedByUser[receiverId][0].created_at
             } : null
           })),
           timestamp: new Date().toISOString()
         })
         
-        // Phase 9: Log validation results
-        if (validationErrors.length > 0) {
-          console.warn('[DIAG] [Sender] ⚠️ Checkpoint 9 - Data Validation: Errors found', {
-            errors: validationErrors,
-            timestamp: new Date().toISOString()
-          })
-        } else {
-          console.log('[DIAG] [Sender] ✅ Checkpoint 9 - Data Validation: Passed', {
-            timestamp: new Date().toISOString()
-          })
-        }
-
-        if (allLocations && allLocations.length > 0) {
-          console.log('[Sender] ✅ Loaded receiver locations via API:', {
-            count: allLocations.length,
-            uniqueReceivers: Object.keys(groupedByUser).length,
-            receiverIds: Object.keys(groupedByUser),
-            locationsPerReceiver: Object.entries(groupedByUser).map(([id, locs]: [string, any]) => ({
-              receiverId: id,
-              locationCount: Array.isArray(locs) ? locs.length : 0,
-              latestLocation: Array.isArray(locs) && locs.length > 0 ? {
-                lat: locs[0].latitude,
-                lng: locs[0].longitude,
-                timestamp: locs[0].created_at
-              } : null
-            }))
-          })
-          
+        if (locations && locations.length > 0) {
           // Convert groupedByUser object to Map
           const receiverMap = new Map<string, LocationHistory[]>()
           const userIds = new Set<string>()
 
-          Object.entries(groupedByUser).forEach(([receiverId, locations]: [string, any]) => {
-            // Ensure locations is an array
-            const locationArray = Array.isArray(locations) ? locations : []
-            
-            // Sort by created_at descending (newest first) to ensure latest is at the end
+          Object.entries(groupedByUser).forEach(([receiverId, locationArray]) => {
+            // Sort by created_at ascending (oldest first, newest last)
             const sortedLocations = [...locationArray].sort((a: LocationHistory, b: LocationHistory) => {
               return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
             })
             
             userIds.add(receiverId)
-            receiverMap.set(receiverId, sortedLocations as LocationHistory[])
+            receiverMap.set(receiverId, sortedLocations)
             console.log('[Sender] 📍 Added receiver to map:', {
               receiverId: receiverId,
               locationCount: sortedLocations.length,
@@ -512,126 +362,45 @@ export default function EmergencyActivePage() {
             })
           })
 
-          const previousStateSize = receiverLocations.size
-          const previousStateKeys = Array.from(receiverLocations.keys())
-          
-          console.log('[DIAG] [Sender] 📍 Checkpoint 1.3 - Before State Update:', {
-            previousStateSize: previousStateSize,
-            previousStateKeys: previousStateKeys,
-            newStateSize: receiverMap.size,
-            newStateKeys: Array.from(receiverMap.keys()),
-            timestamp: new Date().toISOString()
-          })
-          
-          console.log('[DIAG] [Sender] 📍 Checkpoint 1.3 - Setting receiver locations state:', {
-            mapSize: receiverMap.size,
-            userIds: Array.from(userIds),
-            receiverIds: Array.from(receiverMap.keys()),
-            totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0),
-            timestamp: new Date().toISOString(),
-            stateChange: previousStateSize !== receiverMap.size ? 'SIZE_CHANGED' : 'SAME_SIZE',
-            newReceivers: Array.from(receiverMap.keys()).filter(id => !previousStateKeys.includes(id))
-          })
-          
-          // Phase 3: Log successful location load (helps track which retry succeeded)
           const stateUpdateTime = Date.now()
           timingCheckpoints.stateUpdate = stateUpdateTime
           timingCheckpoints.totalDuration = stateUpdateTime - diagStartTime
           
-          if (receiverMap.size > 0) {
-            console.log('[DIAG] [Sender] ✅ Checkpoint 1.3 - Successfully loaded receiver locations:', {
-              receiverCount: receiverMap.size,
-              receiverIds: Array.from(userIds),
-              totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0),
-              timestamp: new Date().toISOString(),
-              elapsedTime: `${stateUpdateTime - diagStartTime}ms`
-            })
-            
-            // Phase 8: Comprehensive timing analysis
-            console.log('[DIAG] [Sender] ⏱️ Checkpoint 8 - Timing Analysis Summary:', {
-              totalDuration: `${timingCheckpoints.totalDuration}ms`,
-              acceptedRespondersDuration: `${timingCheckpoints.acceptedRespondersDuration}ms`,
-              receiverLocationsDuration: `${timingCheckpoints.receiverLocationsDuration}ms`,
-              timeBetweenCalls: `${timingCheckpoints.receiverLocationsStart - timingCheckpoints.acceptedRespondersEnd}ms`,
-              checkpoints: {
-                start: timingCheckpoints.start,
-                acceptedRespondersStart: timingCheckpoints.acceptedRespondersStart,
-                acceptedRespondersEnd: timingCheckpoints.acceptedRespondersEnd,
-                receiverLocationsStart: timingCheckpoints.receiverLocationsStart,
-                receiverLocationsEnd: timingCheckpoints.receiverLocationsEnd,
-                stateUpdate: timingCheckpoints.stateUpdate
-              },
-              timestamp: new Date().toISOString()
-            })
-          }
+          console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Step 4: Updating state', {
+            receiverCount: receiverMap.size,
+            receiverIds: Array.from(userIds),
+            totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0),
+            timestamp: new Date().toISOString(),
+            totalDuration: `${stateUpdateTime - diagStartTime}ms`,
+            timingBreakdown: {
+              queryDuration: `${timingCheckpoints.queryDuration}ms`,
+              locationsQueryDuration: `${timingCheckpoints.locationsQueryDuration}ms`
+            }
+          })
 
           setReceiverLocations(receiverMap)
           setReceiverUserIds(Array.from(userIds))
-          
-          // Log after state update (React will update asynchronously, but we log the intent)
-          console.log('[DIAG] [Sender] ✅ Checkpoint 1.3 - State Update Called:', {
-            stateUpdateFunction: 'setReceiverLocations',
-            newMapSize: receiverMap.size,
-            newUserIds: Array.from(userIds),
-            timestamp: new Date().toISOString()
-          })
         } else {
           console.warn('[Sender] ⚠️ No receiver locations found yet (accepted responders exist but no locations saved):', {
             acceptedUserIds: acceptedUserIds,
             alertId: alert.id,
-            acceptedCount: acceptedCount,
-            locationsResponseStatus: locationsResponse.status,
-            locationsData: locationsData
+            acceptedCount: acceptedCount
           })
           // Keep accepted count but clear locations
           setReceiverLocations(new Map())
           setReceiverUserIds([])
         }
       } catch (error: any) {
-        const isTimeout = error?.message?.includes('timeout') || error?.message?.includes('Timeout')
-        const isAbort = error?.name === 'AbortError'
-        const isNetworkError = error instanceof TypeError && error.message?.includes('fetch')
-        
-        console.error('[Sender] ❌ Phase 3 - Error loading receiver locations via API:', {
+        console.error('[Sender] ❌ COMPREHENSIVE FIX - Unexpected error:', {
           error: error,
           message: error?.message,
           name: error?.name,
           stack: error?.stack,
           alertId: alert.id,
           userId: user.id,
-          errorType: error instanceof TypeError ? 'NetworkError' : error instanceof Error ? 'Error' : 'Unknown',
-          isTimeout: isTimeout,
-          isAbort: isAbort,
-          isNetworkError: isNetworkError,
-          timestamp: new Date().toISOString(),
-          recoverySuggestion: isTimeout || isAbort 
-            ? 'Will retry automatically via delayed retries and enhanced polling'
-            : isNetworkError
-            ? 'Network issue - will retry on next poll'
-            : 'Check API endpoint and authentication'
+          timestamp: new Date().toISOString()
         })
-        
-        // Phase 3: Enhanced error handling - distinguish timeout vs permanent errors
-        if (isTimeout || isAbort) {
-          console.warn('[Sender] ⚠️ Phase 3 - Request timed out - will retry on next poll/subscription update or delayed retry')
-          // Don't clear state - keep existing data and retry later
-        } else if (isNetworkError) {
-          console.warn('[Sender] ⚠️ Phase 3 - Network error - will retry automatically')
-          // CRITICAL FIX: Retry network errors immediately with exponential backoff
-          const retryDelay = Math.min(1000 * Math.pow(2, 0), 5000) // Start with 1s, max 5s
-          setTimeout(() => {
-            if (!isUnmountingRef.current && loadReceiverLocationsRef.current) {
-              console.log('[Sender] 🔄 Retrying location load after network error...')
-              loadReceiverLocationsRef.current()
-            }
-          }, retryDelay)
-          // Don't clear state - network issues are temporary
-        } else {
-          // For permanent errors (404, 401, 500), clear state
-          console.warn('[Sender] ⚠️ Phase 3 - Permanent error detected - clearing receiver locations state')
-          setReceiverLocations(new Map())
-          setReceiverUserIds([])
-        }
+        // Don't clear state - keep existing data
       }
     }
     

@@ -794,39 +794,91 @@ export default function AlertResponsePage() {
           console.log('[Receiver] ✅ Started continuous location tracking after acceptance')
           setReceiverTrackingActive(true)
           
-          if (!saveSuccess) {
+          // COMPREHENSIVE FIX: Verify location was saved with exponential backoff retry
+          if (saveSuccess) {
+            console.log('[DIAG] [Receiver] ✅ Location save reported success - verifying in database...')
+            
+            // Verify with exponential backoff (1s, 2s, 4s)
+            const verifyLocation = async (retryCount = 0): Promise<boolean> => {
+              const maxRetries = 3
+              const delay = Math.min(1000 * Math.pow(2, retryCount), 4000) // 1s, 2s, 4s
+              
+              if (retryCount > 0) {
+                console.log('[DIAG] [Receiver] 🔄 Verifying location save (retry attempt):', {
+                  attempt: retryCount + 1,
+                  maxRetries: maxRetries,
+                  delay: `${delay}ms`,
+                  timestamp: new Date().toISOString()
+                })
+                await new Promise(resolve => setTimeout(resolve, delay))
+              }
+              
+              try {
+                const supabase = createClient()
+                const { data: savedLocation, error: verifyError } = await supabase
+                  .from('location_history')
+                  .select('id, latitude, longitude, alert_id, user_id, created_at')
+                  .eq('alert_id', alert.id)
+                  .eq('user_id', user.id)
+                  .order('created_at', { ascending: false })
+                  .limit(1)
+                  .maybeSingle()
+                
+                if (savedLocation) {
+                  console.log('[DIAG] [Receiver] ✅ COMPREHENSIVE FIX - Location verified in database:', {
+                    locationId: savedLocation.id,
+                    alertId: savedLocation.alert_id,
+                    userId: savedLocation.user_id,
+                    location: { lat: savedLocation.latitude, lng: savedLocation.longitude },
+                    timestamp: savedLocation.created_at,
+                    verificationAttempt: retryCount + 1,
+                    verificationDelay: retryCount > 0 ? `${delay}ms` : '0ms'
+                  })
+                  return true
+                } else {
+                  if (retryCount < maxRetries - 1) {
+                    console.warn('[DIAG] [Receiver] ⚠️ Location not found in database - will retry:', {
+                      attempt: retryCount + 1,
+                      maxRetries: maxRetries,
+                      willRetry: true,
+                      nextDelay: `${Math.min(1000 * Math.pow(2, retryCount + 1), 4000)}ms`
+                    })
+                    return verifyLocation(retryCount + 1)
+                  } else {
+                    console.error('[DIAG] [Receiver] ❌ COMPREHENSIVE FIX - Location verification failed after all retries:', {
+                      alertId: alert.id,
+                      userId: user.id,
+                      attempts: maxRetries,
+                      error: verifyError?.message
+                    })
+                    return false
+                  }
+                }
+              } catch (verifyError) {
+                if (retryCount < maxRetries - 1) {
+                  console.warn('[DIAG] [Receiver] ⚠️ Location verification error - will retry:', {
+                    error: verifyError,
+                    attempt: retryCount + 1,
+                    maxRetries: maxRetries
+                  })
+                  return verifyLocation(retryCount + 1)
+                } else {
+                  console.error('[DIAG] [Receiver] ❌ COMPREHENSIVE FIX - Location verification failed:', verifyError)
+                  return false
+                }
+              }
+            }
+            
+            // Start verification (non-blocking)
+            verifyLocation().then(verified => {
+              if (!verified) {
+                console.warn('[DIAG] [Receiver] ⚠️ Location verification failed - but tracking will continue to save locations')
+              }
+            })
+          } else {
             console.warn('[DIAG] [Receiver] ⚠️ Initial location save failed, but tracking started - location will be saved via tracking')
           }
         }
-        
-        // Optional: Verify location was saved by querying it back
-        setTimeout(async () => {
-          try {
-            const supabase = createClient()
-            const { data: savedLocation } = await supabase
-              .from('location_history')
-              .select('id, latitude, longitude, alert_id, user_id, created_at')
-              .eq('alert_id', alert.id)
-              .eq('user_id', user.id)
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle()
-            
-            if (savedLocation) {
-              console.log('[Receiver] ✅ Verified location saved in database:', {
-                locationId: savedLocation.id,
-                alertId: savedLocation.alert_id,
-                userId: savedLocation.user_id,
-                location: { lat: savedLocation.latitude, lng: savedLocation.longitude },
-                timestamp: savedLocation.created_at
-              })
-            } else {
-              console.warn('[Receiver] ⚠️ Location not found in database after save - may be a timing issue')
-            }
-          } catch (verifyError) {
-            console.warn('[Receiver] ⚠️ Could not verify location save:', verifyError)
-          }
-        }, 1000)
       } catch (locationError: any) {
         console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Exception', {
           error: locationError?.message || locationError,
