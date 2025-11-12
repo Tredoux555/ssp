@@ -630,10 +630,11 @@ export default function AlertResponsePage() {
       // Save receiver's location to location_history when they accept
       // This ensures the sender can see the receiver's location right away
       // FIXED: Use API endpoint instead of client-side update (bypasses RLS)
-      const locationSaveStartTime = Date.now()
-      
-      // CRITICAL FIX: Retry logic with better location accuracy
-      const saveLocationWithRetry = async (retryCount = 0): Promise<boolean> => {
+      try {
+        const locationSaveStartTime = Date.now()
+        
+        // CRITICAL FIX: Retry logic with better location accuracy
+        const saveLocationWithRetry = async (retryCount = 0): Promise<boolean> => {
         const maxRetries = 3
         const maxAccuracyMeters = 1000 // Reject locations with accuracy > 1km
         
@@ -835,32 +836,11 @@ export default function AlertResponsePage() {
           if (!saveSuccess) {
             console.warn('[DIAG] [Receiver] ⚠️ Initial location save failed, but tracking started - location will be saved via tracking')
           }
-        } catch (locationError: any) {
-          console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Exception', {
-            error: locationError?.message || locationError,
-            alertId: alert.id,
-            userId: user.id,
-            timestamp: new Date().toISOString()
-          })
           
-          // Still start tracking even if initial save failed
-          startLocationTracking(
-            user.id,
-            alert.id,
-            async (loc) => {
-              setReceiverLocation(loc)
-              setReceiverLastUpdate(new Date())
-              setReceiverTrackingActive(true)
-            },
-            20000
-          )
-          setReceiverTrackingActive(true)
-        }
-      
-      // Optional: Verify location was saved by querying it back
-      setTimeout(async () => {
-        try {
-          const supabase = createClient()
+          // Optional: Verify location was saved by querying it back
+          setTimeout(async () => {
+            try {
+              const supabase = createClient()
               const { data: savedLocation } = await supabase
                 .from('location_history')
                 .select('id, latitude, longitude, alert_id, user_id, created_at')
@@ -885,6 +865,27 @@ export default function AlertResponsePage() {
               console.warn('[Receiver] ⚠️ Could not verify location save:', verifyError)
             }
           }, 1000)
+        } catch (locationError: any) {
+          console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Exception', {
+            error: locationError?.message || locationError,
+            alertId: alert.id,
+            userId: user.id,
+            timestamp: new Date().toISOString()
+          })
+          
+          // Still start tracking even if initial save failed
+          startLocationTracking(
+            user.id,
+            alert.id,
+            async (loc) => {
+              setReceiverLocation(loc)
+              setReceiverLastUpdate(new Date())
+              setReceiverTrackingActive(true)
+            },
+            20000
+          )
+          setReceiverTrackingActive(true)
+        }
     } catch (error: any) {
       console.error('[Alert] Error accepting response:', error)
       window.alert('An error occurred. Please try again.')
