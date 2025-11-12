@@ -580,6 +580,13 @@ export default function AlertResponsePage() {
       const supabase = createClient()
 
     try {
+      const acceptanceUpdateStartTime = Date.now()
+      console.log('[DIAG] [Receiver] ✅ Checkpoint 7.2 - Acceptance Update: Starting', {
+        userId: user.id,
+        alertId: alert.id,
+        timestamp: new Date().toISOString()
+      })
+      
       // Clear declined_at if it was set (user can change their mind)
       const { error } = await supabase
         .from('alert_responses')
@@ -591,31 +598,59 @@ export default function AlertResponsePage() {
         .eq('contact_user_id', user.id)
 
       if (error) {
-        console.error('[Alert] Failed to accept response:', error)
+        console.error('[DIAG] [Receiver] ❌ Checkpoint 7.2 - Acceptance Update: Failed', {
+          error: error,
+          userId: user.id,
+          alertId: alert.id,
+          timestamp: new Date().toISOString()
+        })
         window.alert('Failed to accept response. Please try again.')
         setAccepting(false)
         return
       }
 
+      const acceptanceUpdateDuration = Date.now() - acceptanceUpdateStartTime
       setHasAccepted(true)
       setAccepting(false)
-      console.log('[Alert] ✅ User accepted to respond')
+      console.log('[DIAG] [Receiver] ✅ Checkpoint 7.2 - Acceptance Update: Completed', {
+        userId: user.id,
+        alertId: alert.id,
+        timestamp: new Date().toISOString(),
+        duration: `${acceptanceUpdateDuration}ms`
+      })
       
       // Load all receiver locations when user accepts (to show other responders)
       loadAllReceiverLocations()
       
       // Immediately save receiver's location to location_history when they accept
       // This ensures the sender can see the receiver's location right away
+      const locationSaveStartTime = Date.now()
       try {
+        console.log('[DIAG] [Receiver] 📍 Checkpoint 7.1 - Location Save: Starting', {
+          userId: user.id,
+          alertId: alert.id,
+          timestamp: new Date().toISOString()
+        })
+        
         const currentLoc = await getCurrentLocation()
         if (currentLoc) {
+          console.log('[DIAG] [Receiver] 📍 Checkpoint 7.1 - Location Save: Got location', {
+            location: currentLoc,
+            userId: user.id,
+            alertId: alert.id,
+            timestamp: new Date().toISOString()
+          })
+          
           const { updateLocation } = await import('@/lib/location')
           await updateLocation(user.id, alert.id, currentLoc)
-          console.log('[Receiver] ✅ Saved initial location after acceptance:', {
+          
+          const locationSaveDuration = Date.now() - locationSaveStartTime
+          console.log('[DIAG] [Receiver] ✅ Checkpoint 7.1 - Location Save: Completed', {
             location: currentLoc,
             alertId: alert.id,
             userId: user.id,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            duration: `${locationSaveDuration}ms`
           })
           
           // Verify location was saved by querying it back

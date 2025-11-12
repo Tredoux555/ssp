@@ -12,7 +12,13 @@ export async function GET(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
+  const requestStartTime = Date.now()
   try {
+    console.log('[DIAG] [API] 📥 Checkpoint 6 - accepted-responders: Request received', {
+      timestamp: new Date().toISOString(),
+      url: request.url
+    })
+    
     // Get authenticated user
     const supabase = await createServerClient()
     const { data: { session }, error: sessionError } = await supabase.auth.getSession()
@@ -144,10 +150,13 @@ export async function GET(
       )
     }
 
-    console.log('[API] ✅ Successfully fetched accepted responders:', {
+    const totalDuration = Date.now() - requestStartTime
+    console.log('[DIAG] [API] ✅ Checkpoint 6 - accepted-responders: Returning response', {
       alertId: alertId,
       count: acceptedResponses?.length || 0,
-      responderIds: acceptedResponses?.map((r: any) => r.contact_user_id) || []
+      responderIds: acceptedResponses?.map((r: any) => r.contact_user_id) || [],
+      timestamp: new Date().toISOString(),
+      totalDuration: `${totalDuration}ms`
     })
 
     return NextResponse.json(

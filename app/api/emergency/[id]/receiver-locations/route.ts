@@ -14,12 +14,24 @@ export async function GET(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
+  const requestStartTime = Date.now()
   try {
+    console.log('[DIAG] [API] 📥 Checkpoint 6 - receiver-locations: Request received', {
+      timestamp: new Date().toISOString(),
+      url: request.url
+    })
+    
     // Get authenticated user
     const supabase = await createServerClient()
     const { data: { session }, error: sessionError } = await supabase.auth.getSession()
     
     if (sessionError || !session?.user) {
+      console.log('[DIAG] [API] ❌ Checkpoint 6 - receiver-locations: Unauthorized', {
+        hasSession: !!session,
+        hasUser: !!session?.user,
+        error: sessionError?.message,
+        timestamp: new Date().toISOString()
+      })
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -28,6 +40,12 @@ export async function GET(
 
     const params = await context.params
     const alertId = params.id
+    
+    console.log('[DIAG] [API] 📥 Checkpoint 6 - receiver-locations: Request details', {
+      alertId: alertId,
+      userId: session.user.id,
+      timestamp: new Date().toISOString()
+    })
 
     if (!alertId) {
       return NextResponse.json(
@@ -109,10 +127,11 @@ export async function GET(
 
     const acceptedUserIds = acceptedResponses?.map((r: { contact_user_id: string }) => r.contact_user_id) || []
 
-    console.log('[API] 🔍 Querying receiver locations:', {
+    console.log('[DIAG] [API] 🔍 Checkpoint 6 - receiver-locations: Querying locations', {
       alertId: alertId,
       acceptedUserIds: acceptedUserIds,
-      acceptedCount: acceptedUserIds.length
+      acceptedCount: acceptedUserIds.length,
+      timestamp: new Date().toISOString()
     })
 
     if (acceptedUserIds.length === 0) {
@@ -142,7 +161,7 @@ export async function GET(
       .order('created_at', { ascending: false })
       .limit(100) // Limit to last 100 locations per alert
 
-    console.log('[API] 📍 Location query result:', {
+    console.log('[DIAG] [API] 📍 Checkpoint 6 - receiver-locations: Query result', {
       locationCount: locations?.length || 0,
       locations: locations?.map((loc: any) => ({
         id: loc.id,
@@ -155,7 +174,9 @@ export async function GET(
       error: locationsError ? {
         code: locationsError.code,
         message: locationsError.message
-      } : null
+      } : null,
+      timestamp: new Date().toISOString(),
+      queryDuration: `${Date.now() - requestStartTime}ms`
     })
 
     if (locationsError) {
@@ -182,7 +203,8 @@ export async function GET(
       groupedByUser[receiverId].push(loc)
     })
 
-    console.log('[API] ✅ Returning receiver locations:', {
+    const totalDuration = Date.now() - requestStartTime
+    console.log('[DIAG] [API] ✅ Checkpoint 6 - receiver-locations: Returning response', {
       totalLocations: locations?.length || 0,
       uniqueReceivers: Object.keys(groupedByUser).length,
       receivers: Object.keys(groupedByUser).map(receiverId => ({
@@ -193,7 +215,9 @@ export async function GET(
           lng: groupedByUser[receiverId][0].longitude,
           timestamp: groupedByUser[receiverId][0].created_at
         } : null
-      }))
+      })),
+      timestamp: new Date().toISOString(),
+      totalDuration: `${totalDuration}ms`
     })
 
     return NextResponse.json(

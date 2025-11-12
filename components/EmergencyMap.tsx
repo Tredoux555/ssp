@@ -38,12 +38,22 @@ function EmergencyMapComponent({
 }: EmergencyMapProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ''
   
-  // Log prop changes for debugging
+  // Phase 5: Log prop changes for debugging
+  const prevReceiverLocationsRef = useRef<Map<string, LocationHistory[]> | undefined>(undefined)
   useEffect(() => {
-    console.log('[Map] 📥 Receiver locations prop received:', {
+    const prevSize = prevReceiverLocationsRef.current?.size || 0
+    const prevKeys = prevReceiverLocationsRef.current ? Array.from(prevReceiverLocationsRef.current.keys()) : []
+    const newSize = receiverLocations?.size || 0
+    const newKeys = receiverLocations ? Array.from(receiverLocations.keys()) : []
+    
+    console.log('[DIAG] [Map] 📥 Checkpoint 5.1 - Prop Reception: receiverLocations', {
       isDefined: !!receiverLocations,
-      size: receiverLocations?.size || 0,
-      receiverIds: receiverLocations ? Array.from(receiverLocations.keys()) : [],
+      size: newSize,
+      receiverIds: newKeys,
+      previousSize: prevSize,
+      previousKeys: prevKeys,
+      sizeChanged: prevSize !== newSize,
+      keysChanged: JSON.stringify(prevKeys.sort()) !== JSON.stringify(newKeys.sort()),
       locationsPerReceiver: receiverLocations ? Array.from(receiverLocations.entries()).map(([id, locs]) => ({
         receiverId: id,
         locationCount: locs.length,
@@ -52,8 +62,11 @@ function EmergencyMapComponent({
           lng: locs[locs.length - 1].longitude,
           id: locs[locs.length - 1].id
         } : null
-      })) : []
+      })) : [],
+      timestamp: new Date().toISOString()
     })
+    
+    prevReceiverLocationsRef.current = receiverLocations
   }, [receiverLocations])
   
   // Use useLoadScript hook for proper Google Maps loading
@@ -77,11 +90,21 @@ function EmergencyMapComponent({
   const [allReceiverLocations, setAllReceiverLocations] = useState<Map<string, LocationHistory[]>>(receiverLocations || new Map())
   const [allReceiverUserIds, setAllReceiverUserIds] = useState<string[]>(receiverUserIds || [])
   
-  // Log state updates for debugging
+  // Phase 5: Log state updates for debugging
+  const prevAllReceiverLocationsRef = useRef<Map<string, LocationHistory[]>>(new Map())
   useEffect(() => {
-    console.log('[Map] 📊 allReceiverLocations state updated:', {
-      size: allReceiverLocations.size,
-      receiverIds: Array.from(allReceiverLocations.keys()),
+    const prevSize = prevAllReceiverLocationsRef.current.size
+    const prevKeys = Array.from(prevAllReceiverLocationsRef.current.keys())
+    const newSize = allReceiverLocations.size
+    const newKeys = Array.from(allReceiverLocations.keys())
+    
+    console.log('[DIAG] [Map] 📊 Checkpoint 5.2 - State Sync: allReceiverLocations', {
+      size: newSize,
+      receiverIds: newKeys,
+      previousSize: prevSize,
+      previousKeys: prevKeys,
+      sizeChanged: prevSize !== newSize,
+      keysChanged: JSON.stringify(prevKeys.sort()) !== JSON.stringify(newKeys.sort()),
       locationsPerReceiver: Array.from(allReceiverLocations.entries()).map(([id, locs]) => ({
         receiverId: id,
         locationCount: locs.length,
@@ -92,8 +115,11 @@ function EmergencyMapComponent({
           id: locs[locs.length - 1].id,
           timestamp: locs[locs.length - 1].created_at
         } : null
-      }))
+      })),
+      timestamp: new Date().toISOString()
     })
+    
+    prevAllReceiverLocationsRef.current = new Map(allReceiverLocations)
   }, [allReceiverLocations])
   
   const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null)
@@ -680,9 +706,19 @@ function EmergencyMapComponent({
     }))
   }, [receiverLocHistory, googleMaps, isLoaded])
 
-  // Memoize multiple receiver markers
+  // Phase 5: Memoize multiple receiver markers with diagnostic logging
   const multipleReceiverMarkers = useMemo(() => {
-    if (!isLoaded || !googleMaps) return []
+    const computationStartTime = Date.now()
+    
+    if (!isLoaded || !googleMaps) {
+      console.log('[DIAG] [Map] ⚠️ Checkpoint 5.3 - Marker Computation: Maps not loaded', {
+        isLoaded,
+        hasGoogleMaps: !!googleMaps,
+        timestamp: new Date().toISOString()
+      })
+      return []
+    }
+    
     const markers: Array<{
       receiverId: string
       currentMarker: { position: { lat: number; lng: number }; title: string; icon: any }
@@ -690,15 +726,17 @@ function EmergencyMapComponent({
       historyMarkers: Array<{ key: string; position: { lat: number; lng: number }; icon: any }>
     }> = []
     
-    console.log('[Map] 🔍 Computing multiple receiver markers:', {
+    console.log('[DIAG] [Map] 🔍 Checkpoint 5.3 - Marker Computation: Starting', {
       receiverLocationsSize: allReceiverLocations.size,
       receiverUserIds: allReceiverUserIds,
-      senderLocation
+      senderLocation: { lat: senderLocation.lat, lng: senderLocation.lng },
+      timestamp: new Date().toISOString()
     })
     
-    console.log('[Map] 🔍 Processing receiver locations:', {
+    console.log('[DIAG] [Map] 🔍 Checkpoint 5.3 - Processing receiver locations:', {
       totalReceivers: allReceiverLocations.size,
-      receiverIds: Array.from(allReceiverLocations.keys())
+      receiverIds: Array.from(allReceiverLocations.keys()),
+      timestamp: new Date().toISOString()
     })
 
     Array.from(allReceiverLocations.entries()).forEach(([receiverId, locations]) => {
@@ -768,10 +806,18 @@ function EmergencyMapComponent({
       })
     })
     
-    console.log('[Map] ✅ Computed multiple receiver markers:', {
+    const computationDuration = Date.now() - computationStartTime
+    console.log('[DIAG] [Map] ✅ Checkpoint 5.3 - Marker Computation: Completed', {
       markerCount: markers.length,
       receiverIds: markers.map(m => m.receiverId),
-      totalMarkers: markers.reduce((sum, m) => sum + 1 + m.historyMarkers.length, 0)
+      totalMarkers: markers.reduce((sum, m) => sum + 1 + m.historyMarkers.length, 0),
+      duration: `${computationDuration}ms`,
+      markers: markers.map(m => ({
+        receiverId: m.receiverId,
+        position: m.currentMarker.position,
+        historyMarkerCount: m.historyMarkers.length
+      })),
+      timestamp: new Date().toISOString()
     })
     
     return markers

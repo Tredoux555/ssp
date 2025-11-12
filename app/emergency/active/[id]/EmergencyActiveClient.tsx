@@ -69,6 +69,25 @@ export default function EmergencyActivePage() {
   useEffect(() => {
     addressRef.current = address
   }, [address])
+  
+  // Phase 4: Track state changes for diagnostics
+  useEffect(() => {
+    console.log('[DIAG] [Sender] 📊 Checkpoint 1.3 - State Actually Updated (React):', {
+      receiverLocationsSize: receiverLocations.size,
+      receiverLocationsKeys: Array.from(receiverLocations.keys()),
+      receiverUserIds: receiverUserIds,
+      timestamp: new Date().toISOString(),
+      locationsPerReceiver: Array.from(receiverLocations.entries()).map(([id, locs]) => ({
+        receiverId: id,
+        locationCount: locs.length,
+        latestLocation: locs.length > 0 ? {
+          lat: locs[locs.length - 1].latitude,
+          lng: locs[locs.length - 1].longitude,
+          id: locs[locs.length - 1].id
+        } : null
+      }))
+    })
+  }, [receiverLocations, receiverUserIds])
 
   const loadAlert = useCallback(async () => {
     if (!user || loadingAlertRef.current) {
@@ -141,12 +160,16 @@ export default function EmergencyActivePage() {
     // Query all receiver locations from location_history (only from accepted responders)
     // Uses server-side API endpoints to bypass RLS
     const loadReceiverLocations = async () => {
-      console.log('[Sender] 🔄 loadReceiverLocations called:', {
+      const diagStartTime = Date.now()
+      console.log('[DIAG] [Sender] 🔄 loadReceiverLocations called:', {
         hasAlert: !!alert,
         alertId: alert?.id,
         urlAlertId: alertId,
         userId: user?.id,
-        uploadingPhoto: uploadingPhotoRef.current
+        uploadingPhoto: uploadingPhotoRef.current,
+        timestamp: new Date().toISOString(),
+        currentReceiverLocationsSize: receiverLocations.size,
+        currentReceiverUserIds: receiverUserIds
       })
       
       // Enhanced guard check - ensure alert exists AND ID matches URL
@@ -205,9 +228,12 @@ export default function EmergencyActivePage() {
       
       try {
         const fetchStartTime = Date.now()
-        console.log('[Sender] 🌐 Fetching accepted responders...', {
+        console.log('[DIAG] [Sender] 🌐 Checkpoint 1.2 - API Call: accepted-responders', {
           url: `/api/emergency/${alert.id}/accepted-responders`,
-          timeout: '10s'
+          timeout: '10s',
+          timestamp: new Date().toISOString(),
+          alertId: alert.id,
+          userId: user.id
         })
         
         // Use API endpoint to get accepted responders (bypasses RLS)
@@ -225,12 +251,13 @@ export default function EmergencyActivePage() {
         )
         
         const fetchDuration = Date.now() - fetchStartTime
-        console.log('[Sender] ✅ Fetch completed:', {
+        console.log('[DIAG] [Sender] ✅ Checkpoint 1.2 - API Response: accepted-responders', {
           status: acceptedResponse.status,
           statusText: acceptedResponse.statusText,
           ok: acceptedResponse.ok,
           duration: `${fetchDuration}ms`,
-          url: `/api/emergency/${alert.id}/accepted-responders`
+          url: `/api/emergency/${alert.id}/accepted-responders`,
+          timestamp: new Date().toISOString()
         })
         
         // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
@@ -303,32 +330,43 @@ export default function EmergencyActivePage() {
         const acceptedResponses = acceptedData.acceptedResponders || []
         const acceptedCount = acceptedData.count || 0
 
+        console.log('[DIAG] [Sender] 📊 Checkpoint 1.2 - API Data Parsed: accepted-responders', {
+          rawResponse: acceptedData,
+          acceptedResponses: acceptedResponses,
+          acceptedCount: acceptedCount,
+          acceptedUserIds: acceptedResponses.map((r: { contact_user_id: string }) => r.contact_user_id),
+          timestamp: new Date().toISOString()
+        })
+
         // Update accepted responder count
         setAcceptedResponderCount(acceptedCount)
 
         // If no accepted responders, clear the map
         if (acceptedCount === 0) {
-          // Only log in development to reduce noise in production
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[Sender] No accepted responders yet')
-          }
+          console.log('[DIAG] [Sender] ⚠️ No accepted responders - clearing locations state', {
+            timestamp: new Date().toISOString()
+          })
           setReceiverLocations(new Map())
           setReceiverUserIds([])
           return
         }
 
         const acceptedUserIds = acceptedResponses.map((r: { contact_user_id: string }) => r.contact_user_id)
-        console.log('[Sender] ✅ Found accepted responders via API:', {
+        console.log('[DIAG] [Sender] ✅ Found accepted responders via API:', {
           count: acceptedCount,
-          userIds: acceptedUserIds
+          userIds: acceptedUserIds,
+          timestamp: new Date().toISOString()
         })
 
         // Use API endpoint to get receiver locations (bypasses RLS)
         // Use no-store to prevent caching - we need real-time data
         const locationsFetchStartTime = Date.now()
-        console.log('[Sender] 🌐 Fetching receiver locations...', {
+        console.log('[DIAG] [Sender] 🌐 Checkpoint 1.2 - API Call: receiver-locations', {
           url: `/api/emergency/${alert.id}/receiver-locations`,
-          timeout: '10s'
+          timeout: '10s',
+          timestamp: new Date().toISOString(),
+          alertId: alert.id,
+          acceptedUserIds: acceptedUserIds
         })
         
         const locationsResponse = await fetchWithTimeout(
@@ -343,12 +381,13 @@ export default function EmergencyActivePage() {
         )
         
         const locationsFetchDuration = Date.now() - locationsFetchStartTime
-        console.log('[Sender] ✅ Receiver locations fetch completed:', {
+        console.log('[DIAG] [Sender] ✅ Checkpoint 1.2 - API Response: receiver-locations', {
           status: locationsResponse.status,
           statusText: locationsResponse.statusText,
           ok: locationsResponse.ok,
           duration: `${locationsFetchDuration}ms`,
-          url: `/api/emergency/${alert.id}/receiver-locations`
+          url: `/api/emergency/${alert.id}/receiver-locations`,
+          timestamp: new Date().toISOString()
         })
         
         // Handle 304 as success (cached response is still valid, but we're preventing caching anyway)
@@ -369,7 +408,8 @@ export default function EmergencyActivePage() {
         const groupedByUser = locationsData.groupedByUser || {}
         const allLocations = locationsData.receiverLocations || []
 
-        console.log('[Sender] 📍 Received location data from API:', {
+        console.log('[DIAG] [Sender] 📍 Checkpoint 1.2 - API Data Parsed: receiver-locations', {
+          rawResponse: locationsData,
           totalLocations: allLocations.length,
           groupedByUserKeys: Object.keys(groupedByUser),
           groupedByUserSize: Object.keys(groupedByUser).length,
@@ -385,7 +425,8 @@ export default function EmergencyActivePage() {
               id: locs[0].id,
               timestamp: locs[0].created_at
             } : null
-          }))
+          })),
+          timestamp: new Date().toISOString()
         })
 
         if (allLocations && allLocations.length > 0) {
@@ -430,26 +471,48 @@ export default function EmergencyActivePage() {
             })
           })
 
-          console.log('[Sender] 📍 Setting receiver locations state:', {
+          const previousStateSize = receiverLocations.size
+          const previousStateKeys = Array.from(receiverLocations.keys())
+          
+          console.log('[DIAG] [Sender] 📍 Checkpoint 1.3 - Before State Update:', {
+            previousStateSize: previousStateSize,
+            previousStateKeys: previousStateKeys,
+            newStateSize: receiverMap.size,
+            newStateKeys: Array.from(receiverMap.keys()),
+            timestamp: new Date().toISOString()
+          })
+          
+          console.log('[DIAG] [Sender] 📍 Checkpoint 1.3 - Setting receiver locations state:', {
             mapSize: receiverMap.size,
             userIds: Array.from(userIds),
             receiverIds: Array.from(receiverMap.keys()),
             totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0),
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            stateChange: previousStateSize !== receiverMap.size ? 'SIZE_CHANGED' : 'SAME_SIZE',
+            newReceivers: Array.from(receiverMap.keys()).filter(id => !previousStateKeys.includes(id))
           })
           
           // Phase 3: Log successful location load (helps track which retry succeeded)
           if (receiverMap.size > 0) {
-            console.log('[Sender] ✅ Phase 3 - Successfully loaded receiver locations after acceptance:', {
+            console.log('[DIAG] [Sender] ✅ Checkpoint 1.3 - Successfully loaded receiver locations:', {
               receiverCount: receiverMap.size,
               receiverIds: Array.from(userIds),
               totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0),
-              timestamp: new Date().toISOString()
+              timestamp: new Date().toISOString(),
+              elapsedTime: `${Date.now() - diagStartTime}ms`
             })
           }
 
           setReceiverLocations(receiverMap)
           setReceiverUserIds(Array.from(userIds))
+          
+          // Log after state update (React will update asynchronously, but we log the intent)
+          console.log('[DIAG] [Sender] ✅ Checkpoint 1.3 - State Update Called:', {
+            stateUpdateFunction: 'setReceiverLocations',
+            newMapSize: receiverMap.size,
+            newUserIds: Array.from(userIds),
+            timestamp: new Date().toISOString()
+          })
         } else {
           console.warn('[Sender] ⚠️ No receiver locations found yet (accepted responders exist but no locations saved):', {
             acceptedUserIds: acceptedUserIds,
@@ -539,11 +602,14 @@ export default function EmergencyActivePage() {
         (payload: any) => {
           if (isUnmountingRef.current) return // Don't update state if unmounting
           
-          console.log('[Sender] ✅ Alert response update received:', {
+          console.log('[DIAG] [Sender] ✅ Checkpoint 1.1 - Acceptance Detection:', {
             contactUserId: payload.new.contact_user_id,
             acknowledgedAt: payload.new.acknowledged_at,
             alertId: alert.id,
-            oldAcknowledgedAt: payload.old?.acknowledged_at
+            oldAcknowledgedAt: payload.old?.acknowledged_at,
+            timestamp: new Date().toISOString(),
+            payloadNew: payload.new,
+            payloadOld: payload.old
           })
           // When someone accepts, reload receiver locations and update count
           if (payload.new.acknowledged_at) {
