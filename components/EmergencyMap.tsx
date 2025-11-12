@@ -87,8 +87,22 @@ function EmergencyMapComponent({
   const [senderLocationHistory, setSenderLocationHistory] = useState<LocationHistory[]>([])
   const [receiverLoc, setReceiverLoc] = useState<{ lat: number; lng: number } | null>(receiverLocation || null)
   const [receiverLocHistory, setReceiverLocHistory] = useState<LocationHistory[]>(receiverLocationHistory || [])
-  const [allReceiverLocations, setAllReceiverLocations] = useState<Map<string, LocationHistory[]>>(receiverLocations || new Map())
-  const [allReceiverUserIds, setAllReceiverUserIds] = useState<string[]>(receiverUserIds || [])
+  // Initialize state from props, but use empty Map to ensure useEffect handles updates
+  const [allReceiverLocations, setAllReceiverLocations] = useState<Map<string, LocationHistory[]>>(new Map())
+  const [allReceiverUserIds, setAllReceiverUserIds] = useState<string[]>([])
+  
+  // Initial sync from props on mount
+  useEffect(() => {
+    if (receiverLocations && receiverLocations.size > 0) {
+      console.log('[DIAG] [Map] 🎬 Initial sync from props on mount:', {
+        size: receiverLocations.size,
+        keys: Array.from(receiverLocations.keys()),
+        timestamp: new Date().toISOString()
+      })
+      setAllReceiverLocations(new Map(receiverLocations))
+      setAllReceiverUserIds(receiverUserIds || [])
+    }
+  }, []) // Only run on mount
   
   // Phase 5: Log state updates for debugging
   const prevAllReceiverLocationsRef = useRef<Map<string, LocationHistory[]>>(new Map())
@@ -254,7 +268,7 @@ function EmergencyMapComponent({
       setAllReceiverLocations(new Map())
       setAllReceiverUserIds([])
     }
-  }, [receiverLocations, receiverUserIds, allReceiverLocations])
+  }, [receiverLocations, receiverUserIds]) // Removed allReceiverLocations from deps to prevent loops
   
   // Update receiver user IDs when props change
   useEffect(() => {
