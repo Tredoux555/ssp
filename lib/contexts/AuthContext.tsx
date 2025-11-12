@@ -194,15 +194,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('[Auth] Checking initial session...')
         
         // Add timeout wrapper to prevent hanging (getSession can hang on network issues)
+        // Shorter timeout on mobile for faster feedback
+        const isMobile = typeof window !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+        const timeoutMs = isMobile ? 5000 : 10000 // 5s mobile, 10s desktop
+        
         const sessionPromise = supabase.auth.getSession()
         const timeoutPromise = new Promise<{ data: { session: null }, error: { message: string } }>((resolve) => {
           setTimeout(() => {
-            console.warn('[Auth] ⏱️ Session check timed out after 10 seconds')
+            console.warn(`[Auth] ⏱️ Session check timed out after ${timeoutMs}ms (${isMobile ? 'mobile' : 'desktop'})`)
             resolve({ 
               data: { session: null }, 
-              error: { message: 'Session check timed out after 10 seconds' } 
+              error: { message: `Session check timed out after ${timeoutMs}ms` } 
             })
-          }, 10000) // 10 second timeout (increased for desktop browsers)
+          }, timeoutMs)
         })
         
         const sessionResult: any = await Promise.race([sessionPromise, timeoutPromise])

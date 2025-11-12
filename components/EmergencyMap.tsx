@@ -191,88 +191,70 @@ function EmergencyMapComponent({
   }, [receiverLocationHistory])
   
   // Update all receiver locations when props change (for sender's map)
+  // FIXED: Always update when prop changes - simplified logic to ensure updates work
   useEffect(() => {
-    if (receiverLocations) {
-      // Compare Maps by size and content to prevent unnecessary updates
-      setAllReceiverLocations((prev) => {
-        // If sizes differ, definitely update
-        if (prev.size !== receiverLocations.size) {
-          console.log('[Map] ✅ Receiver locations updated from props (size changed):', {
-            receiverCount: receiverLocations.size,
-            receiverIds: Array.from(receiverLocations.keys()),
-            prevSize: prev.size,
-            newSize: receiverLocations.size
-          })
-          return new Map(receiverLocations)
+    const prevSize = allReceiverLocations.size
+    const prevKeys = Array.from(allReceiverLocations.keys())
+    const newSize = receiverLocations?.size || 0
+    const newKeys = receiverLocations ? Array.from(receiverLocations.keys()) : []
+    
+    // Always update if prop is provided and different from current state
+    // Use deep comparison of Map structure to detect changes
+    const mapsAreEqual = (map1: Map<string, LocationHistory[]>, map2: Map<string, LocationHistory[]>) => {
+      if (map1.size !== map2.size) return false
+      for (const [key, val1] of map1.entries()) {
+        const val2 = map2.get(key)
+        if (!val2 || val1.length !== val2.length) return false
+        // Compare location IDs
+        const ids1 = new Set(val1.map(loc => loc.id))
+        const ids2 = new Set(val2.map(loc => loc.id))
+        if (ids1.size !== ids2.size) return false
+        for (const id of ids1) {
+          if (!ids2.has(id)) return false
         }
-        
-        // Check if any receiver has new locations by comparing location IDs
-        let hasChanges = false
-        for (const [receiverId, locations] of receiverLocations.entries()) {
-          const prevLocations = prev.get(receiverId)
-          
-          // If receiver is new, definitely update
-          if (!prevLocations) {
-            hasChanges = true
-            console.log('[Map] ✅ New receiver detected:', receiverId)
-            break
-          }
-          
-          // If lengths differ, definitely update
-          if (prevLocations.length !== locations.length) {
-            hasChanges = true
-            console.log('[Map] ✅ Receiver location count changed:', {
-              receiverId,
-              prevCount: prevLocations.length,
-              newCount: locations.length
-            })
-            break
-          }
-          
-          // Compare location IDs to detect new locations (even if count is same)
-          // Get latest location IDs from both arrays
-          const prevLocationIds = new Set(prevLocations.map(loc => loc.id))
-          const newLocationIds = new Set(locations.map(loc => loc.id))
-          
-          // Check if there are any new location IDs
-          for (const newId of newLocationIds) {
-            if (!prevLocationIds.has(newId)) {
-              hasChanges = true
-              console.log('[Map] ✅ New location detected for receiver:', {
-                receiverId,
-                newLocationId: newId,
-                prevLocationIds: Array.from(prevLocationIds),
-                newLocationIds: Array.from(newLocationIds)
-              })
-              break
-            }
-          }
-          
-          if (hasChanges) break
-        }
-        
-        if (hasChanges) {
-          console.log('[Map] ✅ Receiver locations updated from props (content changed):', {
-            receiverCount: receiverLocations.size,
-            receiverIds: Array.from(receiverLocations.keys())
-          })
-          return new Map(receiverLocations)
-        }
-        
-        // No changes detected
-        return prev // Return previous to prevent re-render
-      })
-    } else {
-      // Clear if prop is null/undefined
-      setAllReceiverLocations((prev) => {
-        if (prev.size > 0) {
-          console.log('[Map] ⚠️ Receiver locations prop is null/undefined, clearing')
-          return new Map()
-        }
-        return prev
-      })
+      }
+      return true
     }
-  }, [receiverLocations])
+    
+    if (receiverLocations && receiverLocations.size > 0) {
+      // Check if maps are actually different
+      if (!mapsAreEqual(allReceiverLocations, receiverLocations)) {
+        console.log('[DIAG] [Map] ✅ Checkpoint 5.2 - Force updating allReceiverLocations from props:', {
+          prevSize,
+          newSize,
+          prevKeys,
+          newKeys,
+          timestamp: new Date().toISOString()
+        })
+        setAllReceiverLocations(new Map(receiverLocations))
+        setAllReceiverUserIds(receiverUserIds || [])
+      } else {
+        console.log('[DIAG] [Map] ⏭️ Checkpoint 5.2 - Maps are equal, skipping update:', {
+          size: newSize,
+          keys: newKeys,
+          timestamp: new Date().toISOString()
+        })
+      }
+    } else if (receiverLocations && receiverLocations.size === 0) {
+      // Explicitly clear if prop is empty Map
+      if (allReceiverLocations.size > 0) {
+        console.log('[DIAG] [Map] 🧹 Checkpoint 5.2 - Clearing allReceiverLocations (prop is empty):', {
+          prevSize,
+          timestamp: new Date().toISOString()
+        })
+        setAllReceiverLocations(new Map())
+        setAllReceiverUserIds([])
+      }
+    } else if (!receiverLocations && allReceiverLocations.size > 0) {
+      // Clear if prop is null/undefined
+      console.log('[DIAG] [Map] 🧹 Checkpoint 5.2 - Clearing allReceiverLocations (prop is null/undefined):', {
+        prevSize,
+        timestamp: new Date().toISOString()
+      })
+      setAllReceiverLocations(new Map())
+      setAllReceiverUserIds([])
+    }
+  }, [receiverLocations, receiverUserIds, allReceiverLocations])
   
   // Update receiver user IDs when props change
   useEffect(() => {

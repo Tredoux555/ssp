@@ -29,14 +29,39 @@ export const createClient = () => {
         },
         set(name: string, value: string, options: any) {
           // Set cookie with proper options for session persistence
+          // Enhanced for mobile compatibility
+          const isMobile = typeof window !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+          const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:'
+          
           const cookieOptions = [
             `${name}=${value}`,
             'path=/',
-            options?.maxAge ? `max-age=${options.maxAge}` : '',
-            options?.secure ? 'secure' : '',
-            options?.sameSite ? `samesite=${options.sameSite}` : 'samesite=lax',
+            options?.maxAge ? `max-age=${options.maxAge}` : 'max-age=31536000', // 1 year default
+            isSecure ? 'secure' : '', // Only set secure on HTTPS
+            options?.sameSite ? `samesite=${options.sameSite}` : (isMobile ? 'samesite=none' : 'samesite=lax'), // none for mobile cross-site
           ].filter(Boolean).join('; ')
+          
+          console.log('[DIAG] [Supabase] Setting cookie:', {
+            name,
+            hasValue: !!value,
+            isMobile,
+            isSecure,
+            options: cookieOptions,
+            timestamp: new Date().toISOString()
+          })
+          
           document.cookie = cookieOptions
+          
+          // Verify cookie was set (especially important on mobile)
+          const verifyCookie = document.cookie.split('; ').find(row => row.startsWith(`${name}=`))
+          if (!verifyCookie && value) {
+            console.warn('[DIAG] [Supabase] ⚠️ Cookie may not have been set:', {
+              name,
+              cookieEnabled: navigator.cookieEnabled,
+              isMobile,
+              timestamp: new Date().toISOString()
+            })
+          }
         },
         remove(name: string, options: any) {
           // Remove cookie
