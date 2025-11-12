@@ -753,25 +753,6 @@ export default function AlertResponsePage() {
               console.warn('[Receiver] ⚠️ Could not verify location save:', verifyError)
             }
           }, 1000)
-      } catch (locationError: any) {
-        console.warn('[Receiver] ⚠️ Could not save initial location after acceptance:', locationError)
-        // Don't block acceptance if location save fails, but still try to start tracking
-        try {
-          startLocationTracking(
-            user.id,
-            alert.id,
-            async (loc) => {
-              setReceiverLocation(loc)
-              setReceiverLastUpdate(new Date())
-              setReceiverTrackingActive(true)
-            },
-            20000
-          )
-          setReceiverTrackingActive(true)
-        } catch (trackError) {
-          console.warn('[Receiver] ⚠️ Could not start location tracking:', trackError)
-        }
-      }
     } catch (error: any) {
       console.error('[Alert] Error accepting response:', error)
       window.alert('An error occurred. Please try again.')
