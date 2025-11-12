@@ -624,6 +624,7 @@ export default function AlertResponsePage() {
       
       // Immediately save receiver's location to location_history when they accept
       // This ensures the sender can see the receiver's location right away
+      // FIXED: Use API endpoint instead of client-side update (bypasses RLS)
       const locationSaveStartTime = Date.now()
       try {
         console.log('[DIAG] [Receiver] 📍 Checkpoint 7.1 - Location Save: Starting', {
@@ -641,22 +642,93 @@ export default function AlertResponsePage() {
             timestamp: new Date().toISOString()
           })
           
-          const { updateLocation } = await import('@/lib/location')
-          await updateLocation(user.id, alert.id, currentLoc)
-          
-          const locationSaveDuration = Date.now() - locationSaveStartTime
-          console.log('[DIAG] [Receiver] ✅ Checkpoint 7.1 - Location Save: Completed', {
-            location: currentLoc,
+          // Use API endpoint instead of client-side update (bypasses RLS)
+          const saveResponse = await fetch(`/api/emergency/${alert.id}/save-receiver-location`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              lat: currentLoc.lat,
+              lng: currentLoc.lng,
+              accuracy: currentLoc.accuracy,
+            }),
+          })
+
+          if (saveResponse.ok) {
+            const saveData = await saveResponse.json()
+            const locationSaveDuration = Date.now() - locationSaveStartTime
+            console.log('[DIAG] [Receiver] ✅ Checkpoint 7.1 - Location Save: Completed', {
+              location: currentLoc,
+              locationId: saveData.location?.id,
+              alertId: alert.id,
+              userId: user.id,
+              timestamp: new Date().toISOString(),
+              duration: `${locationSaveDuration}ms`
+            })
+            
+            // Also update local state so map shows immediately
+            setReceiverLocation(currentLoc)
+            setReceiverLastUpdate(new Date())
+            
+            // Start continuous location tracking immediately after acceptance
+            // This ensures the sender gets live location updates
+            startLocationTracking(
+              user.id,
+              alert.id,
+              async (loc) => {
+                setReceiverLocation(loc)
+                setReceiverLastUpdate(new Date())
+                setReceiverTrackingActive(true)
+              },
+              20000 // Update every 20 seconds
+            )
+            console.log('[Receiver] ✅ Started continuous location tracking after acceptance')
+            setReceiverTrackingActive(true)
+          } else {
+            const errorData = await saveResponse.json().catch(() => ({}))
+            const locationSaveDuration = Date.now() - locationSaveStartTime
+            console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Failed', {
+              status: saveResponse.status,
+              error: errorData.error || errorData.details,
+              location: currentLoc,
+              alertId: alert.id,
+              userId: user.id,
+              timestamp: new Date().toISOString(),
+              duration: `${locationSaveDuration}ms`
+            })
+            
+            // Still start tracking even if initial location save failed
+            startLocationTracking(
+              user.id,
+              alert.id,
+              async (loc) => {
+                setReceiverLocation(loc)
+                setReceiverLastUpdate(new Date())
+                setReceiverTrackingActive(true)
+              },
+              20000
+            )
+            setReceiverTrackingActive(true)
+          }
+        } else {
+          console.warn('[DIAG] [Receiver] ⚠️ Checkpoint 7.1 - Location Save: Could not get location', {
             alertId: alert.id,
             userId: user.id,
-            timestamp: new Date().toISOString(),
-            duration: `${locationSaveDuration}ms`
+            timestamp: new Date().toISOString()
           })
-          
-          // Verify location was saved by querying it back
-          setTimeout(async () => {
-            try {
-              const supabase = createClient()
+        }
+      } catch (locationError: any) {
+        console.error('[DIAG] [Receiver] ❌ Checkpoint 7.1 - Location Save: Exception', {
+          error: locationError?.message || locationError,
+          alertId: alert.id,
+          userId: user.id,
+          timestamp: new Date().toISOString()
+        })
+      }
+      
+      // Optional: Verify location was saved by querying it back
+      setTimeout(async () => {
+        try {
+          const supabase = createClient()
               const { data: savedLocation } = await supabase
                 .from('location_history')
                 .select('id, latitude, longitude, alert_id, user_id, created_at')
