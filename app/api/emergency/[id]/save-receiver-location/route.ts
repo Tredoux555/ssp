@@ -62,12 +62,46 @@ export async function POST(
     }
 
     // Verify user has accepted to respond (using admin client to bypass RLS)
-    const { data: response, error: responseError } = await admin
-      .from('alert_responses')
-      .select('acknowledged_at, declined_at')
-      .eq('alert_id', alertId)
-      .eq('contact_user_id', session.user.id)
-      .single()
+    // CRITICAL FIX: Add retry logic to handle race condition (acceptance might not be committed yet)
+    let response: any = null
+    let responseError: any = null
+    let retryCount = 0
+    const maxRetries = 3
+    
+    while (retryCount < maxRetries) {
+      const { data, error } = await admin
+        .from('alert_responses')
+        .select('acknowledged_at, declined_at')
+        .eq('alert_id', alertId)
+        .eq('contact_user_id', session.user.id)
+        .single()
+      
+      response = data
+      responseError = error
+      
+      // If we got a response and it's accepted, break
+      if (response && response.acknowledged_at && !response.declined_at) {
+        break
+      }
+      
+      // If error is not "not found" or we're on last retry, break
+      if (responseError && responseError.code !== 'PGRST116' && retryCount === maxRetries - 1) {
+        break
+      }
+      
+      // Wait before retry (race condition - acceptance might not be committed yet)
+      if (retryCount < maxRetries - 1) {
+        console.log('[DIAG] [API] ⏳ Retrying acceptance check (race condition?)', {
+          attempt: retryCount + 1,
+          maxRetries: maxRetries,
+          alertId: alertId,
+          userId: session.user.id
+        })
+        await new Promise(resolve => setTimeout(resolve, 300))
+      }
+      
+      retryCount++
+    }
 
     if (responseError || !response) {
       console.log('[DIAG] [API] ❌ save-receiver-location: User has not accepted', {
@@ -75,6 +109,7 @@ export async function POST(
         hasResponse: !!response,
         alertId: alertId,
         userId: session.user.id,
+        retries: retryCount,
         timestamp: new Date().toISOString()
       })
       return NextResponse.json({ 

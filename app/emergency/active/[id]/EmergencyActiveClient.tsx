@@ -616,7 +616,15 @@ export default function EmergencyActivePage() {
           console.warn('[Sender] ⚠️ Phase 3 - Request timed out - will retry on next poll/subscription update or delayed retry')
           // Don't clear state - keep existing data and retry later
         } else if (isNetworkError) {
-          console.warn('[Sender] ⚠️ Phase 3 - Network error - will retry on next poll')
+          console.warn('[Sender] ⚠️ Phase 3 - Network error - will retry automatically')
+          // CRITICAL FIX: Retry network errors immediately with exponential backoff
+          const retryDelay = Math.min(1000 * Math.pow(2, 0), 5000) // Start with 1s, max 5s
+          setTimeout(() => {
+            if (!isUnmountingRef.current && loadReceiverLocationsRef.current) {
+              console.log('[Sender] 🔄 Retrying location load after network error...')
+              loadReceiverLocationsRef.current()
+            }
+          }, retryDelay)
           // Don't clear state - network issues are temporary
         } else {
           // For permanent errors (404, 401, 500), clear state

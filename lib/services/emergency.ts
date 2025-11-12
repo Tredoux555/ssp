@@ -238,6 +238,34 @@ export async function createEmergencyAlert(
 
       const alert = alertDataResult as EmergencyAlert
 
+      // CRITICAL FIX: Save sender's initial location to location_history immediately
+      // This ensures receivers can see sender's location right away
+      if (validatedLocation) {
+        try {
+          const { error: locationError } = await supabase
+            .from('location_history')
+            .insert({
+              user_id: userId,
+              alert_id: alert.id,
+              latitude: validatedLocation.lat,
+              longitude: validatedLocation.lng,
+              created_at: new Date().toISOString(),
+            })
+          
+          if (locationError) {
+            console.warn('[Alert] ⚠️ Failed to save initial location to location_history (non-critical):', locationError)
+          } else {
+            console.log('[Alert] ✅ Saved sender initial location to location_history:', {
+              alertId: alert.id,
+              userId: userId,
+              location: validatedLocation
+            })
+          }
+        } catch (locationErr) {
+          console.warn('[Alert] ⚠️ Error saving initial location (non-critical):', locationErr)
+        }
+      }
+
       // Log alert creation success immediately
       console.log(`[Alert] ✅ Alert created successfully:`, {
         alertId: alert.id,
