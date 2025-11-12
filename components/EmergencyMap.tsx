@@ -205,70 +205,117 @@ function EmergencyMapComponent({
   }, [receiverLocationHistory])
   
   // Update all receiver locations when props change (for sender's map)
-  // FIXED: Always update when prop changes - simplified logic to ensure updates work
+  // FIXED: Always update when prop changes - use functional update to get latest state
   useEffect(() => {
-    const prevSize = allReceiverLocations.size
-    const prevKeys = Array.from(allReceiverLocations.keys())
-    const newSize = receiverLocations?.size || 0
-    const newKeys = receiverLocations ? Array.from(receiverLocations.keys()) : []
-    
-    // Always update if prop is provided and different from current state
-    // Use deep comparison of Map structure to detect changes
-    const mapsAreEqual = (map1: Map<string, LocationHistory[]>, map2: Map<string, LocationHistory[]>) => {
-      if (map1.size !== map2.size) return false
-      for (const [key, val1] of map1.entries()) {
-        const val2 = map2.get(key)
-        if (!val2 || val1.length !== val2.length) return false
-        // Compare location IDs
-        const ids1 = new Set(val1.map(loc => loc.id))
-        const ids2 = new Set(val2.map(loc => loc.id))
-        if (ids1.size !== ids2.size) return false
-        for (const id of ids1) {
-          if (!ids2.has(id)) return false
+    if (!receiverLocations) {
+      // Clear if prop is null/undefined
+      setAllReceiverLocations((prev) => {
+        if (prev.size > 0) {
+          console.log('[DIAG] [Map] 🧹 Checkpoint 5.2 - Clearing allReceiverLocations (prop is null/undefined):', {
+            prevSize: prev.size,
+            timestamp: new Date().toISOString()
+          })
+          return new Map()
         }
-      }
-      return true
+        return prev
+      })
+      setAllReceiverUserIds([])
+      return
     }
     
-    if (receiverLocations && receiverLocations.size > 0) {
-      // Check if maps are actually different
-      if (!mapsAreEqual(allReceiverLocations, receiverLocations)) {
-        console.log('[DIAG] [Map] ✅ Checkpoint 5.2 - Force updating allReceiverLocations from props:', {
+    if (receiverLocations.size === 0) {
+      // Explicitly clear if prop is empty Map
+      setAllReceiverLocations((prev) => {
+        if (prev.size > 0) {
+          console.log('[DIAG] [Map] 🧹 Checkpoint 5.2 - Clearing allReceiverLocations (prop is empty):', {
+            prevSize: prev.size,
+            timestamp: new Date().toISOString()
+          })
+          return new Map()
+        }
+        return prev
+      })
+      setAllReceiverUserIds([])
+      return
+    }
+    
+    // Prop has data - check if different from current state using functional update
+    setAllReceiverLocations((prev) => {
+      const prevSize = prev.size
+      const prevKeys = Array.from(prev.keys())
+      const newSize = receiverLocations.size
+      const newKeys = Array.from(receiverLocations.keys())
+      
+      // Quick size check first
+      if (prev.size !== receiverLocations.size) {
+        console.log('[DIAG] [Map] ✅ Checkpoint 5.2 - Updating allReceiverLocations (size changed):', {
           prevSize,
           newSize,
           prevKeys,
           newKeys,
           timestamp: new Date().toISOString()
         })
-        setAllReceiverLocations(new Map(receiverLocations))
-        setAllReceiverUserIds(receiverUserIds || [])
+        return new Map(receiverLocations)
+      }
+      
+      // Deep comparison of Map structure
+      let hasChanges = false
+      for (const [key, val1] of receiverLocations.entries()) {
+        const val2 = prev.get(key)
+        if (!val2 || val1.length !== val2.length) {
+          hasChanges = true
+          break
+        }
+        // Compare location IDs
+        const ids1 = new Set(val1.map(loc => loc.id))
+        const ids2 = new Set(val2.map(loc => loc.id))
+        if (ids1.size !== ids2.size) {
+          hasChanges = true
+          break
+        }
+        for (const id of ids1) {
+          if (!ids2.has(id)) {
+            hasChanges = true
+            break
+          }
+        }
+        if (hasChanges) break
+      }
+      
+      if (hasChanges) {
+        console.log('[DIAG] [Map] ✅ Checkpoint 5.2 - Updating allReceiverLocations (content changed):', {
+          prevSize,
+          newSize,
+          prevKeys,
+          newKeys,
+          timestamp: new Date().toISOString()
+        })
+        return new Map(receiverLocations)
       } else {
         console.log('[DIAG] [Map] ⏭️ Checkpoint 5.2 - Maps are equal, skipping update:', {
           size: newSize,
           keys: newKeys,
           timestamp: new Date().toISOString()
         })
+        return prev // No changes
       }
-    } else if (receiverLocations && receiverLocations.size === 0) {
-      // Explicitly clear if prop is empty Map
-      if (allReceiverLocations.size > 0) {
-        console.log('[DIAG] [Map] 🧹 Checkpoint 5.2 - Clearing allReceiverLocations (prop is empty):', {
-          prevSize,
+    })
+    
+    // Always update user IDs when prop changes (simpler array comparison)
+    setAllReceiverUserIds((prev) => {
+      const prevStr = JSON.stringify([...prev].sort())
+      const newStr = JSON.stringify([...(receiverUserIds || [])].sort())
+      if (prevStr !== newStr) {
+        console.log('[DIAG] [Map] ✅ Checkpoint 5.2 - Updating receiverUserIds:', {
+          prev: prev,
+          new: receiverUserIds,
           timestamp: new Date().toISOString()
         })
-        setAllReceiverLocations(new Map())
-        setAllReceiverUserIds([])
+        return receiverUserIds || []
       }
-    } else if (!receiverLocations && allReceiverLocations.size > 0) {
-      // Clear if prop is null/undefined
-      console.log('[DIAG] [Map] 🧹 Checkpoint 5.2 - Clearing allReceiverLocations (prop is null/undefined):', {
-        prevSize,
-        timestamp: new Date().toISOString()
-      })
-      setAllReceiverLocations(new Map())
-      setAllReceiverUserIds([])
-    }
-  }, [receiverLocations, receiverUserIds]) // Removed allReceiverLocations from deps to prevent loops
+      return prev
+    })
+  }, [receiverLocations, receiverUserIds]) // Only depend on props, not state
   
   // Update receiver user IDs when props change
   useEffect(() => {
