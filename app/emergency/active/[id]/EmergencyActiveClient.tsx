@@ -159,51 +159,53 @@ export default function EmergencyActivePage() {
       setShowPermissionPrompt(false)
     }
 
-    // Verify RLS policies on mount (non-blocking)
-    const verifyRLSPolicies = async () => {
-      try {
-        const response = await fetch('/api/diagnostics/rls-verification', {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-        })
-        
-        if (response.ok) {
-          const data = await response.json()
-          console.error('[DIAG] [Sender] 🔍 RLS Policy Verification:', {
-            policies: data.policies,
-            recommendations: data.recommendations,
-            timestamp: new Date().toISOString()
+    // Verify RLS policies on mount (non-blocking, deferred to avoid React rendering issues)
+    // Use setTimeout to defer execution to next tick, ensuring it doesn't interfere with React's render cycle
+    setTimeout(() => {
+      const verifyRLSPolicies = async () => {
+        try {
+          const response = await fetch('/api/diagnostics/rls-verification', {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
           })
           
-          // Log warnings if policies are missing
-          if (!data.policies.alertResponses.accessible) {
-            console.error('[Sender] ⚠️ RLS POLICY ISSUE: alert_responses query may be blocked', {
-              recommendation: data.recommendations.alertResponses,
-              error: data.policies.alertResponses.error
+          if (response.ok) {
+            const data = await response.json()
+            console.error('[DIAG] [Sender] 🔍 RLS Policy Verification:', {
+              policies: data.policies,
+              recommendations: data.recommendations,
+              timestamp: new Date().toISOString()
+            })
+            
+            // Log warnings if policies are missing
+            if (!data.policies.alertResponses.accessible) {
+              console.error('[Sender] ⚠️ RLS POLICY ISSUE: alert_responses query may be blocked', {
+                recommendation: data.recommendations.alertResponses,
+                error: data.policies.alertResponses.error
+              })
+            }
+            if (!data.policies.locationHistory.accessible) {
+              console.error('[Sender] ⚠️ RLS POLICY ISSUE: location_history query may be blocked', {
+                recommendation: data.recommendations.locationHistory,
+                error: data.policies.locationHistory.error
+              })
+            }
+          } else {
+            console.error('[Sender] ⚠️ Failed to verify RLS policies:', {
+              status: response.status,
+              timestamp: new Date().toISOString()
             })
           }
-          if (!data.policies.locationHistory.accessible) {
-            console.error('[Sender] ⚠️ RLS POLICY ISSUE: location_history query may be blocked', {
-              recommendation: data.recommendations.locationHistory,
-              error: data.policies.locationHistory.error
-            })
-          }
-        } else {
-          console.error('[Sender] ⚠️ Failed to verify RLS policies:', {
-            status: response.status,
+        } catch (verifyError: any) {
+          console.error('[Sender] ⚠️ Error verifying RLS policies:', {
+            error: verifyError?.message || verifyError,
             timestamp: new Date().toISOString()
           })
         }
-      } catch (verifyError: any) {
-        console.error('[Sender] ⚠️ Error verifying RLS policies:', {
-          error: verifyError?.message || verifyError,
-          timestamp: new Date().toISOString()
-        })
       }
-    }
-    
-    // Run verification (non-blocking, don't await)
-    verifyRLSPolicies()
+      
+      verifyRLSPolicies()
+    }, 0) // Defer to next event loop tick
 
     // HYBRID FIX: Try direct Supabase query first, fall back to API if RLS blocks
     // This ensures it works regardless of RLS policy migration status
