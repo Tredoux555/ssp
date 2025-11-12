@@ -33,12 +33,16 @@ export const createClient = () => {
           const isMobile = typeof window !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
           const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:'
           
+          // CRITICAL FIX: samesite=none REQUIRES secure flag to be true
+          // If not HTTPS, use samesite=lax instead (works on mobile without secure)
+          const sameSite = options?.sameSite || (isMobile && isSecure ? 'none' : 'lax')
+          
           const cookieOptions = [
             `${name}=${value}`,
             'path=/',
             options?.maxAge ? `max-age=${options.maxAge}` : 'max-age=31536000', // 1 year default
-            isSecure ? 'secure' : '', // Only set secure on HTTPS
-            options?.sameSite ? `samesite=${options.sameSite}` : (isMobile ? 'samesite=none' : 'samesite=lax'), // none for mobile cross-site
+            sameSite === 'none' ? 'secure' : (isSecure ? 'secure' : ''), // secure required for none, optional for others
+            `samesite=${sameSite}`,
           ].filter(Boolean).join('; ')
           
           console.log('[DIAG] [Supabase] Setting cookie:', {
@@ -46,6 +50,7 @@ export const createClient = () => {
             hasValue: !!value,
             isMobile,
             isSecure,
+            sameSite,
             options: cookieOptions,
             timestamp: new Date().toISOString()
           })
@@ -59,6 +64,16 @@ export const createClient = () => {
               name,
               cookieEnabled: navigator.cookieEnabled,
               isMobile,
+              isSecure,
+              sameSite,
+              timestamp: new Date().toISOString()
+            })
+          } else if (verifyCookie) {
+            console.log('[DIAG] [Supabase] ✅ Cookie verified as set:', {
+              name,
+              isMobile,
+              isSecure,
+              sameSite,
               timestamp: new Date().toISOString()
             })
           }
