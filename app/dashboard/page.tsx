@@ -79,14 +79,42 @@ export default function DashboardPage() {
       
       const emergency = await getActiveEmergency(user.id)
       
-      // Strict validation: Only set activeEmergency if emergency exists AND is actually active
-      // Also verify it belongs to the current user
+      // PHANTOM ALERT FIX: Check if alert is stale (older than 24 hours) and auto-cancel
       if (emergency && emergency.status === 'active' && emergency.user_id === user.id && emergency.id) {
+        const alertAge = emergency.triggered_at ? new Date(emergency.triggered_at).getTime() : 0
+        const now = Date.now()
+        const ageInHours = (now - alertAge) / (1000 * 60 * 60)
+        const MAX_ALERT_AGE_HOURS = 24 // Cancel alerts older than 24 hours
+        
+        if (ageInHours > MAX_ALERT_AGE_HOURS) {
+          console.warn('[Dashboard] ⚠️ PHANTOM ALERT DETECTED: Stale alert found, auto-cancelling:', {
+            id: emergency.id,
+            ageInHours: ageInHours.toFixed(2),
+            triggeredAt: emergency.triggered_at,
+            maxAge: MAX_ALERT_AGE_HOURS
+          })
+          
+          // Auto-cancel the stale alert
+          try {
+            const { cancelEmergencyAlert } = await import('@/lib/services/emergency')
+            await cancelEmergencyAlert(emergency.id)
+            console.log('[Dashboard] ✅ Successfully cancelled stale alert')
+            setActiveEmergency(null)
+            return // Don't proceed with this stale alert
+          } catch (cancelError: any) {
+            console.error('[Dashboard] ❌ Failed to auto-cancel stale alert:', cancelError)
+            // If cancellation fails, still don't use the stale alert
+            setActiveEmergency(null)
+            return
+          }
+        }
+        
         console.log('[Dashboard] ✅ Valid active emergency found:', {
           id: emergency.id,
           status: emergency.status,
           userId: emergency.user_id,
-          triggeredAt: emergency.triggered_at
+          triggeredAt: emergency.triggered_at,
+          ageInHours: ageInHours.toFixed(2)
         })
         setActiveEmergency(emergency)
         
