@@ -134,18 +134,20 @@ export default function EmergencyActivePage() {
   }, [user, alertId, loadAlert])
 
   useEffect(() => {
-    console.log('[Sender] 🔄 useEffect for receiver locations triggered:', {
+    console.error('[DIAG] [Sender] 🚀 useEffect for receiver locations ENTRY POINT', {
       hasAlert: !!alert,
       alertId: alert?.id,
       hasUser: !!user,
       userId: user?.id,
-      urlAlertId: alertId
+      urlAlertId: alertId,
+      timestamp: new Date().toISOString()
     })
     
     if (!alert || !user) {
-      console.log('[Sender] ⏭️ Skipping receiver locations load - missing alert or user', {
+      console.error('[DIAG] [Sender] ⏭️ Skipping receiver locations load - missing alert or user', {
         hasAlert: !!alert,
-        hasUser: !!user
+        hasUser: !!user,
+        timestamp: new Date().toISOString()
       })
       return
     }
@@ -157,13 +159,59 @@ export default function EmergencyActivePage() {
       setShowPermissionPrompt(false)
     }
 
-    // COMPREHENSIVE FIX: Query receiver locations directly from Supabase (no API calls)
-    // This eliminates network errors and is more reliable
+    // Verify RLS policies on mount (non-blocking)
+    const verifyRLSPolicies = async () => {
+      try {
+        const response = await fetch('/api/diagnostics/rls-verification', {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          console.error('[DIAG] [Sender] 🔍 RLS Policy Verification:', {
+            policies: data.policies,
+            recommendations: data.recommendations,
+            timestamp: new Date().toISOString()
+          })
+          
+          // Log warnings if policies are missing
+          if (!data.policies.alertResponses.accessible) {
+            console.error('[Sender] ⚠️ RLS POLICY ISSUE: alert_responses query may be blocked', {
+              recommendation: data.recommendations.alertResponses,
+              error: data.policies.alertResponses.error
+            })
+          }
+          if (!data.policies.locationHistory.accessible) {
+            console.error('[Sender] ⚠️ RLS POLICY ISSUE: location_history query may be blocked', {
+              recommendation: data.recommendations.locationHistory,
+              error: data.policies.locationHistory.error
+            })
+          }
+        } else {
+          console.error('[Sender] ⚠️ Failed to verify RLS policies:', {
+            status: response.status,
+            timestamp: new Date().toISOString()
+          })
+        }
+      } catch (verifyError: any) {
+        console.error('[Sender] ⚠️ Error verifying RLS policies:', {
+          error: verifyError?.message || verifyError,
+          timestamp: new Date().toISOString()
+        })
+      }
+    }
+    
+    // Run verification (non-blocking, don't await)
+    verifyRLSPolicies()
+
+    // HYBRID FIX: Try direct Supabase query first, fall back to API if RLS blocks
+    // This ensures it works regardless of RLS policy migration status
     const loadReceiverLocations = async () => {
       const diagStartTime = Date.now()
       const timingCheckpoints: Record<string, number> = { start: diagStartTime }
       
-      console.log('[DIAG] [Sender] 🔄 COMPREHENSIVE FIX - loadReceiverLocations started (direct Supabase query)', {
+      console.error('[DIAG] [Sender] 🚀 HYBRID FIX - loadReceiverLocations ENTRY POINT', {
         hasAlert: !!alert,
         alertId: alert?.id,
         urlAlertId: alertId,
@@ -176,7 +224,7 @@ export default function EmergencyActivePage() {
       
       // Enhanced guard check - ensure alert exists AND ID matches URL
       if (!alert || !alert.id) {
-        console.warn('[Sender] ⚠️ Cannot load receiver locations - alert not available', {
+        console.error('[Sender] ❌ Cannot load receiver locations - alert not available', {
           hasAlert: !!alert,
           alertId: alert?.id,
           urlAlertId: alertId
@@ -186,7 +234,7 @@ export default function EmergencyActivePage() {
       
       // Verify alert ID matches URL parameter
       if (alert.id !== alertId) {
-        console.warn('[Sender] ⚠️ Alert ID mismatch - waiting for correct alert', {
+        console.error('[Sender] ❌ Alert ID mismatch - waiting for correct alert', {
           alertId: alert.id,
           urlAlertId: alertId
         })
@@ -200,18 +248,100 @@ export default function EmergencyActivePage() {
         return
       }
       
+      // Helper function to detect RLS errors
+      const isRLSError = (error: any): boolean => {
+        if (!error) return false
+        return error.code === '42501' || 
+               error.message?.toLowerCase().includes('row-level security') ||
+               error.message?.toLowerCase().includes('rls') ||
+               error.hint?.toLowerCase().includes('row-level security') ||
+               error.hint?.toLowerCase().includes('rls')
+      }
+      
+      // Helper function to load via API fallback
+      const loadViaAPI = async (): Promise<{ acceptedUserIds: string[], locations: LocationHistory[] } | null> => {
+        console.error('[DIAG] [Sender] 🔄 HYBRID FIX - Falling back to API endpoints', {
+          alertId: alert.id,
+          timestamp: new Date().toISOString()
+        })
+        
+        try {
+          // Step 1: Get accepted responders via API
+          const acceptedResponse = await fetch(`/api/emergency/${alert.id}/accepted-responders`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+          })
+          
+          if (!acceptedResponse.ok) {
+            const errorData = await acceptedResponse.json().catch(() => ({}))
+            console.error('[Sender] ❌ HYBRID FIX - API fallback failed for accepted responders:', {
+              status: acceptedResponse.status,
+              error: errorData.error || errorData.details,
+              alertId: alert.id
+            })
+            return null
+          }
+          
+          const acceptedData = await acceptedResponse.json()
+          const acceptedUserIds = acceptedData.acceptedResponders?.map((r: any) => r.contact_user_id) || []
+          
+          console.error('[DIAG] [Sender] ✅ HYBRID FIX - API fallback: Got accepted responders', {
+            count: acceptedUserIds.length,
+            userIds: acceptedUserIds,
+            alertId: alert.id
+          })
+          
+          if (acceptedUserIds.length === 0) {
+            return { acceptedUserIds: [], locations: [] }
+          }
+          
+          // Step 2: Get locations via API
+          const locationsResponse = await fetch(`/api/emergency/${alert.id}/receiver-locations`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+          })
+          
+          if (!locationsResponse.ok) {
+            const errorData = await locationsResponse.json().catch(() => ({}))
+            console.error('[Sender] ❌ HYBRID FIX - API fallback failed for locations:', {
+              status: locationsResponse.status,
+              error: errorData.error || errorData.details,
+              alertId: alert.id
+            })
+            return { acceptedUserIds, locations: [] }
+          }
+          
+          const locationsData = await locationsResponse.json()
+          const locations = locationsData.receiverLocations || []
+          
+          console.error('[DIAG] [Sender] ✅ HYBRID FIX - API fallback: Got locations', {
+            locationCount: locations.length,
+            alertId: alert.id
+          })
+          
+          return { acceptedUserIds, locations }
+        } catch (apiError: any) {
+          console.error('[Sender] ❌ HYBRID FIX - API fallback exception:', {
+            error: apiError?.message || apiError,
+            stack: apiError?.stack,
+            alertId: alert.id
+          })
+          return null
+        }
+      }
+      
       try {
         const supabase = createClient()
         const queryStartTime = Date.now()
         timingCheckpoints.queryStart = queryStartTime
         
-        console.log('[DIAG] [Sender] 🔍 COMPREHENSIVE FIX - Step 1: Query accepted responders directly from Supabase', {
+        console.error('[DIAG] [Sender] 🔍 HYBRID FIX - Step 1: Attempting direct Supabase query for accepted responders', {
           alertId: alert.id,
           userId: user.id,
           timestamp: new Date().toISOString()
         })
         
-        // Step 1: Get accepted responders directly from Supabase (client-side query)
+        // Step 1: Try direct Supabase query for accepted responders
         const { data: acceptedResponses, error: responsesError } = await supabase
           .from('alert_responses')
           .select('contact_user_id, acknowledged_at, declined_at')
@@ -224,27 +354,98 @@ export default function EmergencyActivePage() {
         timingCheckpoints.queryEnd = queryEndTime
         timingCheckpoints.queryDuration = queryEndTime - queryStartTime
         
-        console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Step 1 Result: accepted responders query', {
-          success: !responsesError,
-          error: responsesError?.message,
-          count: acceptedResponses?.length || 0,
-          responderIds: acceptedResponses?.map((r: any) => r.contact_user_id) || [],
-          duration: `${queryEndTime - queryStartTime}ms`,
-          timestamp: new Date().toISOString()
-        })
-        
-        if (responsesError) {
-          console.error('[Sender] ❌ COMPREHENSIVE FIX - Error querying accepted responders:', {
+        // Check if RLS blocked the query
+        if (responsesError && isRLSError(responsesError)) {
+          console.error('[Sender] ❌ HYBRID FIX - RLS policy blocked direct query, using API fallback', {
             error: responsesError,
             code: responsesError.code,
             message: responsesError.message,
+            hint: responsesError.hint,
             alertId: alert.id,
             userId: user.id,
             timestamp: new Date().toISOString()
           })
-          // Don't clear state - keep existing data
+          
+          // Fall back to API
+          const apiResult = await loadViaAPI()
+          if (!apiResult) {
+            console.error('[Sender] ❌ HYBRID FIX - Both direct query and API fallback failed')
+            return
+          }
+          
+          const { acceptedUserIds, locations } = apiResult
+          const acceptedCount = acceptedUserIds.length
+          
+          // Update accepted responder count
+          setAcceptedResponderCount(acceptedCount)
+          
+          if (acceptedCount === 0) {
+            console.error('[DIAG] [Sender] ⚠️ No accepted responders (via API) - clearing locations state')
+            setReceiverLocations(new Map())
+            setReceiverUserIds([])
+            return
+          }
+          
+          // Process locations from API
+          if (locations && locations.length > 0) {
+            const groupedByUser: Record<string, LocationHistory[]> = {}
+            locations.forEach((loc: LocationHistory) => {
+              const receiverId = loc.user_id
+              if (!groupedByUser[receiverId]) {
+                groupedByUser[receiverId] = []
+              }
+              groupedByUser[receiverId].push(loc)
+            })
+            
+            const receiverMap = new Map<string, LocationHistory[]>()
+            const userIds = new Set<string>()
+            
+            Object.entries(groupedByUser).forEach(([receiverId, locationArray]) => {
+              const sortedLocations = [...locationArray].sort((a: LocationHistory, b: LocationHistory) => {
+                return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+              })
+              userIds.add(receiverId)
+              receiverMap.set(receiverId, sortedLocations)
+            })
+            
+            console.error('[DIAG] [Sender] ✅ HYBRID FIX - API fallback: Updating state', {
+              receiverCount: receiverMap.size,
+              receiverIds: Array.from(userIds),
+              totalLocations: locations.length,
+              method: 'API_FALLBACK'
+            })
+            
+            setReceiverLocations(receiverMap)
+            setReceiverUserIds(Array.from(userIds))
+          } else {
+            setReceiverLocations(new Map())
+            setReceiverUserIds([])
+          }
+          
           return
         }
+        
+        // If error but not RLS, log and return
+        if (responsesError) {
+          console.error('[Sender] ❌ HYBRID FIX - Non-RLS error querying accepted responders:', {
+            error: responsesError,
+            code: responsesError.code,
+            message: responsesError.message,
+            hint: responsesError.hint,
+            alertId: alert.id,
+            userId: user.id,
+            timestamp: new Date().toISOString()
+          })
+          return
+        }
+        
+        console.error('[DIAG] [Sender] ✅ HYBRID FIX - Step 1 Result: Direct query succeeded', {
+          count: acceptedResponses?.length || 0,
+          responderIds: acceptedResponses?.map((r: any) => r.contact_user_id) || [],
+          duration: `${queryEndTime - queryStartTime}ms`,
+          method: 'DIRECT_QUERY',
+          timestamp: new Date().toISOString()
+        })
         
         const acceptedCount = acceptedResponses?.length || 0
         const acceptedUserIds = acceptedResponses?.map((r: any) => r.contact_user_id) || []
@@ -254,7 +455,7 @@ export default function EmergencyActivePage() {
         
         // If no accepted responders, clear the map
         if (acceptedCount === 0) {
-          console.log('[DIAG] [Sender] ⚠️ No accepted responders - clearing locations state', {
+          console.error('[DIAG] [Sender] ⚠️ No accepted responders - clearing locations state', {
             timestamp: new Date().toISOString()
           })
           setReceiverLocations(new Map())
@@ -262,14 +463,14 @@ export default function EmergencyActivePage() {
           return
         }
         
-        console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Step 2: Query locations for accepted responders', {
+        console.error('[DIAG] [Sender] ✅ HYBRID FIX - Step 2: Querying locations for accepted responders', {
           acceptedUserIds: acceptedUserIds,
           acceptedCount: acceptedCount,
           alertId: alert.id,
           timestamp: new Date().toISOString()
         })
         
-        // Step 2: Get locations for accepted responders directly from Supabase
+        // Step 2: Try direct Supabase query for locations
         const locationsQueryStartTime = Date.now()
         timingCheckpoints.locationsQueryStart = locationsQueryStartTime
         
@@ -279,39 +480,81 @@ export default function EmergencyActivePage() {
           .eq('alert_id', alert.id)
           .in('user_id', acceptedUserIds)
           .order('created_at', { ascending: false })
-          .limit(100) // Limit to last 100 locations per alert
+          .limit(100)
         
         const locationsQueryEndTime = Date.now()
         timingCheckpoints.locationsQueryEnd = locationsQueryEndTime
         timingCheckpoints.locationsQueryDuration = locationsQueryEndTime - locationsQueryStartTime
         
-        console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Step 2 Result: locations query', {
-          success: !locationsError,
-          error: locationsError?.message,
-          locationCount: locations?.length || 0,
-          duration: `${locationsQueryEndTime - locationsQueryStartTime}ms`,
-          locations: locations?.map((loc: any) => ({
-            id: loc.id,
-            userId: loc.user_id,
-            lat: loc.latitude,
-            lng: loc.longitude,
-            timestamp: loc.created_at
-          })) || [],
-          timestamp: new Date().toISOString()
-        })
-        
-        if (locationsError) {
-          console.error('[Sender] ❌ COMPREHENSIVE FIX - Error querying locations:', {
+        // Check if RLS blocked the query
+        if (locationsError && isRLSError(locationsError)) {
+          console.error('[Sender] ❌ HYBRID FIX - RLS policy blocked location query, using API fallback', {
             error: locationsError,
             code: locationsError.code,
             message: locationsError.message,
+            hint: locationsError.hint,
             alertId: alert.id,
             userId: user.id,
             timestamp: new Date().toISOString()
           })
-          // Don't clear state - keep existing data
+          
+          // Fall back to API for locations only
+          const apiResult = await loadViaAPI()
+          if (apiResult && apiResult.locations.length > 0) {
+            const groupedByUser: Record<string, LocationHistory[]> = {}
+            apiResult.locations.forEach((loc: LocationHistory) => {
+              const receiverId = loc.user_id
+              if (!groupedByUser[receiverId]) {
+                groupedByUser[receiverId] = []
+              }
+              groupedByUser[receiverId].push(loc)
+            })
+            
+            const receiverMap = new Map<string, LocationHistory[]>()
+            const userIds = new Set<string>()
+            
+            Object.entries(groupedByUser).forEach(([receiverId, locationArray]) => {
+              const sortedLocations = [...locationArray].sort((a: LocationHistory, b: LocationHistory) => {
+                return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+              })
+              userIds.add(receiverId)
+              receiverMap.set(receiverId, sortedLocations)
+            })
+            
+            console.error('[DIAG] [Sender] ✅ HYBRID FIX - API fallback for locations: Updating state', {
+              receiverCount: receiverMap.size,
+              receiverIds: Array.from(userIds),
+              totalLocations: apiResult.locations.length,
+              method: 'API_FALLBACK_LOCATIONS'
+            })
+            
+            setReceiverLocations(receiverMap)
+            setReceiverUserIds(Array.from(userIds))
+          }
+          
           return
         }
+        
+        // If error but not RLS, log and return
+        if (locationsError) {
+          console.error('[Sender] ❌ HYBRID FIX - Non-RLS error querying locations:', {
+            error: locationsError,
+            code: locationsError.code,
+            message: locationsError.message,
+            hint: locationsError.hint,
+            alertId: alert.id,
+            userId: user.id,
+            timestamp: new Date().toISOString()
+          })
+          return
+        }
+        
+        console.error('[DIAG] [Sender] ✅ HYBRID FIX - Step 2 Result: Direct query succeeded', {
+          locationCount: locations?.length || 0,
+          duration: `${locationsQueryEndTime - locationsQueryStartTime}ms`,
+          method: 'DIRECT_QUERY',
+          timestamp: new Date().toISOString()
+        })
         
         // Step 3: Group locations by user_id
         const groupedByUser: Record<string, LocationHistory[]> = {}
@@ -323,17 +566,12 @@ export default function EmergencyActivePage() {
           groupedByUser[receiverId].push(loc)
         })
         
-        console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Step 3: Grouped locations by user', {
+        console.error('[DIAG] [Sender] ✅ HYBRID FIX - Step 3: Grouped locations by user', {
           totalLocations: locations?.length || 0,
           uniqueReceivers: Object.keys(groupedByUser).length,
           receivers: Object.keys(groupedByUser).map(receiverId => ({
             receiverId,
-            locationCount: groupedByUser[receiverId].length,
-            latestLocation: groupedByUser[receiverId][0] ? {
-              lat: groupedByUser[receiverId][0].latitude,
-              lng: groupedByUser[receiverId][0].longitude,
-              timestamp: groupedByUser[receiverId][0].created_at
-            } : null
+            locationCount: groupedByUser[receiverId].length
           })),
           timestamp: new Date().toISOString()
         })
@@ -351,7 +589,7 @@ export default function EmergencyActivePage() {
             
             userIds.add(receiverId)
             receiverMap.set(receiverId, sortedLocations)
-            console.log('[Sender] 📍 Added receiver to map:', {
+            console.error('[Sender] 📍 Added receiver to map:', {
               receiverId: receiverId,
               locationCount: sortedLocations.length,
               latestLocation: sortedLocations.length > 0 ? {
@@ -366,12 +604,13 @@ export default function EmergencyActivePage() {
           timingCheckpoints.stateUpdate = stateUpdateTime
           timingCheckpoints.totalDuration = stateUpdateTime - diagStartTime
           
-          console.log('[DIAG] [Sender] ✅ COMPREHENSIVE FIX - Step 4: Updating state', {
+          console.error('[DIAG] [Sender] ✅ HYBRID FIX - Step 4: Updating state (DIRECT_QUERY)', {
             receiverCount: receiverMap.size,
             receiverIds: Array.from(userIds),
             totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0),
             timestamp: new Date().toISOString(),
             totalDuration: `${stateUpdateTime - diagStartTime}ms`,
+            method: 'DIRECT_QUERY',
             timingBreakdown: {
               queryDuration: `${timingCheckpoints.queryDuration}ms`,
               locationsQueryDuration: `${timingCheckpoints.locationsQueryDuration}ms`
@@ -381,7 +620,7 @@ export default function EmergencyActivePage() {
           setReceiverLocations(receiverMap)
           setReceiverUserIds(Array.from(userIds))
         } else {
-          console.warn('[Sender] ⚠️ No receiver locations found yet (accepted responders exist but no locations saved):', {
+          console.error('[Sender] ⚠️ No receiver locations found yet (accepted responders exist but no locations saved):', {
             acceptedUserIds: acceptedUserIds,
             alertId: alert.id,
             acceptedCount: acceptedCount
@@ -391,7 +630,7 @@ export default function EmergencyActivePage() {
           setReceiverUserIds([])
         }
       } catch (error: any) {
-        console.error('[Sender] ❌ COMPREHENSIVE FIX - Unexpected error:', {
+        console.error('[Sender] ❌ HYBRID FIX - Unexpected error:', {
           error: error,
           message: error?.message,
           name: error?.name,
@@ -412,19 +651,27 @@ export default function EmergencyActivePage() {
     // Just use a regular function instead
     const safeLoadReceiverLocations = () => {
       if (uploadingPhotoRef.current) {
-        console.log('[Photo] ⏸️ Deferring location reload - photo upload in progress')
+        console.error('[Photo] ⏸️ Deferring location reload - photo upload in progress')
         loadLocationsQueuedRef.current = true
         return
       }
       if (loadReceiverLocationsRef.current) {
-        console.log('[Sender] 🔄 Calling loadReceiverLocations via safe wrapper')
+        console.error('[DIAG] [Sender] 🔄 Calling loadReceiverLocations via safe wrapper', {
+          timestamp: new Date().toISOString()
+        })
         loadReceiverLocationsRef.current()
       } else {
-        console.warn('[Sender] ⚠️ loadReceiverLocationsRef.current is null - cannot load locations')
+        console.error('[Sender] ❌ loadReceiverLocationsRef.current is null - cannot load locations', {
+          timestamp: new Date().toISOString()
+        })
       }
     }
 
-    console.log('[Sender] 🚀 Calling loadReceiverLocations on initial load...')
+    console.error('[DIAG] [Sender] 🚀 Calling loadReceiverLocations on initial load...', {
+      alertId: alert.id,
+      userId: user.id,
+      timestamp: new Date().toISOString()
+    })
     loadReceiverLocations()
 
     // Subscribe to alert_responses updates to detect when responders accept
