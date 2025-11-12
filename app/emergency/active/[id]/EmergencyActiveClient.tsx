@@ -750,6 +750,16 @@ export default function EmergencyActivePage() {
             })
             safeLoadReceiverLocations()
             
+            // CRITICAL FIX: Add immediate retry after 1 second (gives time for location to be saved via API)
+            setTimeout(() => {
+              console.log('[Sender] 🔄 Immediate retry after acceptance (1s delay - waiting for location save via API)', {
+                contactUserId: contactUserId,
+                alertId: alert.id,
+                timestamp: new Date().toISOString()
+              })
+              safeLoadReceiverLocations()
+            }, 1000)
+            
             // Phase 1: Delayed retry after 2 seconds (gives time for location save)
             acceptanceRetryTimeout1Ref.current = setTimeout(() => {
               if (!isUnmountingRef.current) {
