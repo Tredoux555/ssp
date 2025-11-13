@@ -163,7 +163,12 @@ export default function EmergencyActivePage() {
   }, [user, alertId, loadAlert])
 
   useEffect(() => {
-    console.error('[DIAG] [Sender] 🚀 useEffect for receiver locations ENTRY POINT', {
+    // Only run if we have both alert and user
+    if (!alert || !user) {
+      return
+    }
+    
+    console.log('[DIAG] [Sender] 🚀 useEffect for receiver locations ENTRY POINT', {
       hasAlert: !!alert,
       alertId: alert?.id,
       hasUser: !!user,
@@ -171,15 +176,6 @@ export default function EmergencyActivePage() {
       urlAlertId: alertId,
       timestamp: new Date().toISOString()
     })
-    
-    if (!alert || !user) {
-      console.error('[DIAG] [Sender] ⏭️ Skipping receiver locations load - missing alert or user', {
-        hasAlert: !!alert,
-        hasUser: !!user,
-        timestamp: new Date().toISOString()
-      })
-      return
-    }
 
     // Check location permission before starting tracking
     if (permissionStatus === 'denied' || permissionStatus === 'prompt') {
@@ -197,7 +193,7 @@ export default function EmergencyActivePage() {
       const diagStartTime = Date.now()
       const timingCheckpoints: Record<string, number> = { start: diagStartTime }
       
-      console.error('[DIAG] [Sender] 🚀 HYBRID FIX - loadReceiverLocations ENTRY POINT', {
+      console.log('[DIAG] [Sender] 🚀 HYBRID FIX - loadReceiverLocations ENTRY POINT', {
         hasAlert: !!alert,
         alertId: alert?.id,
         urlAlertId: alertId,
@@ -210,7 +206,7 @@ export default function EmergencyActivePage() {
       
       // Enhanced guard check - ensure alert exists AND ID matches URL
       if (!alert || !alert.id) {
-        console.error('[Sender] ❌ Cannot load receiver locations - alert not available', {
+        console.warn('[Sender] ⚠️ Cannot load receiver locations - alert not available', {
           hasAlert: !!alert,
           alertId: alert?.id,
           urlAlertId: alertId
@@ -220,7 +216,7 @@ export default function EmergencyActivePage() {
       
       // Verify alert ID matches URL parameter
       if (alert.id !== alertId) {
-        console.error('[Sender] ❌ Alert ID mismatch - waiting for correct alert', {
+        console.warn('[Sender] ⚠️ Alert ID mismatch - waiting for correct alert', {
           alertId: alert.id,
           urlAlertId: alertId
         })
@@ -321,7 +317,7 @@ export default function EmergencyActivePage() {
         const queryStartTime = Date.now()
         timingCheckpoints.queryStart = queryStartTime
         
-        console.error('[DIAG] [Sender] 🔍 HYBRID FIX - Step 1: Attempting direct Supabase query for accepted responders', {
+        console.log('[DIAG] [Sender] 🔍 HYBRID FIX - Step 1: Attempting direct Supabase query for accepted responders', {
           alertId: alert.id,
           userId: user.id,
           timestamp: new Date().toISOString()
@@ -425,7 +421,7 @@ export default function EmergencyActivePage() {
           return
         }
         
-        console.error('[DIAG] [Sender] ✅ HYBRID FIX - Step 1 Result: Direct query succeeded', {
+        console.log('[DIAG] [Sender] ✅ HYBRID FIX - Step 1 Result: Direct query succeeded', {
           count: acceptedResponses?.length || 0,
           responderIds: acceptedResponses?.map((r: any) => r.contact_user_id) || [],
           duration: `${queryEndTime - queryStartTime}ms`,
@@ -441,7 +437,7 @@ export default function EmergencyActivePage() {
         
         // If no accepted responders, clear the map
         if (acceptedCount === 0) {
-          console.error('[DIAG] [Sender] ⚠️ No accepted responders - clearing locations state', {
+          console.log('[DIAG] [Sender] ⚠️ No accepted responders - clearing locations state', {
             timestamp: new Date().toISOString()
           })
           setReceiverLocations(new Map())
@@ -449,7 +445,7 @@ export default function EmergencyActivePage() {
           return
         }
         
-        console.error('[DIAG] [Sender] ✅ HYBRID FIX - Step 2: Querying locations for accepted responders', {
+        console.log('[DIAG] [Sender] ✅ HYBRID FIX - Step 2: Querying locations for accepted responders', {
           acceptedUserIds: acceptedUserIds,
           acceptedCount: acceptedCount,
           alertId: alert.id,
@@ -535,7 +531,7 @@ export default function EmergencyActivePage() {
           return
         }
         
-        console.error('[DIAG] [Sender] ✅ HYBRID FIX - Step 2 Result: Direct query succeeded', {
+        console.log('[DIAG] [Sender] ✅ HYBRID FIX - Step 2 Result: Direct query succeeded', {
           locationCount: locations?.length || 0,
           duration: `${locationsQueryEndTime - locationsQueryStartTime}ms`,
           method: 'DIRECT_QUERY',
@@ -552,7 +548,7 @@ export default function EmergencyActivePage() {
           groupedByUser[receiverId].push(loc)
         })
         
-        console.error('[DIAG] [Sender] ✅ HYBRID FIX - Step 3: Grouped locations by user', {
+        console.log('[DIAG] [Sender] ✅ HYBRID FIX - Step 3: Grouped locations by user', {
           totalLocations: locations?.length || 0,
           uniqueReceivers: Object.keys(groupedByUser).length,
           receivers: Object.keys(groupedByUser).map(receiverId => ({
@@ -575,7 +571,7 @@ export default function EmergencyActivePage() {
             
             userIds.add(receiverId)
             receiverMap.set(receiverId, sortedLocations)
-            console.error('[Sender] 📍 Added receiver to map:', {
+            console.log('[Sender] 📍 Added receiver to map:', {
               receiverId: receiverId,
               locationCount: sortedLocations.length,
               latestLocation: sortedLocations.length > 0 ? {
@@ -590,7 +586,7 @@ export default function EmergencyActivePage() {
           timingCheckpoints.stateUpdate = stateUpdateTime
           timingCheckpoints.totalDuration = stateUpdateTime - diagStartTime
           
-          console.error('[DIAG] [Sender] ✅ HYBRID FIX - Step 4: Updating state (DIRECT_QUERY)', {
+          console.log('[DIAG] [Sender] ✅ HYBRID FIX - Step 4: Updating state (DIRECT_QUERY)', {
             receiverCount: receiverMap.size,
             receiverIds: Array.from(userIds),
             totalLocations: Array.from(receiverMap.values()).reduce((sum, locs) => sum + locs.length, 0),
@@ -606,7 +602,7 @@ export default function EmergencyActivePage() {
           setReceiverLocations(receiverMap)
           setReceiverUserIds(Array.from(userIds))
         } else {
-          console.error('[Sender] ⚠️ No receiver locations found yet (accepted responders exist but no locations saved):', {
+          console.warn('[Sender] ⚠️ No receiver locations found yet (accepted responders exist but no locations saved):', {
             acceptedUserIds: acceptedUserIds,
             alertId: alert.id,
             acceptedCount: acceptedCount
@@ -642,18 +638,18 @@ export default function EmergencyActivePage() {
         return
       }
       if (loadReceiverLocationsRef.current) {
-        console.error('[DIAG] [Sender] 🔄 Calling loadReceiverLocations via safe wrapper', {
+        console.log('[DIAG] [Sender] 🔄 Calling loadReceiverLocations via safe wrapper', {
           timestamp: new Date().toISOString()
         })
         loadReceiverLocationsRef.current()
       } else {
-        console.error('[Sender] ❌ loadReceiverLocationsRef.current is null - cannot load locations', {
+        console.warn('[Sender] ⚠️ loadReceiverLocationsRef.current is null - cannot load locations', {
           timestamp: new Date().toISOString()
         })
       }
     }
 
-    console.error('[DIAG] [Sender] 🚀 Calling loadReceiverLocations on initial load...', {
+    console.log('[DIAG] [Sender] 🚀 Calling loadReceiverLocations on initial load...', {
       alertId: alert.id,
       userId: user.id,
       timestamp: new Date().toISOString()
