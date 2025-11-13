@@ -574,7 +574,7 @@ export default function DashboardPage() {
                 
                 if (!responseError && response?.declined_at) {
                   console.log(`[Dashboard] ⏭️ Skipping alert via polling - user has declined alert ${alert.id}`)
-                  continue // Skip this alert - user has declined
+                  return // Skip this alert - user has declined (exit early from pollForAlerts)
                 }
               } catch (declineCheckError) {
                 // If we can't check decline status, log but continue (fail open)
