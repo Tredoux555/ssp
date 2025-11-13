@@ -242,7 +242,7 @@ export default function EmergencyActivePage() {
       
       // Helper function to load via API fallback
       const loadViaAPI = async (): Promise<{ acceptedUserIds: string[], locations: LocationHistory[] } | null> => {
-        console.error('[DIAG] [Sender] 🔄 HYBRID FIX - Falling back to API endpoints', {
+        console.log('[DIAG] [Sender] 🔄 HYBRID FIX - Falling back to API endpoints', {
           alertId: alert.id,
           timestamp: new Date().toISOString()
         })
@@ -267,7 +267,7 @@ export default function EmergencyActivePage() {
           const acceptedData = await acceptedResponse.json()
           const acceptedUserIds = acceptedData.acceptedResponders?.map((r: any) => r.contact_user_id) || []
           
-          console.error('[DIAG] [Sender] ✅ HYBRID FIX - API fallback: Got accepted responders', {
+          console.log('[DIAG] [Sender] ✅ HYBRID FIX - API fallback: Got accepted responders', {
             count: acceptedUserIds.length,
             userIds: acceptedUserIds,
             alertId: alert.id
@@ -296,7 +296,7 @@ export default function EmergencyActivePage() {
           const locationsData = await locationsResponse.json()
           const locations = locationsData.receiverLocations || []
           
-          console.error('[DIAG] [Sender] ✅ HYBRID FIX - API fallback: Got locations', {
+          console.log('[DIAG] [Sender] ✅ HYBRID FIX - API fallback: Got locations', {
             locationCount: locations.length,
             alertId: alert.id
           })
@@ -362,7 +362,7 @@ export default function EmergencyActivePage() {
           setAcceptedResponderCount(acceptedCount)
           
           if (acceptedCount === 0) {
-            console.error('[DIAG] [Sender] ⚠️ No accepted responders (via API) - clearing locations state')
+            console.log('[DIAG] [Sender] ⚠️ No accepted responders (via API) - clearing locations state')
             setReceiverLocations(new Map())
             setReceiverUserIds([])
             return
@@ -390,7 +390,7 @@ export default function EmergencyActivePage() {
               receiverMap.set(receiverId, sortedLocations)
             })
             
-            console.error('[DIAG] [Sender] ✅ HYBRID FIX - API fallback: Updating state', {
+            console.log('[DIAG] [Sender] ✅ HYBRID FIX - API fallback: Updating state', {
               receiverCount: receiverMap.size,
               receiverIds: Array.from(userIds),
               totalLocations: locations.length,
@@ -503,7 +503,7 @@ export default function EmergencyActivePage() {
               receiverMap.set(receiverId, sortedLocations)
             })
             
-            console.error('[DIAG] [Sender] ✅ HYBRID FIX - API fallback for locations: Updating state', {
+            console.log('[DIAG] [Sender] ✅ HYBRID FIX - API fallback for locations: Updating state', {
               receiverCount: receiverMap.size,
               receiverIds: Array.from(userIds),
               totalLocations: apiResult.locations.length,
