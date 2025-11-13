@@ -64,6 +64,9 @@ export default function EmergencyActivePage() {
   
   // Phase 5: Track recent acceptances to prevent duplicate retries
   const recentAcceptancesRef = useRef<Map<string, number>>(new Map()) // Map of user ID -> timestamp
+  
+  // Polling refs (must be at top level, not inside useEffect)
+  const pollingAttemptRef = useRef(0) // Track polling attempts for exponential backoff
 
   // Update addressRef when address changes (doesn't trigger loadAlert)
   useEffect(() => {
@@ -859,7 +862,7 @@ export default function EmergencyActivePage() {
     
     // COMPREHENSIVE FIX: Exponential backoff polling with direct Supabase queries
     // Polls at: 1s, 2s, 4s, 8s, then 10s (max) - resets to 1s when change detected
-    const pollingAttemptRef = useRef(0)
+    // NOTE: pollingAttemptRef is defined at component top level (Rules of Hooks)
     const basePollInterval = 1000 // Start with 1 second
     const maxPollInterval = 10000 // Max 10 seconds
     
