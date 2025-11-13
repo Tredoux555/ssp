@@ -583,3 +583,75 @@ export async function cancelEmergencyAlert(alertId: string): Promise<void> {
   }
 }
 
+/**
+ * Cancel ALL active emergency alerts for the current user
+ * Useful for cleaning up phantom/stale alerts
+ */
+export async function cancelAllActiveAlerts(): Promise<{ cancelled: number }> {
+  const supabase = createClient()
+  
+  if (!supabase) {
+    throw new Error('Failed to cancel alerts: Server configuration error')
+  }
+
+  // Get authenticated user
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+  
+  if (sessionError || !session?.user) {
+    throw new Error('Unauthorized - please sign in')
+  }
+
+  const userId = session.user.id
+
+  // Get all active alerts for this user
+  const { data: activeAlerts, error: fetchError } = await supabase
+    .from('emergency_alerts')
+    .select('id, status')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+
+  if (fetchError) {
+    throw new Error(`Failed to fetch active alerts: ${fetchError.message}`)
+  }
+
+  if (!activeAlerts || activeAlerts.length === 0) {
+    console.log('No active alerts to cancel')
+    return { cancelled: 0 }
+  }
+
+  console.log(`Found ${activeAlerts.length} active alert(s) to cancel`)
+
+  // Cancel all active alerts
+  const { data: cancelledData, error: cancelError } = await supabase
+    .from('emergency_alerts')
+    .update({ 
+      status: 'cancelled', 
+      resolved_at: new Date().toISOString() 
+    })
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .select('id')
+
+  if (cancelError) {
+    // Check if it's an RLS violation
+    const isRLSError = cancelError.message?.includes('row-level security') || 
+                      cancelError.code === '42501' || 
+                      cancelError.status === 403
+    
+    if (isRLSError) {
+      throw new Error(
+        'Unable to cancel alerts due to database policy. ' +
+        'Please refresh the page and try again. ' +
+        'If this persists, run migrations/fix-all-rls-policies-comprehensive.sql in Supabase SQL Editor.'
+      )
+    }
+    
+    throw new Error(`Failed to cancel alerts: ${cancelError.message}`)
+  }
+
+  const cancelledCount = cancelledData?.length || 0
+  console.log(`✅ Cancelled ${cancelledCount} active alert(s)`)
+  
+  return { cancelled: cancelledCount }
+}
+

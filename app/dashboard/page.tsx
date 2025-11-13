@@ -330,6 +330,28 @@ export default function DashboardPage() {
           return
         }
         
+        // CRITICAL FIX: Check if user has declined this alert before showing notification
+        // This prevents re-triggering notifications for users who have already declined
+        try {
+          const supabase = createClient()
+          if (supabase) {
+            const { data: response, error: responseError } = await supabase
+              .from('alert_responses')
+              .select('declined_at')
+              .eq('alert_id', alert.id)
+              .eq('contact_user_id', userId)
+              .maybeSingle()
+            
+            if (!responseError && response?.declined_at) {
+              console.log(`[Dashboard] ⏭️ Skipping alert - user has declined alert ${alert.id}`)
+              return // User has declined - don't show notification
+            }
+          }
+        } catch (declineCheckError) {
+          // If we can't check decline status, log but continue (fail open)
+          console.warn(`[Dashboard] ⚠️ Could not check decline status:`, declineCheckError)
+        }
+        
         // Fetch sender information (email/name) from the alert
         let senderName: string | null = null
         let senderEmail: string | null = null
@@ -539,6 +561,25 @@ export default function DashboardPage() {
                   contactsNotified: alert.contacts_notified,
                   userIsInContacts: true
                 })
+              
+              // CRITICAL FIX: Check if user has declined this alert before showing notification
+              // This prevents re-triggering notifications for users who have already declined
+              try {
+                const { data: response, error: responseError } = await supabase
+                  .from('alert_responses')
+                  .select('declined_at')
+                  .eq('alert_id', alert.id)
+                  .eq('contact_user_id', userId)
+                  .maybeSingle()
+                
+                if (!responseError && response?.declined_at) {
+                  console.log(`[Dashboard] ⏭️ Skipping alert via polling - user has declined alert ${alert.id}`)
+                  continue // Skip this alert - user has declined
+                }
+              } catch (declineCheckError) {
+                // If we can't check decline status, log but continue (fail open)
+                console.warn(`[Dashboard] ⚠️ Could not check decline status in polling:`, declineCheckError)
+              }
               
               // Fetch sender info
               let senderName: string | null = null
@@ -909,6 +950,33 @@ export default function DashboardPage() {
     }
   }
 
+  const handleCancelAllAlerts = useCallback(async () => {
+    if (!user) return
+    
+    const confirmed = window.confirm(
+      'Are you sure you want to cancel ALL active emergency alerts? ' +
+      'This will cancel any active alerts you have created. This action cannot be undone.'
+    )
+    
+    if (!confirmed) return
+    
+    try {
+      const { cancelAllActiveAlerts } = await import('@/lib/services/emergency')
+      const result = await cancelAllActiveAlerts()
+      
+      if (result.cancelled > 0) {
+        window.alert(`Successfully cancelled ${result.cancelled} active alert(s)`)
+        // Reload active emergency to update UI
+        loadActiveEmergency()
+      } else {
+        window.alert('No active alerts to cancel')
+      }
+    } catch (error: any) {
+      console.error('Failed to cancel all alerts:', error)
+      window.alert(`Failed to cancel alerts: ${error.message}`)
+    }
+  }, [user, loadActiveEmergency])
+
   const handleSignOut = async () => {
     await signOut()
     router.push('/auth/login')
@@ -987,6 +1055,23 @@ export default function DashboardPage() {
             <p className="text-xs text-gray-500 mt-4">
               Your location will be shared with your emergency contacts
             </p>
+            
+            {/* Cancel All Alerts Button - only show if there are active alerts */}
+            {activeEmergency && (
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleCancelAllAlerts}
+                  className="w-full"
+                >
+                  Cancel All Active Alerts
+                </Button>
+                <p className="text-xs text-gray-500 mt-2">
+                  Cancel all active emergency alerts you have created
+                </p>
+              </div>
+            )}
           </div>
         </Card>
 
